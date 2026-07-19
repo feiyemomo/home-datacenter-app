@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.view.LayoutInflater
+import android.view.View
 import android.view.ViewGroup
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.getValue
@@ -24,6 +25,7 @@ import com.google.android.exoplayer2.upstream.DefaultHttpDataSource
 import com.homedatacenter.app.data.model.Camera
 import com.homedatacenter.app.databinding.ItemCameraBinding
 import com.homedatacenter.app.util.AnimationHelper
+import com.homedatacenter.app.util.ExoPlayerRendererFactory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -42,6 +44,21 @@ class CameraAdapter(
 ) : ListAdapter<Camera, CameraAdapter.CameraViewHolder>(DiffCallback()) {
 
     private val activePlayers = mutableSetOf<ExoPlayer>()
+
+    // LRU thumbnail cache shared across all view holders. Without
+    // this, scrolling the camera list re-fetches the snapshot JPEG
+    // on every bind (each scroll triggers onBindViewHolder →
+    // loadThumbnail → HTTP GET through Cloudflare Tunnel → go2rtc
+    // RTSP keyframe → JPEG encode). On a slow Cloudflare Tunnel from
+    // China (TTFB 1.4s+, frequent 10s timeouts) this makes the
+    // camera list feel broken. Cache 16 snapshots (~16 × 50KB =
+    // 800KB max memory) — enough for a typical camera fleet, small
+    // enough to not pressure the heap.
+    private val thumbnailCache = object : LinkedHashMap<Long, Bitmap>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, Bitmap>?): Boolean {
+            return size > 16
+        }
+    }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): CameraViewHolder {
         val binding = ItemCameraBinding.inflate(LayoutInflater.from(parent.context), parent, false)
@@ -98,10 +115,20 @@ class CameraAdapter(
             if (cameraChanged) {
                 releasePlayer()
                 thumbnailJob?.cancel()
-                thumbnail = null
                 thumbnailError = false
                 boundCamera = camera
-                loadThumbnail(camera)
+                // Check cache first — if we have a cached snapshot
+                // for this camera, show it immediately and skip the
+                // HTTP fetch. This makes scroll-back instant instead
+                // of re-downloading every thumbnail on each bind.
+                val cached = thumbnailCache[camera.id]
+                if (cached != null) {
+                    thumbnail = cached
+                    thumbnailLoading = false
+                } else {
+                    thumbnail = null
+                    loadThumbnail(camera)
+                }
             } else {
                 boundCamera = camera
             }
@@ -115,7 +142,6 @@ class CameraAdapter(
                         thumbnailError = thumbnailError,
                         isPlaying = isPlaying,
                         playerLoading = playerLoading,
-                        player = player,
                         onPlay = { startInlinePlayback(camera) },
                         onStop = ::stopInlinePlayback,
                         onRecordings = { onRecordingsClick(camera) },
@@ -129,6 +155,12 @@ class CameraAdapter(
             if (isPlaying) return
             val mp4Url = resolveMp4Url(camera)
             val hlsUrl = resolveHlsUrl(camera)
+            android.util.Log.i(
+                TAG,
+                "startInlinePlayback: camera='${camera.name}' id=${camera.id} " +
+                    "mp4Url=${if (mp4Url.isBlank()) "(empty)" else mp4Url.take(80)} " +
+                    "hlsUrl=${if (hlsUrl.isBlank()) "(empty)" else hlsUrl.take(80)}",
+            )
             if (hlsUrl.isBlank() && mp4Url.isBlank()) {
                 android.util.Log.w(
                     TAG,
@@ -143,14 +175,24 @@ class CameraAdapter(
             playerLoading = true
             triedMp4 = false
             triedHls = false
-            // HLS is the primary transport: it is the path go2rtc's
-            // stream.m3u8 produces natively and ExoPlayer's HlsMediaSource
-            // handles it robustly (incremental moof parsing, adaptive
-            // segments). The MP4 (fMP4) endpoint at /stream.mp4 is kept
-            // as a fallback because ExoPlayer's ProgressiveMediaSource is
-            // designed for finite files and may stall on the indefinite
-            // fMP4 stream that go2rtc emits.
-            preparePlayback(camera, mp4Url, hlsUrl, useMp4 = false)
+            // MP4 (fMP4 stream via home-api proxy) is the primary
+            // transport. The home-api /api/v1/cameras/:id/stream.mp4
+            // endpoint proxies go2rtc's stream.mp4 — a continuous
+            // fMP4 stream with chunked transfer encoding. ExoPlayer's
+            // ProgressiveMediaSource handles it natively.
+            //
+            // We do NOT use HLS as primary anymore because go2rtc's
+            // HLS Init() helper (internal/hls/session.go) waits only
+            // 3 seconds (60 × 50ms) for the consumer to produce a
+            // second packet before returning nil → handlerInit
+            // responds 404. On cold streams or transcoded HEVC→H.264
+            // paths the second packet can take longer than 3s, and
+            // ExoPlayer does not retry the init.mp4 request — it
+            // surfaces the 404 as a Source error. hls.js retries
+            // transparently, but ExoPlayer does not, so MP4-first
+            // is the robust choice. HLS remains as fallback in case
+            // the MP4 proxy is unavailable.
+            preparePlayback(camera, mp4Url, hlsUrl, useMp4 = true)
         }
 
         /**
@@ -174,8 +216,16 @@ class CameraAdapter(
             playerLoading = true
 
             val dataSourceFactory = DefaultHttpDataSource.Factory().apply {
-                setConnectTimeoutMs(8_000)
-                setReadTimeoutMs(15_000)
+                // Cloudflare Tunnel from China can be very slow and
+                // unreliable (tested: TTFB 1.4s average, 10s+ timeouts
+                // on ~1/3 of requests). Use generous timeouts so the
+                // stream has a chance to establish and the first moof/
+                // mdat has time to arrive after go2rtc's HEVC→H.264
+                // transcode produces a keyframe. The previous 8s/15s
+                // was too short — ExoPlayer would give up before the
+                // tunnel delivered the first byte on a slow request.
+                setConnectTimeoutMs(30_000)
+                setReadTimeoutMs(60_000)
                 setUserAgent("HomeDatacenter/1.3")
                 if (!token.isNullOrEmpty()) {
                     setDefaultRequestProperties(
@@ -193,6 +243,10 @@ class CameraAdapter(
                 stopInlinePlayback()
                 return
             }
+            android.util.Log.i(
+                TAG,
+                "preparePlayback: camera='${camera.name}' useMp4=$useMp4 url=${url.take(100)}",
+            )
             val mediaSource = if (useMp4) {
                 triedMp4 = true
                 ProgressiveMediaSource.Factory(dataSourceFactory)
@@ -239,39 +293,96 @@ class CameraAdapter(
                 .setPrioritizeTimeOverSizeThresholds(true)
                 .build()
 
-            val newPlayer = ExoPlayer.Builder(itemView.context)
-                .setLoadControl(loadControl)
-                .build().apply {
-                    setMediaSource(mediaSource)
-                    playWhenReady = true
-                    addListener(object : Player.Listener {
-                        override fun onPlaybackStateChanged(state: Int) {
-                            playerLoading = state == Player.STATE_BUFFERING
-                            if (state == Player.STATE_IDLE || state == Player.STATE_ENDED) {
-                                playerLoading = false
-                            }
-                        }
+            // Renderers: delegate to ExoPlayerRendererFactory, which
+            // enables software-decoder fallback AND on emulators filters
+            // out the broken c2.goldfish.h264.decoder (it initializes
+            // cleanly but fails on every frame with "decoder function
+            // returned error but continuing for this codec", which
+            // surfaces as a frozen spinner with no onPlayerError).
+            // On real devices the factory keeps the default
+            // MediaCodecSelector so hardware decoders are still preferred.
+            val renderersFactory = ExoPlayerRendererFactory.create(itemView.context)
 
-                        override fun onPlayerError(error: PlaybackException) {
-                            android.util.Log.e(
-                                TAG,
-                                "Playback error for '${camera.name}' (useMp4=$useMp4): ${error.message}",
-                                error,
-                            )
-                            // Failover: HLS → MP4, then MP4 → give up.
-                            if (!useMp4 && mp4Url.isNotBlank() && !triedMp4) {
-                                android.util.Log.i(
-                                    TAG,
-                                    "Falling back from HLS to MP4 for '${camera.name}'",
-                                )
-                                preparePlayback(camera, mp4Url, hlsUrl, useMp4 = true)
-                            } else {
-                                stopInlinePlayback()
-                            }
+            val newPlayer = ExoPlayer.Builder(itemView.context, renderersFactory)
+                .setLoadControl(loadControl)
+                .build()
+            // CRITICAL: attach the surface BEFORE prepare(). ExoPlayer
+            // creates the MediaCodec during prepare() — if no surface is
+            // attached at that point, the codec initializes in no-surface
+            // mode. Later surface attachment then fails with
+            // `setOutputSurface -- failed to set consumer usage (6/BAD_INDEX)`
+            // on software decoders (c2.android.avc.decoder), and 98% of
+            // decoded buffer transfers stay "unfetched" — the surface
+            // never consumes frames, state reaches READY but no video
+            // appears. This matches the working RecordingsDialog pattern
+            // where StyledPlayerView exists in XML and the player is set
+            // before the codec is created.
+            binding.playerView.player = newPlayer
+            binding.playerView.visibility = View.VISIBLE
+            // Route audio through the media stream (not notification) and
+            // request AudioFocus so playback pauses other apps' audio.
+            // Without this the player would still play sound, but at the
+            // system default volume and without ducking other audio
+            // sources — bad UX when the user has music playing. The
+            // handleAudioFocus=true flag automatically pauses playback
+            // when another app takes focus (e.g. phone call) and resumes
+            // when focus returns.
+            newPlayer.setAudioAttributes(
+                com.google.android.exoplayer2.audio.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MOVIE)
+                    .build(),
+                /* handleAudioFocus = */ true,
+            )
+            newPlayer.apply {
+                setMediaSource(mediaSource)
+                playWhenReady = true
+                addListener(object : Player.Listener {
+                    override fun onPlaybackStateChanged(state: Int) {
+                        val stateName = when (state) {
+                            Player.STATE_IDLE -> "IDLE"
+                            Player.STATE_BUFFERING -> "BUFFERING"
+                            Player.STATE_READY -> "READY"
+                            Player.STATE_ENDED -> "ENDED"
+                            else -> "UNKNOWN($state)"
                         }
-                    })
-                    prepare()
-                }
+                        android.util.Log.i(
+                            TAG,
+                            "onPlaybackStateChanged: camera='${camera.name}' state=$stateName useMp4=$useMp4",
+                        )
+                        playerLoading = state == Player.STATE_BUFFERING
+                        if (state == Player.STATE_IDLE || state == Player.STATE_ENDED) {
+                            playerLoading = false
+                        }
+                    }
+
+                    override fun onPlayerError(error: PlaybackException) {
+                        android.util.Log.e(
+                            TAG,
+                            "Playback error for '${camera.name}' (useMp4=$useMp4): ${error.message}",
+                            error,
+                        )
+                        // Failover: MP4 → HLS, then HLS → give up.
+                        // MP4 is primary (see startInlinePlayback comment);
+                        // HLS is the fallback for cases where the MP4
+                        // proxy returns 5xx or the fMP4 stream stalls.
+                        if (useMp4 && hlsUrl.isNotBlank() && !triedHls) {
+                            android.util.Log.i(
+                                TAG,
+                                "Falling back from MP4 to HLS for '${camera.name}'",
+                            )
+                            preparePlayback(camera, mp4Url, hlsUrl, useMp4 = false)
+                        } else {
+                            stopInlinePlayback()
+                        }
+                    }
+                })
+                prepare()
+                android.util.Log.i(
+                    TAG,
+                    "ExoPlayer prepared: camera='${camera.name}' useMp4=$useMp4, waiting for first frame...",
+                )
+            }
             player = newPlayer
             activePlayers.add(newPlayer)
         }
@@ -281,6 +392,10 @@ class CameraAdapter(
             player = null
             isPlaying = false
             playerLoading = false
+            // Detach surface and hide the player view so the Compose
+            // card (thumbnail / play button) becomes visible again.
+            binding.playerView.player = null
+            binding.playerView.visibility = View.GONE
             if (oldPlayer != null) {
                 activePlayers.remove(oldPlayer)
                 oldPlayer.release()
@@ -335,6 +450,12 @@ class CameraAdapter(
                         thumbnail = bitmap
                         thumbnailLoading = false
                         thumbnailError = bitmap == null
+                        // Store successful fetches in the LRU cache
+                        // so subsequent binds (scroll-back, config
+                        // change) don't re-hit the network.
+                        if (bitmap != null) {
+                            thumbnailCache[camera.id] = bitmap
+                        }
                     }
                 }
             }

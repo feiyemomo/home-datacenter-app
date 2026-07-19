@@ -21,6 +21,7 @@ import com.homedatacenter.app.data.model.Recording
 import com.homedatacenter.app.di.AppContainer
 import com.homedatacenter.app.databinding.DialogRecordingsBinding
 import com.homedatacenter.app.databinding.ItemRecordingBinding
+import com.homedatacenter.app.util.ExoPlayerRendererFactory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -116,7 +117,20 @@ class RecordingsDialog(
         binding.recyclerView.visibility = View.GONE
 
         player?.release()
-        player = ExoPlayer.Builder(context).build().apply {
+        // Delegate to ExoPlayerRendererFactory: on emulators it filters
+        // out the broken goldfish decoders, on real devices it just
+        // enables decoder fallback. See util/ExoPlayerRendererFactory.kt.
+        val renderersFactory = ExoPlayerRendererFactory.create(context)
+        player = ExoPlayer.Builder(context, renderersFactory).build().apply {
+            // Route audio through the media stream and let ExoPlayer
+            // manage AudioFocus — pauses on phone call, resumes after.
+            setAudioAttributes(
+                com.google.android.exoplayer2.audio.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MOVIE)
+                    .build(),
+                /* handleAudioFocus = */ true,
+            )
             val dataSourceFactory = DefaultHttpDataSource.Factory().apply {
                 setConnectTimeoutMs(15000)
                 setReadTimeoutMs(60000)

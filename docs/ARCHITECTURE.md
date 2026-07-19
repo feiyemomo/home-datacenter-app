@@ -210,6 +210,108 @@ val prefs = EncryptedSharedPreferences.create(
 
 ---
 
+## 4.5. Base URL 自动探测与切换
+
+### 设计目标
+
+App 在两种网络环境下都要能用：
+
+- **家庭局域网**：直连 NAS `http://192.168.31.234:8088/`，TTFB ~10ms
+- **外网**：走 Cloudflare Tunnel `https://api.feiyemomo.top/`，TTFB 1.4s+ 且丢包多
+
+两者速度差 70 倍以上。在局域网里用 Tunnel 会让视频流卡顿，在外网里访问局域网 IP 则超时。需要在运行时**自动选择**最快的可达 URL，并在网络切换（如用户走出 WiFi 覆盖）时**立即**切换。
+
+### 核心组件
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                  BaseUrlResolver                             │
+│                                                              │
+│  @Volatile resolved: String    (当前选中的 URL)               │
+│  @Volatile lastProbedAt: Long  (上次探测时间)                │
+│  AtomicBoolean probing         (防止并发探测)                │
+│  var onUrlChanged: (String) -> Unit?  (URL 变化回调)         │
+│                                                              │
+│  fun current(): String          (TTL 过期则触发异步重探)     │
+│  fun forceProbe()               (网络切换时立即重探)         │
+│  fun probeLanOnStartup()        (启动时同步重试 LAN)         │
+└──────────────────────────────────────────────────────────────┘
+              ▲
+              │ forceProbe()
+┌─────────────┴────────────────────────────────────────────────┐
+│              NetworkChangeMonitor                            │
+│                                                              │
+│  ConnectivityManager.NetworkCallback:                       │
+│    onAvailable     → forceProbe()  (新默认网络上线)          │
+│    onLost          → forceProbe()  (默认网络掉线)            │
+│    onCapabilitiesChanged (VALIDATED) → forceProbe()          │
+│      (关键：onAvailable 在 validation 之前 fire)             │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### 启动流程（`probeLanOnStartup`）
+
+```
+HomeCenterApp.onCreate()
+    │
+    │ prefsManager.baseUrl 为空（用户没手动指定）？
+    │
+    ▼
+probeLanOnStartup()  (主线程同步)
+    │
+    ├── Attempt 1: GET http://192.168.31.234:8088/api/v1/system/status
+    │     timeout 1000ms → 成功？resolved = LAN_URL, return
+    │
+    ├── Thread.sleep(400ms)  (backoff)
+    │
+    ├── Attempt 2: 重试（覆盖真机 WiFi 验证窗口）
+    │     timeout 1000ms → 成功？resolved = LAN_URL, return
+    │
+    └── 全部失败 → 调度 3s 后异步 probeSync() 兜底
+                    (届时 onCapabilitiesChanged 也会触发，重复调用是 no-op)
+```
+
+**为什么模拟器一次成功但真机要重试？**
+
+模拟器网络通过宿主 PC 桥接，PC 的 WiFi 在用户点 App 图标之前就已经 validated。真机上 `Application.onCreate` 在用户点击图标的瞬间执行，此时 Android 的 WiFi stack 可能还在做 validation（captive portal detection / DNS probe），路由还不可用。`onAvailable` 在 validation 完成之前就 fire，但此时 LAN probe 会失败。`onCapabilitiesChanged` 带 `NET_CAPABILITY_VALIDATED` 才是真正的「路由可用」信号。
+
+### 探测端点
+
+`GET /api/v1/system/status`（JWT 保护）：
+
+- HTTP 200 / 401 → API 存活（401 是 JWT 缺失，但说明 API 进程在跑）
+- HTTP 502 / 503 → nginx 起着但 API 容器挂了 → 视为不可达
+- HTTP 404 → nginx 路由错误 → 视为不可达
+- 网络异常（IOException）→ 不可达
+
+**不用 `/health`**：nginx 对未匹配路径走 `try_files /index.html`，会返回 200 + SPA HTML，即使 API 容器挂了也是 200，造成假阳性。`/api/v1/*` 一定走 `proxy_pass http://api:8080`，所以是真实的 API 健康指示。
+
+**不用 `HEAD`**：Gin 默认对 GET 路由的 HEAD 请求返回 404。已实测：`HEAD /api/v1/system/status` → 404，`GET` → 401。
+
+### 运行时切换
+
+- `current()`：每次调用检查 `now - lastProbedAt > TTL_MS`（5 分钟），若是则异步重探
+- `forceProbe()`：网络切换时立即重探（异步线程，不阻塞 caller）
+- `onUrlChanged` 回调：URL 变化时调 `AppContainer.resetApi()` 清掉缓存的 Retrofit / Repository
+
+### Dashboard 显示当前路径
+
+```
+fragment_dashboard.xml
+└── network quality card
+    └── pathChip (LinearLayout)
+        ├── pathDot (View, 8dp 圆点)
+        │   ├── 局域网 → bg circle_online (绿色)
+        │   └── 远程   → bg circle_warning (琥珀)
+        └── tvPath (TextView)
+            ├── "局域网"
+            └── "远程"
+```
+
+`DashboardFragment.updateBackendPath()` 在 `refreshAll()` 与 5s 状态轮询里调用，从 `container.baseUrlResolver.current()` 推断当前路径并更新 UI。
+
+---
+
 ## 5. WebSocket 推送
 
 ### 连接
@@ -291,24 +393,63 @@ container.alertEvents
 [startInlinePlayback]
     │  resolveMp4Url, resolveHlsUrl
     │
-    ├── HLS URL 存在 → preparePlayback(useMp4 = false)
+    ├── MP4 URL 存在 → preparePlayback(useMp4 = true)
     │       │
     │       ▼
-    │   [HlsMediaSource + DefaultLoadControl]
+    │   [ProgressiveMediaSource + DefaultLoadControl]
     │       │
     │       ├── onPlaybackStateChanged(READY) → 显示画面
     │       │
     │       └── onPlayerError → fallback
     │               │
     │               ▼
-    │           preparePlayback(useMp4 = true)
+    │           preparePlayback(useMp4 = false)  (HLS fallback)
     │               │
     │               └── onPlayerError → stopInlinePlayback
     │
-    └── HLS URL 不存在但 MP4 存在 → preparePlayback(useMp4 = true)
+    └── MP4 不存在但 HLS 存在 → preparePlayback(useMp4 = false)
             │
             └── onPlayerError → stopInlinePlayback
 ```
+
+**为什么 MP4 优先**（早期版本曾用 HLS 优先，后来倒回来）：
+
+go2rtc 的 HLS `Init()` helper（`internal/hls/session.go`）只等 3 秒（60 × 50ms）让 consumer 产出第二个 packet，否则返回 nil → `handlerInit` 响应 404。冷流（go2rtc 刚启动 RTSP 取流）或 HEVC→H.264 转码路径下 3 秒可能不够，ExoPlayer 又不会重试 init.mp4 请求，会把 404 直接上报为 Source error。hls.js 会自动重试，但 ExoPlayer 不会。MP4 stream 是连续 fMP4，不需要 init.mp4，ExoPlayer 的 `ProgressiveMediaSource` 能稳定处理。
+
+### Surface 时序（关键）
+
+`StyledPlayerView` 必须在 `item_camera.xml` 中**静态声明**（默认 `visibility=gone`），不能通过 Compose `AndroidView` 异步创建。`binding.playerView.player = newPlayer` 必须在 `newPlayer.prepare()` **之前**调用。
+
+如果违反：ExoPlayer 在 `prepare()` 时检测到无 surface，仍会创建 MediaCodec 实例，但 codec 在 `configure()` 阶段拿不到 surface，进入「无表面渲染」模式，导致：
+
+```
+I  MediaCodec: setOutputSurface -- failed to set consumer usage (BAD_INDEX)
+W  ACodec  ...  98% buffers unfetched
+```
+
+播放一直卡在 BUFFERING 状态。修复方式是把 Compose 的 `AndroidView { StyledPlayerView(...) }` 改成 XML 静态 `StyledPlayerView`，并在 `prepare()` 之前 `binding.playerView.player = player` + `binding.playerView.visibility = View.VISIBLE`。
+
+详见 [ERRORS.md §20](ERRORS.md#20-exoplayer-prepare-时无-surface-导致-mediacodec-bad_index)。
+
+### 音频路由
+
+```kotlin
+newPlayer.setAudioAttributes(
+    com.google.android.exoplayer2.audio.AudioAttributes.Builder()
+        .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MOVIE)
+        .build(),
+    /* handleAudioFocus = */ true,
+)
+```
+
+- `USAGE_MEDIA`：走媒体音量（不是通话 / 铃声 / 闹钟）
+- `CONTENT_TYPE_MOVIE`：让系统判断为视频内容，可能影响空间音频等
+- `handleAudioFocus=true`：来电时自动暂停，挂断后自动恢复
+
+**类型陷阱**：必须用 `com.google.android.exoplayer2.audio.AudioAttributes`，不能用 `android.media.AudioAttributes`。ExoPlayer 2.x 的 `setAudioAttributes` 方法签名要求前者，编译器会报「Argument type mismatch」。`USAGE_MEDIA` / `CONTENT_TYPE_MOVIE` 常量仍从 `android.media.AudioAttributes` 取。
+
+**后端配合**：后端 `internal/camera/registry.go` 的 `rtspURL()` 在 `cam.Capabilities["audio"]==true` 时给 go2rtc 流 URL 追加 `#audio=aac`，让 go2rtc 通过 ffmpeg 把摄像头的 PCMA 音频转码为 AAC。修改后通过 `UpdateAudio()` 重新调用 `AddStream` 让 go2rtc reload 流定义。HTTP 端点 `PUT /api/v1/cameras/:id/audio {enabled: bool}` 触发上述流程。
 
 ### URL 解析
 

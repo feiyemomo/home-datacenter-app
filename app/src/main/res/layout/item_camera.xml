@@ -1,5 +1,49 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.compose.ui.platform.ComposeView xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/composeView"
+<!--
+    Camera list item.
+
+    The camera card UI (thumbnail, play button, status badges, action
+    buttons) is rendered through the embedded ComposeView via the
+    CameraCard composable.
+
+    The StyledPlayerView is kept here in XML, NOT created inside the
+    Compose tree via AndroidView, so that it exists at ViewHolder
+    creation time. When the user taps play, CameraAdapter synchronously
+    sets binding.playerView.player = exoPlayer BEFORE calling
+    exoPlayer.prepare(). This guarantees ExoPlayer sees a valid surface
+    when it creates the MediaCodec, which avoids the no-surface codec
+    path that leaves subsequent frame transfers unfetched on software
+    decoders (c2.android.avc.decoder reports setOutputSurface failed
+    to set consumer usage BAD_INDEX when the surface is attached late,
+    after MediaCodec has already been initialized in no-surface mode).
+
+    Recording playback (RecordingsDialog) uses the same pattern:
+    StyledPlayerView declared in XML, player attached before prepare(),
+    and works correctly on the emulator. Live playback previously used
+    a Compose-created StyledPlayerView attached AFTER prepare(), which
+    is why recordings played but live streams showed only a spinner
+    (state reached READY but 98% of decoded buffers were unfetched
+    by the surface).
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
-    android:layout_height="wrap_content" />
+    android:layout_height="wrap_content">
+
+    <androidx.compose.ui.platform.ComposeView
+        android:id="@+id/composeView"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content" />
+
+    <com.google.android.exoplayer2.ui.StyledPlayerView
+        android:id="@+id/playerView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@android:color/black"
+        android:visibility="gone"
+        app:resize_mode="zoom"
+        app:show_buffering="when_playing"
+        app:show_timeout="0"
+        app:use_controller="true" />
+
+</FrameLayout>

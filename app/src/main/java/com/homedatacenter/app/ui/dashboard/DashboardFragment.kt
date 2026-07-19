@@ -126,12 +126,31 @@ class DashboardFragment : Fragment() {
     }
 
     private fun refreshAll() {
+        updateBackendPath()
         loadWeather()
         loadNetworkStatus()
         loadRecentAlerts()
         loadSystemStatus(onComplete = {
             if (_binding != null) binding.swipeRefresh.isRefreshing = false
         })
+    }
+
+    /**
+     * Updates the LAN / Remote chip on the network quality card.
+     * Reads [BaseUrlResolver.current] from the AppContainer and
+     * classifies the resolved URL as either "局域网" (LAN — green dot)
+     * or "远程" (Remote — amber dot, indicating the slower Cloudflare
+     * Tunnel path). Called on every refresh so the chip reflects any
+     * path switch made by the resolver's async re-probe.
+     */
+    private fun updateBackendPath() {
+        val mainActivity = activity as? MainActivity ?: return
+        val current = mainActivity.container.baseUrlResolver.current()
+        val isLan = current.contains("192.168.") || current.startsWith("http://")
+        binding.tvPath.text = if (isLan) "局域网" else "远程"
+        binding.pathDot.setBackgroundResource(
+            if (isLan) R.drawable.circle_online else R.drawable.circle_warning
+        )
     }
 
     // --- 5-second status polling (matches web Dashboard) ---
@@ -142,6 +161,12 @@ class DashboardFragment : Fragment() {
             while (isActive && !isHidden) {
                 delay(5_000L)
                 loadSystemStatus()
+                // Keep the LAN/Remote path chip in sync with the
+                // resolver's most recent result. Cheap (just reads a
+                // cached string + sets text) — safe to run every poll.
+                // The resolver's TTL prevents over-probing; we're just
+                // reading the value, not forcing a re-probe.
+                updateBackendPath()
             }
         }
     }
