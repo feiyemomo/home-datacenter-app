@@ -185,4 +185,40 @@
     <string name="action_create">创建</string>
     <string name="action_update">更新</string>
     <string name="action_settings">设置</string>
+
+    <!-- Network detail page (v1.5.1) -->
+    <string name="network_detail_title">网络详情</string>
+    <string name="network_detail_quality_section">连接质量</string>
+    <string name="network_detail_strategy_section">链路策略</string>
+    <string name="network_detail_ipv6_section">IPv6</string>
+    <string name="network_detail_nat_section">NAT</string>
+    <string name="network_detail_p2p_section">P2P</string>
+    <string name="network_detail_relay_section">中继</string>
+    <string name="network_detail_server_section">服务端点</string>
+    <string name="network_detail_mqtt_section">MQTT / WebSocket</string>
+    <string name="network_detail_initial">初始策略</string>
+    <string name="network_detail_actual">实际策略</string>
+    <string name="network_detail_quality_value">质量评分</string>
+    <string name="network_detail_checked_at">检测时间</string>
+    <string name="network_detail_ipv6_enabled">IPv6 已启用</string>
+    <string name="network_detail_ipv6_reachable">IPv6 可达</string>
+    <string name="network_detail_ipv6_address">IPv6 地址</string>
+    <string name="network_detail_nat_type">NAT 类型</string>
+    <string name="network_detail_public_ip">公网 IP</string>
+    <string name="network_detail_public_port">公网端口</string>
+    <string name="network_detail_p2p_supported">P2P 支持</string>
+    <string name="network_detail_p2p_reason">不支持原因</string>
+    <string name="network_detail_relay_available">中继可用</string>
+    <string name="network_detail_relay_type">中继类型</string>
+    <string name="network_detail_server_ip">服务端公网 IP</string>
+    <string name="network_detail_server_port">服务端公网端口</string>
+    <string name="network_detail_server_ipv6">服务端 IPv6</string>
+    <string name="network_detail_mqtt_connected">MQTT Broker</string>
+    <string name="network_detail_ws_clients">WebSocket 在线客户端</string>
+    <string name="network_detail_uptime">服务运行时长</string>
+    <string name="network_detail_refresh">刷新</string>
+    <string name="network_detail_yes">是</string>
+    <string name="network_detail_no">否</string>
+    <string name="network_detail_unknown">未知</string>
+    <string name="network_detail_load_failed">网络数据加载失败</string>
 </resources>

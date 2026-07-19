@@ -677,9 +677,63 @@ binding.composeView.setContent {
 - `pingInterval(30s)` 保活，避免重建 TCP
 - HLS segment 缓存走 OkHttp 内部缓存（默认 10MB）
 
+### 实时设备状态（v1.5.1）
+
+`DeviceAdapter` 显示三态（已吊销 / 在线 / 离线），在线状态来自 `SystemStatus.onlineDeviceIds`：
+
+```kotlin
+// DeviceAdapter.kt — Adapter 持有 immutable snapshot
+var onlineDeviceIds: Set<Long> = emptySet()
+    set(value) {
+        field = value
+        notifyItemRangeChanged(0, itemCount)
+    }
+
+// DevicesFragment.kt — 从 PrefsManager.cachedSystemStatus 解码后推送
+private fun applyOnlineSnapshot() {
+    val raw = container.prefsManager.cachedSystemStatus ?: return
+    val ids = container.getRepository().decodeSystemStatus(raw).onlineDeviceIds ?: emptyList()
+    adapter.onlineDeviceIds = ids.toSet()
+}
+```
+
+`DashboardFragment` 通过 5s 轮询 + WS `online_list` / `device.status` 事件维护 `onlineDeviceIds` 缓存到 `PrefsManager.cachedSystemStatus`（JSON 字符串）。`DevicesFragment.onResume` 与 `revokeDevice` 之后强制 `getSystemStatus(refreshCache=true)` 刷新缓存并 `applyOnlineSnapshot()` 推送到 Adapter。**没有把 WS 客户端提升到 AppContainer** —— 共享缓存而非共享连接，避免 DashboardFragment 已有的订阅/重连逻辑被破坏。
+
 ---
 
-## 12. 安全考量
+## 12. 网络详情页（v1.5.1）
+
+`NetworkDetailActivity` 是 Dashboard 网络质量卡片的二级页面，展示三类信息：
+
+1. **NetworkStatus**（来自 `GET /api/v1/network/status`，支持 `refresh=true` 强制刷新）：
+   - IPv6（启用 / 可达 / 地址）
+   - NAT（类型 / 公网 IP / 端口）
+   - P2P（支持 / 原因）
+   - Relay（可用 / 类型）
+   - 初始策略 vs 实际策略 + 5 颗星质量评分 + 检测时间
+2. **ServerEndpoint**（来自 `GET /api/v1/network/p2p/server-endpoint`）：服务端公网 IP / 端口 / IPv6 / NAT 类型 / 实际策略。**注意**：该端点仅在 LAN 可用（WebRTC 探测），远程路径下静默降级显示 "-"。
+3. **SystemStatus**（来自 `GET /api/v1/system/status`）：MQTT 在线状态 + WebSocket 在线客户端数 + 服务运行时长。
+
+### MQTT 调试入口
+
+后端目前未暴露 `/mqtt/*` 端点，MQTT 调试入口直接合并到网络详情页的"MQTT / WebSocket"分区，仅展示 `mqtt_connected` + `ws_clients` + `uptime_seconds` 三个字段。如果后续后端新增 `/mqtt/subscribe` 或 `/mqtt/status` 端点，可直接在 NetworkDetailActivity 增加新分区，无需改动其他模块。
+
+### 进入方式
+
+Dashboard 网络质量卡片（`fragment_dashboard.xml` 中 `cardNetwork`）点击跳转：
+
+```kotlin
+// DashboardFragment.kt
+binding.cardNetwork.setOnClickListener {
+    startActivity(Intent(requireContext(), NetworkDetailActivity::class.java))
+}
+```
+
+不新增底部 Tab —— 当前 5 个 Tab（主页 / 摄像头 / 报警 / 设备 / 设置）已满 Material `BottomNavigationView` 推荐上限。二级页面方案更符合 Material 设计规范。
+
+---
+
+## 13. 安全考量
 
 ### 本地存储
 

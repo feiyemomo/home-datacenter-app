@@ -286,12 +286,16 @@
 
             <!-- Network quality card (immediately under stat grid) -->
             <LinearLayout
+                android:id="@+id/cardNetwork"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
                 android:background="@drawable/bg_card_rounded"
                 android:padding="14dp"
-                android:layout_marginTop="6dp">
+                android:layout_marginTop="6dp"
+                android:clickable="true"
+                android:focusable="true"
+                android:foreground="?attr/selectableItemBackground">
 
                 <LinearLayout
                     android:layout_width="match_parent"

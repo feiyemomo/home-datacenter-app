@@ -1,5 +1,6 @@
 package com.homedatacenter.app.ui.dashboard
 
+import android.content.Intent
 import android.graphics.BitmapFactory
 import android.os.Bundle
 import android.view.LayoutInflater
@@ -24,6 +25,7 @@ import com.homedatacenter.app.databinding.ItemStatCardBinding
 import com.homedatacenter.app.ui.alerts.AlertListAdapter
 import com.homedatacenter.app.ui.alerts.AlertSnapshotDialogFragment
 import com.homedatacenter.app.ui.main.MainActivity
+import com.homedatacenter.app.ui.network.NetworkDetailActivity
 import com.homedatacenter.app.util.AnimationHelper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -86,6 +88,9 @@ class DashboardFragment : Fragment() {
             (activity as? MainActivity)?.let {
                 it.binding.bottomNav.selectedItemId = R.id.nav_alerts
             }
+        }
+        binding.cardNetwork.setOnClickListener {
+            startActivity(Intent(requireContext(), NetworkDetailActivity::class.java))
         }
 
         loadUserName()
