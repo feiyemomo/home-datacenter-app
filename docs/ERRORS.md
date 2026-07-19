@@ -923,6 +923,107 @@ newPlayer.prepare()
 
 ---
 
+## 21. 真机 LAN 探测仍然失败：OkHttp cleartext 被部分 ROM 拦截
+
+### 症状
+
+v1.4.3 的「2 次同步重试 + 3s 延迟异步重探」修复后，部分真机（特别是 MIUI / ColorOS）启动时仍然显示「远程」，无法切到局域网。`adb logcat` 显示每次 `probeUrl` 都是 `IOException`，即使手机在局域网内能 ping 通 NAS。
+
+### 根因
+
+两层原因叠加：
+
+1. **主线程阻塞过长**：旧版 `probeLanOnStartup()` 是 `Application.onCreate` 里的同步阻塞调用，最坏情况 2.4s（2 × 1000ms + 400ms）。在真机上 WiFi validation 还没完成时，2.4s 都用来等超时 — 既没有给 WiFi stack 更多时间，也浪费了主线程。
+
+2. **部分 ROM 拦截 OkHttp cleartext HTTP**：即使 `AndroidManifest.xml` 里 `usesCleartextTraffic=true` + `network_security_config.xml` 里 `base-config cleartextTrafficPermitted=true`，部分国产 ROM（MIUI / ColorOS / OriginOS）会通过 vendor 注入的「network policy」拦截 OkHttp 的明文 HTTP 请求。OkHttp 抛 `IOException`，probe 误判为「局域网不可达」。但同一时刻 `Socket.connect(192.168.31.234, 8088)` 是成功的 — vendor policy 只拦应用层 HTTP，不拦 TCP 层。
+
+### 修复
+
+[BaseUrlResolver.kt](../app/src/main/java/com/homedatacenter/app/util/BaseUrlResolver.kt) 重写为：
+
+1. **`probeLanOnStartup()` 改为后台守护线程异步执行**，不再阻塞主线程。第一个 API 请求可能落到默认的远程 URL，但 LAN 探测成功后会触发 `onUrlChanged` 重建 Retrofit，后续请求自动切到 LAN。
+
+2. **指数退避调度**（1.5s → 4s → 9s → 16s）：4 次重试覆盖真机 WiFi 验证窗口（实测 5-10s）。每次调度都检查 `resolved == LAN_URL`，已切到 LAN 则跳过剩余调度。
+
+3. **TCP socket 直连兜底**：HTTP 探测失败时再用 `Socket.connect()` 探测一次，任一成功即视为可达：
+
+```kotlin
+private fun probeSync() {
+    val lanHttpOk = probeUrl(LAN_URL, LAN_TIMEOUT_MS)
+    val lanTcpOk = if (!lanHttpOk) probeTcp(LAN_HOST, LAN_PORT, LAN_TIMEOUT_MS) else false
+    val lanAlive = lanHttpOk || lanTcpOk
+    // ...
+}
+
+private fun probeTcp(host: String, port: Int, timeoutMs: Int): Boolean {
+    return try {
+        Socket().use { it.connect(InetSocketAddress(host, port), timeoutMs); true }
+    } catch (e: Exception) { false }
+}
+```
+
+4. **`MainActivity.onCreate` / `onResume` 触发 `forceProbe()`**：进入主页时 WiFi 几乎一定已验证，是再次探测的最佳时机。
+
+### 预防
+
+- 国产 ROM 对明文 HTTP 的拦截是真实存在的，不能假设 `usesCleartextTraffic=true` 就万无一失
+- 网络可达性探测要有多手段 fallback（HTTP → TCP → DNS），单一手段容易被 vendor 拦截
+- 启动期的同步阻塞调用要尽量减少 — `Application.onCreate` 里阻塞 1s 以上都应改后台线程
+- 真机排查 LAN 探测失败时，先用 `adb shell` 跑 `nc -v 192.168.31.234 8088` 或 `echo > /dev/tcp/192.168.31.234/8088` 验证 TCP 层是否通
+
+---
+
+## 22. KDoc 块注释里的 `/api/*` 触发嵌套块注释解析错误
+
+### 症状
+
+`BaseUrlResolver.kt` 编译失败：
+
+```
+e: BaseUrlResolver.kt:354:1 Syntax error: Unclosed comment.
+```
+
+但代码里看起来所有 `/** */` 都正确闭合。
+
+### 根因
+
+Kotlin 的块注释**支持嵌套**。KDoc 注释里出现 `/api/*` 这样的文字时，`/*` 会被解析为开启一个嵌套块注释，导致后续的 `*/` 只关闭嵌套层，外层 `/**` 永远不闭合。
+
+具体案例：旧版注释包含
+
+```kotlin
+/**
+ * The probe target is GET /api/v1/system/status on the backend —
+ * a JWT-protected endpoint. nginx routes /api/* to the home-api
+ * container; ...
+ */
+```
+
+`/api/*` 中的 `/*` 在 Kotlin 解析器眼中是「开启嵌套块注释」，于是 `*/` 只关闭嵌套层，外层 `/**` 一直没闭合，文件后续所有内容都被吞进注释里，导致大量「Unresolved reference」错误。
+
+### 修复
+
+把 `/api/*` 改写成不含 `/*` 的描述，例如 `/api/ prefix`：
+
+```kotlin
+/**
+ * The probe target is GET /api/v1/system/status on the backend —
+ * a JWT-protected endpoint. nginx routes the /api/ prefix to the
+ * home-api container; ...
+ */
+```
+
+`//` 行注释里的 `/api/*` 不受影响 — 嵌套只发生在 `/* */` 块注释内。
+
+### 预防
+
+- **KDoc / 块注释里不要写 `/*` 字面量**，尤其是 URL 路径如 `/api/*` / `/foo/*` / `glob/*`
+- 用 `/api/` 或 `the /api/ prefix` 替代
+- 看到「Unclosed comment」但代码看着正常时，立即 grep `/\*` 找块注释里有没有意外的 `/*` 字面量
+- 行注释 `//` 里的 `/*` 不受影响，可以照常用
+
+---
+
 ## 总结：通用原则
 
 1. **Material 2 / 3 不能混用** — 主题 parent 和组件父样式必须对齐
@@ -940,3 +1041,5 @@ newPlayer.prepare()
 13. **真机网络时序与模拟器不同** — `onAvailable` 不可靠，用 `onCapabilitiesChanged` + `NET_CAPABILITY_VALIDATED`
 14. **RTSP 音频默认不可播放** — PCMA/PCMU 需要服务端转码到 AAC，go2rtc 流 URL 显式追加 `#audio=aac`
 15. **ExoPlayer 与 Compose `AndroidView` 的 surface 时序有 race** — `StyledPlayerView` 静态声明 + `playerView.player` 在 `prepare()` 之前设置
+16. **国产 ROM 可能拦截 OkHttp cleartext** — `usesCleartextTraffic=true` 不是万金油，HTTP 探测失败时用 raw TCP socket 兜底
+17. **KDoc 块注释里的 `/*` 会触发嵌套解析** — URL 路径 `/api/*` 改写为 `/api/ prefix`，行注释不受影响

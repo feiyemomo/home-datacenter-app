@@ -44,6 +44,26 @@ class MainActivity : AppCompatActivity() {
         setupFragments(savedInstanceState)
         setupNavigation()
         updateMenuByPermission()
+        // Kick off a LAN probe on UI entry. By the time MainActivity
+        // is created the user has waited through the launcher animation
+        // and Application.onCreate's initial probe schedule — but on
+        // real phones the WiFi stack may still have been unvalidated
+        // at that point. By MainActivity.onCreate the WiFi is almost
+        // certainly validated (the user can see the WiFi icon in the
+        // status bar), so this probe has a high probability of
+        // succeeding. It's a no-op if the resolver already picked LAN.
+        container.baseUrlResolver.forceProbe()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Returning to MainActivity from another activity (e.g. after
+        // the user changed WiFi settings, switched VPN, came back from
+        // background) is a strong signal to re-probe. forceProbe is a
+        // no-op if a probe is already in flight, and the TTL prevents
+        // over-probing in the common case (user is just switching
+        // tabs inside the app — no MainActivity.onResume fires).
+        container.baseUrlResolver.forceProbe()
     }
 
     private fun setupFragments(savedInstanceState: Bundle?) {

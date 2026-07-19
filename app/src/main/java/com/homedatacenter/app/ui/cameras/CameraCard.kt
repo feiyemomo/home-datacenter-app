@@ -52,8 +52,11 @@ fun CameraCard(
     thumbnailError: Boolean,
     isPlaying: Boolean,
     playerLoading: Boolean,
+    audioEnabled: Boolean,
+    hasAudioCapability: Boolean,
     onPlay: () -> Unit,
     onStop: () -> Unit,
+    onToggleAudio: () -> Unit,
     onRecordings: () -> Unit,
     onAlerts: () -> Unit,
     modifier: Modifier = Modifier,
@@ -62,9 +65,10 @@ fun CameraCard(
     // declared in item_camera.xml (synchronously attached to ExoPlayer
     // BEFORE prepare() — see CameraAdapter.preparePlayback). This
     // Compose card only renders the overlay controls (close button +
-    // loading spinner) on a transparent background so the video
-    // shows through. See the comment in item_camera.xml for why the
-    // StyledPlayerView is in XML rather than created via AndroidView.
+    // audio toggle + loading spinner) on a transparent background so
+    // the video shows through. See the comment in item_camera.xml for
+    // why the StyledPlayerView is in XML rather than created via
+    // AndroidView.
     Card(
         modifier = modifier
             .fillMaxWidth()
@@ -168,21 +172,55 @@ fun CameraCard(
                 }
             }
 
-            // Close button overlay — always shown on top when playing,
-            // so the user can stop playback. The video itself is rendered
-            // by the XML StyledPlayerView underneath this transparent Box.
+            // Control bar overlay — shown only while playing so the
+            // user can stop playback and toggle audio without leaving
+            // the live stream. The buttons sit on top of the
+            // StyledPlayerView's video surface (transparent background).
             if (isPlaying) {
-                Button(
-                    onClick = onStop,
+                Row(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(10.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color.Black.copy(alpha = 0.68f),
-                    ),
-                    contentPadding = ButtonDefaults.ContentPadding,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text("关闭", color = Color.White, fontSize = 12.sp)
+                    // Audio toggle: only shown if the camera has
+                    // audio capability (camera.capabilities.audio).
+                    // When the device's backend stream URL includes
+                    // #audio=aac the live MP4 stream carries an AAC
+                    // audio track; ExoPlayer decodes it natively. The
+                    // toggle controls ExoPlayer.volume (1.0 / 0.0)
+                    // rather than adding/removing the audio track —
+                    // that way we don't need to re-prepare the
+                    // media source on each toggle.
+                    if (hasAudioCapability) {
+                        Button(
+                            onClick = onToggleAudio,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (audioEnabled) {
+                                    Color.Black.copy(alpha = 0.68f)
+                                } else {
+                                    OfflineColor.copy(alpha = 0.78f)
+                                },
+                            ),
+                            contentPadding = ButtonDefaults.ContentPadding,
+                        ) {
+                            Text(
+                                text = if (audioEnabled) "🔊" else "🔇",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                            )
+                        }
+                    }
+                    Button(
+                        onClick = onStop,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color.Black.copy(alpha = 0.68f),
+                        ),
+                        contentPadding = ButtonDefaults.ContentPadding,
+                    ) {
+                        Text("关闭", color = Color.White, fontSize = 12.sp)
+                    }
                 }
             }
 

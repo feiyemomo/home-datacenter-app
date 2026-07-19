@@ -3,7 +3,7 @@
 家庭数据中心 Android 客户端 — 一个用 **Kotlin + Jetpack Compose + ExoPlayer** 实现的家庭 NVR / IoT 控制台，配合 [home-datacenter](https://github.com/feiyemomo/home-datacenter) 后端使用，提供摄像头预览、HLS 直播（含音频）、录像回放、报警查看、设备状态、天气信息、局域网/远程自动切换和实时 WebSocket 推送。
 
 > 服务端项目：<https://github.com/feiyemomo/home-datacenter>
-> 当前版本：**v1.4.3**（versionCode 18）
+> 当前版本：**v1.4.4**（versionCode 19）
 
 ---
 
@@ -35,26 +35,34 @@
 | Compile SDK | 36 |
 | Java / Kotlin | 17 / 2.0 |
 | AGP | 9.2.1 |
-| 当前版本 | 1.4.3 (versionCode 18) |
+| 当前版本 | 1.4.4 (versionCode 19) |
 | 默认服务器 | `https://api.feiyemomo.top/`（远程） / `http://192.168.31.234:8088/`（局域网，自动探测） |
 
-App 通过 `(user_id, access_key)` 换取 JWT 后访问 `home-datacenter` 的 REST API 与 WebSocket。**BaseUrlResolver** 在启动时同步探测局域网 `http://192.168.31.234:8088/` 是否可达（TTFB ~10ms vs Cloudflare Tunnel 1.4s+），可达则切到局域网，否则走远程 Cloudflare Tunnel。NetworkChangeMonitor 注册 ConnectivityManager.NetworkCallback，在 WiFi/移动网络切换时立即触发 re-probe，无需等 5 分钟 TTL。摄像头直播走 go2rtc 暴露的 MP4（主）+ HLS（备），后端根据摄像头 `capabilities.audio` 在 go2rtc 流 URL 上自动追加 `#audio=aac` 启用音频转码。
+App 通过 `(user_id, access_key)` 换取 JWT 后访问 `home-datacenter` 的 REST API 与 WebSocket。**BaseUrlResolver** 在启动时通过后台守护线程异步探测局域网 `http://192.168.31.234:8088/` 是否可达（TTFB ~10ms vs Cloudflare Tunnel 1.4s+），可达则切到局域网，否则走远程 Cloudflare Tunnel。启动调度采用指数退避重试（1.5s → 4s → 9s → 16s），覆盖真机「WiFi connected but not validated」窗口；同时附加 TCP socket 直连探测作为 OkHttp cleartext 拒绝时的兜底。NetworkChangeMonitor 注册 ConnectivityManager.NetworkCallback，在 WiFi/移动网络切换时立即触发 re-probe，无需等 5 分钟 TTL。摄像头直播走 go2rtc 暴露的 MP4（主）+ HLS（备），后端根据摄像头 `capabilities.audio` 在 go2rtc 流 URL 上自动追加 `#audio=aac` 启用音频转码，前端通过 ExoPlayer `volume` 控制静音/取消静音。
 
 ---
 
 ## 功能特性
 
 - **首页（Dashboard）**：天气卡片 + 系统状态网格（MQTT / 设备 / 摄像头 / 运行时长） + 网络质量卡片（含**当前路径标签**：局域网=绿点 / 远程=琥珀点，每 5s 刷新） + 最近报警列表 + 实时检测 WS 横幅。
-- **摄像头（Cameras）**：缩略图卡片 + 点击内联直播（MP4 优先 + 音频支持） + 录像回放对话框（拖动进度条） + 单摄像头的报警快照 / 剪辑对话框。
+- **摄像头（Cameras）**：缩略图卡片 + 点击内联直播（MP4 优先 + 音频支持） + **播放时显示音频开关按钮**（仅在摄像头 `capabilities.audio=true` 时显示，🔊/🔇 切换 ExoPlayer `volume`，无需重新 prepare） + 录像回放对话框（拖动进度条） + 单摄像头的报警快照 / 剪辑对话框。
 - **报警（Alerts）**：报警列表，可展开查看事件 ID / 抓拍时间 / 检测区域，支持跳转摄像头页和打开快照模态。
 - **设备（Devices）**：所有已绑定设备的状态卡片，支持撤销设备。
 - **设置（Settings）**：主题切换（明 / 暗） + 关于信息 + 退出登录。
 - **登录（Login）**：user_id + access_key 设备绑定，登录后 JWT 持久化于 EncryptedSharedPreferences。
 - **底部导航**：Material 3 ActiveIndicator 胶囊样式，5 个 Tab（主页 / 设备 / 摄像头 / 报警 / 设置），高度 72dp 防止文字与图标重叠。
 - **网络层**：OkHttp 强制 HTTP/1.1 + 30s/60s/90s 超时 + 重试，针对 Cloudflare Tunnel 在移动网络上偶发的 stream 关闭问题。
-- **LAN/Remote 自动切换**：启动时 `BaseUrlResolver.probeLanOnStartup()` 同步重试 2 次（含 400ms backoff）+ 失败后延迟 3s 异步重探，覆盖真机「WiFi connected but not validated」窗口；运行时 5 分钟 TTL 异步重探。
+- **LAN/Remote 自动切换**（v1.4.4 重写）：
+  - 启动调度改为后台守护线程异步执行（不再阻塞主线程），指数退避重试 4 次（1.5s → 4s → 9s → 16s），覆盖真机 WiFi 验证窗口（5-10s）。
+  - 在 HTTP 探测之外附加 TCP socket 直连探测作为兜底 — 部分 ROM（MIUI / ColorOS）即使 `usesCleartextTraffic=true` 也会拦截 OkHttp 的明文 HTTP 请求，但 raw socket 直连不受影响。
+  - `MainActivity.onCreate` 与 `onResume` 触发 `forceProbe()` — 用户进入主页时 WiFi 几乎一定已验证，是再次探测的最佳时机。
+  - 运行时 5 分钟 TTL 异步重探。
 - **实时网络监听**：`NetworkChangeMonitor` 注册 `ConnectivityManager.NetworkCallback`，`onAvailable` / `onLost` / `onCapabilitiesChanged`（含 `NET_CAPABILITY_VALIDATED`）时立即触发 `forceProbe()`，无需等 TTL。
-- **音频直播**：后端 `rtspURL()` 在摄像头 `capabilities.audio=true` 时追加 `#audio=aac` 启用 ffmpeg 转码（PCMA→AAC），ExoPlayer 通过 `setAudioAttributes(USAGE_MEDIA, CONTENT_TYPE_MOVIE, handleAudioFocus=true)` 走媒体音量并在来电时自动暂停。
+- **音频直播**：
+  - 后端 `rtspURL()` 在摄像头 `capabilities.audio=true` 时追加 `#audio=aac` 启用 ffmpeg 转码（PCMA→AAC）。
+  - ExoPlayer 通过 `setAudioAttributes(USAGE_MEDIA, CONTENT_TYPE_MOVIE, handleAudioFocus=true)` 走媒体音量并在来电时自动暂停。
+  - 前端通过 `ExoPlayer.volume` 控制静音/取消静音，无需重新 prepare media source（瞬间切换）。
+  - `onTracksChanged` 回调日志输出 video/audio 轨道数量，便于排查「无声」问题是否是后端轨道缺失。
 - **实时推送**：WebSocket 客户端，订阅 `device.status` / `camera.alert` / `automation.fired` 等事件，主页横幅实时滚动。
 
 ---

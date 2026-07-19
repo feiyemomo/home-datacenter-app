@@ -257,19 +257,29 @@ HomeCenterApp.onCreate()
     │ prefsManager.baseUrl 为空（用户没手动指定）？
     │
     ▼
-probeLanOnStartup()  (主线程同步)
+probeLanOnStartup()  (后台守护线程异步 — 不阻塞主线程)
     │
-    ├── Attempt 1: GET http://192.168.31.234:8088/api/v1/system/status
-    │     timeout 1000ms → 成功？resolved = LAN_URL, return
+    ├── T=0s   立即 forceProbe() (后台)
+    │   ├── HTTP GET http://192.168.31.234:8088/api/v1/system/status
+    │   │     timeout 1500ms → 成功？resolved = LAN_URL, return
+    │   └── HTTP 失败 → TCP Socket connect 192.168.31.234:8088
+    │         timeout 1500ms → 成功？resolved = LAN_URL, return
     │
-    ├── Thread.sleep(400ms)  (backoff)
-    │
-    ├── Attempt 2: 重试（覆盖真机 WiFi 验证窗口）
-    │     timeout 1000ms → 成功？resolved = LAN_URL, return
-    │
-    └── 全部失败 → 调度 3s 后异步 probeSync() 兜底
-                    (届时 onCapabilitiesChanged 也会触发，重复调用是 no-op)
+    ├── T=1.5s forceProbe()  (覆盖真机 WiFi 验证窗口)
+    ├── T=4s   forceProbe()  (覆盖慢 ROM 的 captive portal 验证)
+    ├── T=9s   forceProbe()  (覆盖 DNS resolver 慢初始化)
+    └── T=16s  forceProbe()  (last-ditch 兜底)
 ```
+
+**v1.4.4 关键改动**：
+
+1. **不再阻塞主线程**：旧版 `probeLanOnStartup()` 是 `Application.onCreate` 里的同步 2.4s 阻塞调用，在真机上甚至可能触发 ANR。新版改为通过 `forceProbe()` 异步执行 — 第一个 API 请求可能落到默认的远程 URL，但 LAN 探测成功后会触发 `onUrlChanged` 重建 Retrofit，后续请求自动切到 LAN。
+
+2. **指数退避调度**：1.5s → 4s → 9s → 16s，总等待 16s 覆盖真机 WiFi 验证窗口（实测可达 5-10s）。每次调度都检查 `resolved == LAN_URL`，已切到 LAN 则跳过剩余调度（电池/流量友好）。
+
+3. **TCP socket 直连兜底**：部分 ROM（MIUI / ColorOS）即使 `usesCleartextTraffic=true` + `networkSecurityConfig` 配置正确，也会通过 vendor 注入的「network policy」拦截 OkHttp 的明文 HTTP 请求。但 raw socket 直连不受影响 — 加上 TCP 探测作为 HTTP 失败后的兜底，避免误判为「局域网不可达」。
+
+4. **MainActivity.onCreate / onResume 触发**：进入主页时 WiFi 几乎一定已验证，是再次探测的最佳时机。`forceProbe()` 是 no-op 如果已有探测在飞行中。
 
 **为什么模拟器一次成功但真机要重试？**
 

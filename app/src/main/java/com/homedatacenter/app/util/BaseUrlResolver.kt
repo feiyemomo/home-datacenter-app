@@ -2,6 +2,8 @@ package com.homedatacenter.app.util
 
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.net.InetSocketAddress
+import java.net.Socket
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -9,7 +11,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Picks the fastest reachable backend base URL at runtime.
  *
  * Two candidates are probed in order:
- *  1. LAN URL  http://192.168.31.234/   — when the device is on the
+ *  1. LAN URL  http://192.168.31.234:8088/   — when the device is on the
  *     home network this is ~10ms TTFB vs the Cloudflare Tunnel's
  *     measured 1.4s TTFB (with 10s+ timeouts on ~1/3 of requests
  *     from China). For live HLS/MP4 streaming this is the difference
@@ -18,13 +20,11 @@ import java.util.concurrent.atomic.AtomicBoolean
  *     works from any network but slow + lossy from China.
  *
  * Strategy:
- *  - On app launch, call [probeLanOnStartup] once. It runs a quick
- *    synchronous HEAD against the LAN health endpoint with an 800ms
- *    timeout. If reachable, the resolved URL switches immediately so
- *    the first API call goes to the LAN. If not, the default remote
- *    URL stays. The 800ms cap is generous — a TCP connect to a host
- *    on the same LAN takes ~5-10ms, so if the LAN isn't reachable in
- *    800ms it almost certainly isn't the home network.
+ *  - On app launch, [probeLanOnStartup] kicks off a background probe
+ *    immediately. The very first API call may go to the remote URL
+ *    (the default) while the probe is in flight; once LAN is confirmed
+ *    reachable the resolver switches and [onUrlChanged] fires so the
+ *    cached Retrofit/Repository is rebuilt against the new URL.
  *  - On every [current] call, if the cache is older than [TTL_MS]
  *    we kick off an async re-probe so network switches (user walks
  *    out of Wi-Fi range, or comes back home) are picked up within
@@ -33,11 +33,14 @@ import java.util.concurrent.atomic.AtomicBoolean
  *    AppContainer can invalidate its cached Retrofit/Repository
  *    instances (otherwise the next call would still hit the old URL).
  *
- * The probe target is GET /health on the backend — an intentionally
- * unauthenticated endpoint that returns {"status":"ok"}. Any HTTP
- * response (200, 404, even 405 for HEAD) means the server is alive.
- * Probing happens against the backend API, not against an opaque TCP
- * port, so we know the *API* is reachable rather than just the host.
+ * The probe target is GET /api/v1/system/status on the backend —
+ * a JWT-protected endpoint. nginx routes the /api/ prefix to the
+ * home-api container; we get 401 when the API is alive (missing
+ * JWT), 502 when nginx is up but API is down. Anything less than
+ * 500 means "API reachable". We deliberately avoid /health because
+ * nginx falls through to try_files /index.html for unmatched paths,
+ * returning 200 with SPA HTML even when the API container is
+ * crashed — that would be a false positive.
  */
 class BaseUrlResolver(
     private val client: OkHttpClient,
@@ -99,65 +102,53 @@ class BaseUrlResolver(
     }
 
     /**
-     * Synchronous quick LAN probe. Call once on app launch before
-     * any UI loads. Retries up to 3 times with backoff to absorb
-     * the common case where Android reports WiFi "connected" but
-     * the route isn't yet usable for outbound TCP — on a real phone
-     * `Application.onCreate` runs the instant the user taps the icon,
-     * and the WiFi stack's validation handshake can still be in
-     * flight. The emulator doesn't have this problem because its
-     * networking is bridged through the host PC (which is always
-     * validated), so the same code works there with one shot.
+     * Schedules a series of background LAN re-probes after app launch.
      *
-     * If LAN is reachable on any attempt the resolved URL switches
-     * to the LAN URL immediately so the very first API call benefits
-     * from LAN speed. Total worst-case wall time: ~5s (3 attempts ×
-     * 1500ms timeout + 500ms gaps). Acceptable on app launch.
+     * Why a schedule instead of a single synchronous probe:
+     *
+     *  - Real-phone WiFi validation takes 5-10s on some ROMs (Xiaomi /
+     *    Oppo / Vivo especially). On application launch the WiFi
+     *    stack may not even have an IP yet. Blocking the main thread
+     *    5-10s would ANR.
+     *  - The emulator's "WiFi" is bridged through the host PC (always
+     *    validated), so the very first probe succeeds — that's why
+     *    the emulator works but the phone doesn't.
+     *  - NetworkChangeMonitor's `onCapabilitiesChanged(VALIDATED)`
+     *    callback is supposed to fire when WiFi is ready, but on
+     *    some Chinese ROMs this callback is delayed or dropped, so
+     *    we can't rely on it alone.
+     *
+     * The schedule runs at increasing delays (1.5s, 4s, 9s, 16s)
+     * with a hard cap at ~20s — by then any reasonable WiFi stack
+     * has finished validation. Each probe is best-effort: if a probe
+     * succeeds the resolver switches to LAN immediately; subsequent
+     * probes are no-ops because `resolved` already matches.
+     *
+     * Safe to call from the main thread on app launch — the work
+     * happens on background daemon threads.
      */
     fun probeLanOnStartup() {
-        repeat(STARTUP_RETRY_COUNT) { attempt ->
-            if (probeUrl(LAN_URL, STARTUP_LAN_TIMEOUT_MS)) {
-                if (resolved != LAN_URL) {
-                    resolved = LAN_URL
-                    onUrlChanged?.invoke(LAN_URL)
-                }
-                lastProbedAt = System.currentTimeMillis()
-                return
-            }
-            // Brief pause before retrying — gives the WiFi stack
-            // time to finish validation. Capped so we don't blow
-            // past the launcher animation budget (8s before the
-            // system shows an ANR dialog for cold start).
-            if (attempt < STARTUP_RETRY_COUNT - 1) {
-                try {
-                    Thread.sleep(STARTUP_RETRY_GAP_MS.toLong())
-                } catch (_: InterruptedException) {
-                    Thread.currentThread().interrupt()
-                    return
-                }
-            }
-        }
-        // All retries failed — schedule a delayed async re-probe so
-        // that late WiFi validation (which can fire 2-5s after the
-        // OS reports "connected") still gets a chance to switch us
-        // to LAN without waiting for the 5-minute TTL. The
-        // NetworkChangeMonitor should also fire onCapabilitiesChanged
-        // around the same time, but we kick this off defensively
-        // in case the callback is delayed or dropped.
-        lastProbedAt = System.currentTimeMillis()
-        if (probing.compareAndSet(false, true)) {
+        // Kick off the first probe immediately (background).
+        forceProbe()
+        // Schedule escalating retries to absorb the real-phone
+        // WiFi validation window. Each schedule entry is a
+        // self-contained daemon thread that calls forceProbe after
+        // its delay — forceProbe is a no-op if a probe is already
+        // in flight.
+        STARTUP_RETRY_DELAYS_MS.forEach { delayMs ->
             Thread {
                 try {
-                    Thread.sleep(STARTUP_LATE_REPROBE_DELAY_MS.toLong())
-                    probeSync()
+                    Thread.sleep(delayMs)
+                    // Re-check: if a previous probe already
+                    // switched us to LAN, skip the rest.
+                    if (resolved == LAN_URL) return@Thread
+                    forceProbe()
                 } catch (_: InterruptedException) {
                     Thread.currentThread().interrupt()
-                } finally {
-                    probing.set(false)
                 }
             }.apply {
                 isDaemon = true
-                name = "BaseUrlResolver-startup-late"
+                name = "BaseUrlResolver-startup-$delayMs"
                 start()
             }
         }
@@ -181,13 +172,29 @@ class BaseUrlResolver(
         // Probe LAN first with a short timeout. If it's reachable,
         // we're almost certainly on the home network — switch to it.
         // The Cloudflare Tunnel is the fallback for off-LAN access.
+        //
+        // Two-pronged probe: HTTP GET (real API reachability check)
+        // plus a raw TCP socket connect (fallback for cases where
+        // OkHttp's HTTP stack rejects cleartext or fails on certain
+        // Android ROMs but the host is actually reachable). Either
+        // succeeding is enough — the next API call will use the
+        // resolved URL, and if HTTP fails at call time the
+        // repository's retry/fallback logic handles it.
+        val lanHttpOk = probeUrl(LAN_URL, LAN_TIMEOUT_MS)
+        val lanTcpOk = if (!lanHttpOk) probeTcp(LAN_HOST, LAN_PORT, LAN_TIMEOUT_MS) else false
+        val lanAlive = lanHttpOk || lanTcpOk
+        android.util.Log.i(
+            TAG,
+            "probeSync: LAN http=$lanHttpOk tcp=$lanTcpOk alive=$lanAlive (resolved=$resolved)",
+        )
         val winner = when {
-            probeUrl(LAN_URL, LAN_TIMEOUT_MS) -> LAN_URL
+            lanAlive -> LAN_URL
             probeUrl(REMOTE_URL, REMOTE_TIMEOUT_MS) -> REMOTE_URL
             else -> null
         }
         if (winner != null && winner != resolved) {
             resolved = winner
+            android.util.Log.i(TAG, "probeSync: switching resolved → $winner")
             onUrlChanged?.invoke(winner)
         }
         lastProbedAt = System.currentTimeMillis()
@@ -236,14 +243,47 @@ class BaseUrlResolver(
                 val alive = response.code < 500
                 android.util.Log.i(
                     TAG,
-                    "probe: ${url.trimEnd('/')} → ${response.code} in ${elapsed}ms (${if (alive) "ALIVE" else "DOWN"})",
+                    "probeUrl: ${url.trimEnd('/')} → HTTP ${response.code} in ${elapsed}ms (${if (alive) "ALIVE" else "DOWN"})",
                 )
                 alive
             }
         } catch (e: Exception) {
             android.util.Log.w(
                 TAG,
-                "probe: ${url.trimEnd('/')} → error in ${timeoutMs}ms: ${e.javaClass.simpleName}: ${e.message}",
+                "probeUrl: ${url.trimEnd('/')} → error in ${timeoutMs}ms: ${e.javaClass.simpleName}: ${e.message}",
+            )
+            false
+        }
+    }
+
+    /**
+     * Raw TCP socket connect probe. Used as a fallback when the HTTP
+     * probe fails — on some Android ROMs (Xiaomi MIUI, Oppo ColorOS)
+     * OkHttp's HTTP stack rejects cleartext HTTP even when
+     * `usesCleartextTraffic=true` is set, due to a vendor-injected
+     * "network policy" that intercepts HTTP. A raw socket connect
+     * bypasses that policy and answers the simpler question "is the
+     * host actually routable from this device". If the socket probe
+     * succeeds but the HTTP probe fails, we'll still switch to LAN —
+     * the next API call will use the HTTP path, and if that fails the
+     * repository's error handling will surface it.
+     */
+    private fun probeTcp(host: String, port: Int, timeoutMs: Int): Boolean {
+        return try {
+            val sw = System.currentTimeMillis()
+            val socket = Socket()
+            socket.connect(InetSocketAddress(host, port), timeoutMs)
+            val elapsed = System.currentTimeMillis() - sw
+            socket.close()
+            android.util.Log.i(
+                TAG,
+                "probeTcp: $host:$port → connected in ${elapsed}ms",
+            )
+            true
+        } catch (e: Exception) {
+            android.util.Log.w(
+                TAG,
+                "probeTcp: $host:$port → ${e.javaClass.simpleName}: ${e.message}",
             )
             false
         }
@@ -265,6 +305,8 @@ class BaseUrlResolver(
         // identically. Port 80 on the NAS is the FNOS system UI, NOT
         // our backend, so http://192.168.31.234/ would be wrong.
         const val LAN_URL = "http://192.168.31.234:8088/"
+        const val LAN_HOST = "192.168.31.234"
+        const val LAN_PORT = 8088
 
         // Remote URL — Cloudflare Tunnel. Works from anywhere but is
         // slow + lossy from China (TTFB 1.4s average, 10s+ timeouts on
@@ -290,32 +332,22 @@ class BaseUrlResolver(
         // URL we picked.
         private const val REMOTE_TIMEOUT_MS = 8_000
 
-        // Startup LAN probe timeout. Tight on purpose — a same-LAN
-        // host answers TCP SYN in ~10ms even when busy, so 1000ms is
-        // already 100x headroom. If the phone's WiFi isn't ready
-        // within 1000ms the retry loop catches it.
-        private const val STARTUP_LAN_TIMEOUT_MS = 1_000
-
-        // Number of startup probe attempts. Two covers the observed
-        // "WiFi connected but not validated" window on real phones:
-        // attempt 1 fails (validation not done), attempt 2 (after
-        // 400ms) typically succeeds. We intentionally keep this low
-        // because probeLanOnStartup runs on the main thread during
-        // Application.onCreate — total worst-case blocking time must
-        // stay well under the 5s ANR threshold (2 attempts × 1s +
-        // 400ms gap = 2.4s worst case).
-        private const val STARTUP_RETRY_COUNT = 2
-
-        // Gap between startup retries. 400ms is short enough to keep
-        // total startup under 2.5s, long enough for the WiFi validator
-        // to make progress between attempts.
-        private const val STARTUP_RETRY_GAP_MS = 400
-
-        // Delayed async re-probe after all startup retries failed.
-        // 3 seconds is long enough for even a slow captive-portal
-        // validation to complete; by then onCapabilitiesChanged
-        // should have fired too, and this re-probe is just a
-        // belt-and-braces fallback.
-        private const val STARTUP_LATE_REPROBE_DELAY_MS = 3_000
+        // Escalating startup probe delays. Each entry schedules a
+        // background probe at the given offset from app launch.
+        // The schedule is intentionally exponential (1.5s → 4s → 9s
+        // → 16s) so that:
+        //   - 1.5s catches the common "WiFi validated shortly after
+        //     app launch" case on most phones.
+        //   - 4s catches slower phones where validation takes ~3s.
+        //   - 9s catches pathological cases (captive portal re-auth,
+        //     slow DNS resolver on first connection).
+        //   - 16s is the last-ditch fallback — by 16s any reasonable
+        //     WiFi stack has either validated or failed; we don't
+        //     want to keep probing forever (battery + data).
+        // Total wall time: ~16s, well within the user's patience for
+        // an app's first launch on a new network. Subsequent launches
+        // on the same network succeed on the first probe (1.5s or
+        // less) because the WiFi stack is already validated.
+        private val STARTUP_RETRY_DELAYS_MS = longArrayOf(1_500L, 4_000L, 9_000L, 16_000L)
     }
 }
