@@ -4,6 +4,7 @@ import android.content.Context
 import com.homedatacenter.app.data.api.HomeCenterApi
 import com.homedatacenter.app.data.api.NetworkFactory
 import com.homedatacenter.app.data.repository.HomeCenterRepository
+import com.homedatacenter.app.util.BaseUrlResolver
 import com.homedatacenter.app.util.PrefsManager
 import okhttp3.OkHttpClient
 
@@ -13,6 +14,26 @@ class AppContainer(private val context: Context) {
 
     val okHttpClient: OkHttpClient by lazy {
         NetworkFactory.okHttpClient(enableLogging = true)
+    }
+
+    /**
+     * Picks between LAN (http://192.168.31.234/) and remote
+     * (https://api.feiyemomo.top/) at runtime by probing /health.
+     * When the device is on the home network the LAN URL is preferred
+     * because it's ~10ms TTFB vs the Cloudflare Tunnel's 1.4s+.
+     *
+     * Call [baseUrlResolver.probeLanOnStartup] once on app launch so
+     * the first API call benefits from LAN speed (if available).
+     */
+    val baseUrlResolver: BaseUrlResolver by lazy {
+        BaseUrlResolver(okHttpClient).also { resolver ->
+            resolver.onUrlChanged = { _ ->
+                // When the resolved URL changes, invalidate the cached
+                // Retrofit/Repository so the next call builds a new
+                // instance against the new URL.
+                resetApi()
+            }
+        }
     }
 
     private var currentBaseUrl: String = ""
@@ -30,14 +51,18 @@ class AppContainer(private val context: Context) {
     }
 
     /**
-     * Always returns a non-null base URL. The user-configurable server
-     * URL setting was removed (server is fixed/managed); this falls
-     * back to [DEFAULT_BASE_URL] when the pref is unset. Fragments that
-     * build full URLs (e.g. weather, snapshot, mp4 stream) should use
-     * this instead of [PrefsManager.baseUrl] to avoid silently
-     * returning early when the pref is null.
+     * Always returns a non-null base URL. Resolves between LAN and
+     * remote at runtime via [baseUrlResolver] when no explicit user
+     * override is set. Falls back to [DEFAULT_BASE_URL] when the
+     * resolver has not yet probed (which only happens before
+     * [baseUrlResolver.probeLanOnStartup] runs on app launch).
+     *
+     * Fragments that build full URLs (weather, snapshot, MP4 stream)
+     * should use this instead of [PrefsManager.baseUrl] to avoid
+     * silently returning early when the pref is null.
      */
-    fun getApiBaseUrl(): String = prefsManager.baseUrl ?: DEFAULT_BASE_URL
+    fun getApiBaseUrl(): String =
+        prefsManager.baseUrl ?: baseUrlResolver.current().ifBlank { DEFAULT_BASE_URL }
 
     fun getRepository(): HomeCenterRepository {
         if (currentRepository == null) {

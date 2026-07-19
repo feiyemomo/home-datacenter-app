@@ -32,14 +32,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
-import com.google.android.exoplayer2.ExoPlayer
-import com.google.android.exoplayer2.ui.StyledPlayerView
 import com.homedatacenter.app.data.model.Camera
 
 private val CardBackground = Color(0xFF171C24)
@@ -56,13 +52,19 @@ fun CameraCard(
     thumbnailError: Boolean,
     isPlaying: Boolean,
     playerLoading: Boolean,
-    player: ExoPlayer?,
     onPlay: () -> Unit,
     onStop: () -> Unit,
     onRecordings: () -> Unit,
     onAlerts: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // When playing, the video is rendered by the XML StyledPlayerView
+    // declared in item_camera.xml (synchronously attached to ExoPlayer
+    // BEFORE prepare() — see CameraAdapter.preparePlayback). This
+    // Compose card only renders the overlay controls (close button +
+    // loading spinner) on a transparent background so the video
+    // shows through. See the comment in item_camera.xml for why the
+    // StyledPlayerView is in XML rather than created via AndroidView.
     Card(
         modifier = modifier
             .fillMaxWidth()
@@ -75,89 +77,83 @@ fun CameraCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(16f / 9f)
-                .background(Color.Black)
+                // Transparent background when playing so the XML
+                // StyledPlayerView underneath shows through.
+                .background(if (isPlaying) Color.Transparent else Color.Black)
                 .clickable(enabled = !isPlaying, onClick = onPlay),
         ) {
-            if (isPlaying && player != null) {
-                val context = LocalContext.current
-                AndroidView(
-                    modifier = Modifier.fillMaxSize(),
-                    factory = {
-                        StyledPlayerView(context).apply {
-                            useController = true
-                            this.player = player
+            // The thumbnail + play button + status badges are only
+            // shown when NOT playing. When playing, this Box is empty
+            // (transparent) and the XML StyledPlayerView underneath
+            // renders the video.
+            if (!isPlaying) {
+                if (thumbnail != null) {
+                    Image(
+                        bitmap = thumbnail.asImageBitmap(),
+                        contentDescription = "${camera.name} camera preview",
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop,
+                    )
+                }
+
+                if (thumbnail == null) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color(0xFF11151B)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        when {
+                            thumbnailLoading -> CircularProgressIndicator(
+                                modifier = Modifier.size(32.dp),
+                                color = Color.White,
+                                strokeWidth = 3.dp,
+                            )
+
+                            thumbnailError -> Text(
+                                text = "预览加载失败",
+                                color = Color.White.copy(alpha = 0.65f),
+                                fontSize = 13.sp,
+                            )
                         }
-                    },
-                    update = { it.player = player },
-                )
-            } else if (thumbnail != null) {
-                Image(
-                    bitmap = thumbnail.asImageBitmap(),
-                    contentDescription = "${camera.name} camera preview",
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop,
-                )
-            }
-
-            if (!isPlaying && thumbnail == null) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color(0xFF11151B)),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    when {
-                        thumbnailLoading -> CircularProgressIndicator(
-                            modifier = Modifier.size(32.dp),
-                            color = Color.White,
-                            strokeWidth = 3.dp,
-                        )
-
-                        thumbnailError -> Text(
-                            text = "预览加载失败",
-                            color = Color.White.copy(alpha = 0.65f),
-                            fontSize = 13.sp,
-                        )
                     }
                 }
-            }
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(Color.Black.copy(alpha = 0.42f))
-                    .padding(horizontal = 12.dp, vertical = 9.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = camera.name,
-                        color = Color.White,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 16.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color.Black.copy(alpha = 0.42f))
+                        .padding(horizontal = 12.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = camera.name,
+                            color = Color.White,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 16.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            text = camera.vendor.ifBlank { "Unknown" },
+                            color = Color.White.copy(alpha = 0.72f),
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    StatusBadge(
+                        text = camera.codec.ifBlank { "H264" }.uppercase(),
+                        color = AccentColor,
                     )
-                    Text(
-                        text = camera.vendor.ifBlank { "Unknown" },
-                        color = Color.White.copy(alpha = 0.72f),
-                        fontSize = 11.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                    Spacer(modifier = Modifier.size(7.dp))
+                    StatusBadge(
+                        text = if (camera.isOnline) "在线" else "离线",
+                        color = if (camera.isOnline) OnlineColor else OfflineColor,
                     )
                 }
-                StatusBadge(
-                    text = camera.codec.ifBlank { "H264" }.uppercase(),
-                    color = AccentColor,
-                )
-                Spacer(modifier = Modifier.size(7.dp))
-                StatusBadge(
-                    text = if (camera.isOnline) "在线" else "离线",
-                    color = if (camera.isOnline) OnlineColor else OfflineColor,
-                )
-            }
 
-            if (!isPlaying) {
                 Surface(
                     modifier = Modifier
                         .align(Alignment.Center)
@@ -172,6 +168,9 @@ fun CameraCard(
                 }
             }
 
+            // Close button overlay — always shown on top when playing,
+            // so the user can stop playback. The video itself is rendered
+            // by the XML StyledPlayerView underneath this transparent Box.
             if (isPlaying) {
                 Button(
                     onClick = onStop,

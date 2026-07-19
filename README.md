@@ -1,9 +1,9 @@
 # Home Datacenter App
 
-家庭数据中心 Android 客户端 — 一个用 **Kotlin + Jetpack Compose + ExoPlayer** 实现的家庭 NVR / IoT 控制台，配合 [home-datacenter](https://github.com/feiyemomo/home-datacenter) 后端使用，提供摄像头预览、HLS 直播、录像回放、报警查看、设备状态、天气信息和实时 WebSocket 推送。
+家庭数据中心 Android 客户端 — 一个用 **Kotlin + Jetpack Compose + ExoPlayer** 实现的家庭 NVR / IoT 控制台，配合 [home-datacenter](https://github.com/feiyemomo/home-datacenter) 后端使用，提供摄像头预览、HLS 直播（含音频）、录像回放、报警查看、设备状态、天气信息、局域网/远程自动切换和实时 WebSocket 推送。
 
 > 服务端项目：<https://github.com/feiyemomo/home-datacenter>
-> 当前版本：**v1.3.5**（versionCode 10）
+> 当前版本：**v1.4.3**（versionCode 18）
 
 ---
 
@@ -35,23 +35,26 @@
 | Compile SDK | 36 |
 | Java / Kotlin | 17 / 2.0 |
 | AGP | 9.2.1 |
-| 当前版本 | 1.3.5 (versionCode 10) |
-| 默认服务器 | `https://api.feiyemomo.top/` |
+| 当前版本 | 1.4.3 (versionCode 18) |
+| 默认服务器 | `https://api.feiyemomo.top/`（远程） / `http://192.168.31.234:8088/`（局域网，自动探测） |
 
-App 通过 `(user_id, access_key)` 换取 JWT 后访问 `home-datacenter` 的 REST API 与 WebSocket，摄像头直播走 go2rtc 暴露的 HLS（主）+ fMP4（备），录像和报警来自 Frigate 检测管道与 home-api 的代理端点。
+App 通过 `(user_id, access_key)` 换取 JWT 后访问 `home-datacenter` 的 REST API 与 WebSocket。**BaseUrlResolver** 在启动时同步探测局域网 `http://192.168.31.234:8088/` 是否可达（TTFB ~10ms vs Cloudflare Tunnel 1.4s+），可达则切到局域网，否则走远程 Cloudflare Tunnel。NetworkChangeMonitor 注册 ConnectivityManager.NetworkCallback，在 WiFi/移动网络切换时立即触发 re-probe，无需等 5 分钟 TTL。摄像头直播走 go2rtc 暴露的 MP4（主）+ HLS（备），后端根据摄像头 `capabilities.audio` 在 go2rtc 流 URL 上自动追加 `#audio=aac` 启用音频转码。
 
 ---
 
 ## 功能特性
 
-- **首页（Dashboard）**：天气卡片 + 系统状态网格（MQTT / 设备 / 摄像头 / 运行时长） + 最近报警列表 + 实时检测 WS 横幅。
-- **摄像头（Cameras）**：缩略图卡片 + 点击内联 HLS 直播 + 录像回放对话框（拖动进度条） + 单摄像头的报警快照 / 剪辑对话框。
+- **首页（Dashboard）**：天气卡片 + 系统状态网格（MQTT / 设备 / 摄像头 / 运行时长） + 网络质量卡片（含**当前路径标签**：局域网=绿点 / 远程=琥珀点，每 5s 刷新） + 最近报警列表 + 实时检测 WS 横幅。
+- **摄像头（Cameras）**：缩略图卡片 + 点击内联直播（MP4 优先 + 音频支持） + 录像回放对话框（拖动进度条） + 单摄像头的报警快照 / 剪辑对话框。
 - **报警（Alerts）**：报警列表，可展开查看事件 ID / 抓拍时间 / 检测区域，支持跳转摄像头页和打开快照模态。
 - **设备（Devices）**：所有已绑定设备的状态卡片，支持撤销设备。
 - **设置（Settings）**：主题切换（明 / 暗） + 关于信息 + 退出登录。
 - **登录（Login）**：user_id + access_key 设备绑定，登录后 JWT 持久化于 EncryptedSharedPreferences。
 - **底部导航**：Material 3 ActiveIndicator 胶囊样式，5 个 Tab（主页 / 设备 / 摄像头 / 报警 / 设置），高度 72dp 防止文字与图标重叠。
 - **网络层**：OkHttp 强制 HTTP/1.1 + 30s/60s/90s 超时 + 重试，针对 Cloudflare Tunnel 在移动网络上偶发的 stream 关闭问题。
+- **LAN/Remote 自动切换**：启动时 `BaseUrlResolver.probeLanOnStartup()` 同步重试 2 次（含 400ms backoff）+ 失败后延迟 3s 异步重探，覆盖真机「WiFi connected but not validated」窗口；运行时 5 分钟 TTL 异步重探。
+- **实时网络监听**：`NetworkChangeMonitor` 注册 `ConnectivityManager.NetworkCallback`，`onAvailable` / `onLost` / `onCapabilitiesChanged`（含 `NET_CAPABILITY_VALIDATED`）时立即触发 `forceProbe()`，无需等 TTL。
+- **音频直播**：后端 `rtspURL()` 在摄像头 `capabilities.audio=true` 时追加 `#audio=aac` 启用 ffmpeg 转码（PCMA→AAC），ExoPlayer 通过 `setAudioAttributes(USAGE_MEDIA, CONTENT_TYPE_MOVIE, handleAudioFocus=true)` 走媒体音量并在来电时自动暂停。
 - **实时推送**：WebSocket 客户端，订阅 `device.status` / `camera.alert` / `automation.fired` 等事件，主页横幅实时滚动。
 
 ---
@@ -291,15 +294,17 @@ buildTypes {
 
 ### 服务器地址
 
-固定在 [app/src/main/java/com/homedatacenter/app/di/AppContainer.kt](app/src/main/java/com/homedatacenter/app/di/AppContainer.kt)：
+启动时由 `BaseUrlResolver` 自动探测局域网 (`http://192.168.31.234:8088/`) 与远程 (`https://api.feiyemomo.top/`) 的可达性：
 
-```kotlin
-companion object {
-    const val DEFAULT_BASE_URL = "https://api.feiyemomo.top/"
-}
-```
+- 局域网 TTFB ~10ms，Cloudflare Tunnel 1.4s+，差距约 70 倍
+- 探测端点 `GET /api/v1/system/status`（JWT 保护，401=API 存活）
+- 启动时 `probeLanOnStartup()` 同步重试 2 次 + 400ms backoff，覆盖真机 WiFi 验证窗口
+- 失败后延迟 3s 异步重探
+- 运行时 5 分钟 TTL + ConnectivityManager.NetworkCallback 触发立即重探
 
-如果需要切换后端，修改此常量后重新构建。未来若重新开放用户自定义服务器地址，可通过 `PrefsManager.baseUrl` 注入。
+详见 [util/BaseUrlResolver.kt](app/src/main/java/com/homedatacenter/app/util/BaseUrlResolver.kt) 与 [util/NetworkChangeMonitor.kt](app/src/main/java/com/homedatacenter/app/util/NetworkChangeMonitor.kt)。
+
+如需手动固定服务器地址，可在 `AppContainer.kt` 中通过 `prefsManager.baseUrl` 注入（绕过自动探测）。
 
 ### 网络安全配置
 
@@ -318,8 +323,8 @@ companion object {
 每次发版**必须**更新 `app/build.gradle.kts` 中的 `versionCode` 与 `versionName`：
 
 ```kotlin
-versionCode = 10
-versionName = "1.3.5"
+versionCode = 18
+versionName = "1.4.3"
 ```
 
 ---
@@ -359,12 +364,13 @@ versionName = "1.3.5"
 | GET | `/api/v1/cameras` | 摄像头列表 |
 | GET | `/api/v1/cameras/{id}` | 摄像头详情 |
 | GET | `/api/v1/cameras/{id}/frame` | 当前帧截图（缩略图） |
-| GET | `/api/v1/cameras/{id}/stream.mp4` | fMP4 直播流（备） |
+| GET | `/api/v1/cameras/{id}/stream.mp4` | fMP4 直播流（主，含音频） |
 | GET | `/api/v1/cameras/{id}/recordings` | 录像列表 |
 | GET | `/api/v1/cameras/alerts` | 全局报警列表 |
 | POST | `/api/v1/cameras` | 注册摄像头（管理员） |
 | DELETE | `/api/v1/cameras/{id}` | 删除摄像头（管理员） |
 | PUT | `/api/v1/cameras/{id}/codec` | 更新编码（管理员） |
+| PUT | `/api/v1/cameras/{id}/audio` | 切换音频转码（管理员，`{enabled: bool}`） |
 | POST | `/api/v1/cameras/{id}/ptz` | PTZ 控制（管理员） |
 | PUT | `/api/v1/cameras/{id}/recording` | 设置录像计划 |
 | GET | `/api/v1/cameras/{id}/presets/discover` | 发现 PTZ 预置位 |
@@ -397,14 +403,40 @@ versionName = "1.3.5"
 
 [CameraAdapter.kt](app/src/main/java/com/homedatacenter/app/ui/cameras/CameraAdapter.kt) 中的 `startInlinePlayback` 按以下顺序尝试：
 
-1. **HLS（主）** — `camera.stream.hls_url` 或 `${base}/api/stream.m3u8?src=<name>`
+1. **MP4（主）** — `${base}/api/v1/cameras/{id}/stream.mp4`（home-api 代理 go2rtc 的 fMP4 流）
+   - ExoPlayer `ProgressiveMediaSource`
+   - 之所以改回 MP4 优先：go2rtc 的 HLS `Init()` helper（`internal/hls/session.go`）只等 3 秒（60 × 50ms）让 consumer 产出第二个 packet，否则返回 nil → `handlerInit` 404。冷流 / 转码路径下 3 秒可能不够，ExoPlayer 又不会重试 init.mp4，会直接把 404 上报为 Source error。hls.js 会自动重试，但 ExoPlayer 不会，所以 MP4-first 更稳。
+2. **HLS（备）** — `camera.stream.hls_url` 或 `${base}/api/stream.m3u8?src=<name>`
    - ExoPlayer `HlsMediaSource`
    - `MediaItem.LiveConfiguration`：`targetOffsetMs=3000`, `maxOffsetMs=10000`, `minOffsetMs=1000`（目标 ~3s 端到端延迟）
    - 低延迟 `DefaultLoadControl`：`minBufferMs=2000`, `maxBufferMs=5000`, `bufferForPlaybackMs=1000`, `bufferForPlaybackAfterRebufferMs=1500`
-2. **MP4（备）** — `${base}/api/v1/cameras/{id}/stream.mp4`（go2rtc fMP4）
-   - ExoPlayer `ProgressiveMediaSource`
-   - 仅在 HLS 失败时 fallback
 3. **失败** — 显示错误占位图
+
+### Surface 时序
+
+`StyledPlayerView` 必须在 XML 中声明（不能通过 Compose `AndroidView` 异步创建），且 `binding.playerView.player` 必须在 `prepare()` **之前**设置。否则 ExoPlayer 在 `prepare()` 时无 surface 可用，会触发 MediaCodec `setOutputSurface -- failed to set consumer usage (BAD_INDEX)` 错误，导致 98% 的 buffer 未被取出。
+
+详见 [错误教训 §20](docs/ERRORS.md#20-exoplayer-prepare-时无-surface-导致-mediacodec-bad_index)。
+
+### 音频路由
+
+ExoPlayer 通过 `setAudioAttributes` 配置媒体路由：
+
+```kotlin
+newPlayer.setAudioAttributes(
+    com.google.android.exoplayer2.audio.AudioAttributes.Builder()
+        .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MOVIE)
+        .build(),
+    /* handleAudioFocus = */ true,
+)
+```
+
+- 走媒体音量（不是通话 / 铃声音量）
+- `handleAudioFocus=true`：来电时自动暂停播放，挂断后自动恢复
+- 类型用 `com.google.android.exoplayer2.audio.AudioAttributes`（不是 `android.media.AudioAttributes`），否则编译报参数类型不匹配
+
+后端在 `internal/camera/registry.go` 的 `rtspURL()` 中根据 `cam.Capabilities["audio"]==true` 自动追加 `#audio=aac`，让 go2rtc 通过 ffmpeg 把摄像头的 PCMA 音频转码为浏览器/Android 可解码的 AAC。详见 [错误教训 §19](docs/ERRORS.md#19-go2rtc-音频转码-audioaac)。
 
 ### 录像回放
 
@@ -472,6 +504,13 @@ versionName = "1.3.5"
 9. **Material 3 ActiveIndicator 需要 `colorSecondary` 等属性** → M2 主题缺失导致崩溃
 10. **`app:itemSpacingHorizontal` 不是有效属性** → 编译失败
 11. **`HlsMediaSource.Factory.setLiveTargetLatencyMs` 在 2.19.1 不存在** → 改用 `MediaItem.LiveConfiguration`
+12. **真机 LAN 探测失败（WiFi 已连接但未 validated）** → `probeLanOnStartup` 加重试 + backoff + 延迟异步重探
+13. **XML 注释里出现 `--`** → AAPT 编译失败，注释中不允许双连字符
+14. **ExoPlayer AudioAttributes 类型用错** → 必须用 `com.google.android.exoplayer2.audio.AudioAttributes`，不是 `android.media.AudioAttributes`
+15. **go2rtc 默认不转码音频** → PCMA 不可播放，需在流 URL 追加 `#audio=aac` 走 ffmpeg
+16. **ExoPlayer prepare() 时无 surface** → MediaCodec `setOutputSurface BAD_INDEX` + 98% buffer 未取出，必须在 `prepare()` 前设置 `playerView.player`
+17. **HLS Init() 只等 3 秒** → 冷流 404，ExoPlayer 不重试 init.mp4，改为 MP4 优先策略
+18. **HEAD 探测 Gin GET 路由返回 404** → 探测后端端点必须用 GET，详见错误教训 §6 附加发现
 
 ---
 

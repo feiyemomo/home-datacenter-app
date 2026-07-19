@@ -612,6 +612,317 @@ fun getApiBaseUrl(): String = prefsManager.baseUrl ?: DEFAULT_BASE_URL
 
 ---
 
+## 16. XML 注释里出现 `--` 导致 AAPT 编译失败
+
+### 症状
+
+Gradle 构建失败：
+
+```
+AAPT: error: not well-formed (invalid token)
+  at <some line in item_camera.xml>
+```
+
+### 根因
+
+XML 规范规定：注释内容里不允许出现双连字符 `--`（`<!-- ... -- ... -->` 非法）。我在 `item_camera.xml` 里写了一段说明文字，里面用了 `--`（如 `-- player view`），AAPT 直接拒绝。
+
+### 修复
+
+把 `--` 替换为破折号 `—` 或括号：
+
+```xml
+<!-- 错的：用了双连字符 -->
+<!-- item_camera.xml -- player view container -->
+
+<!-- 对的：用破折号或括号 -->
+<!-- item_camera.xml: player view container (default hidden) -->
+```
+
+### 预防
+
+- XML 注释里**永远不要**写 `--`，无论作为分隔符、修饰符或减号
+- 写注释时优先用冒号、括号、破折号（em-dash `—`，不是 `--`）
+- 如需展示 CLI 选项（如 `--width=1280`），用反引号或 code block 包起来在 .md 里写，不要写进 XML 注释
+
+---
+
+## 17. ExoPlayer `AudioAttributes` 类型用错导致编译失败
+
+### 症状
+
+加上 `setAudioAttributes` 调用后编译报错：
+
+```
+e: Argument type mismatch: actual type is 'android.media.AudioAttributes!',
+   but 'com.google.android.exoplayer2.audio.AudioAttributes' was expected
+```
+
+### 根因
+
+我直觉性地用了 `android.media.AudioAttributes.Builder()`：
+
+```kotlin
+// 错的
+newPlayer.setAudioAttributes(
+    android.media.AudioAttributes.Builder()
+        .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MOVIE)
+        .build(),
+    /* handleAudioFocus = */ true,
+)
+```
+
+但 ExoPlayer 2.x 的 `setAudioAttributes` 方法签名是：
+
+```java
+public void setAudioAttributes(
+    com.google.android.exoplayer2.audio.AudioAttributes audioAttributes,
+    boolean handleAudioFocus
+)
+```
+
+要的是 ExoPlayer 自己的包装类，不是 Android 框架类。两个 `AudioAttributes` 同名但不同包，编译器看到类型不匹配就报错。
+
+### 修复
+
+把 `Builder()` 改成 ExoPlayer 的版本：
+
+```kotlin
+newPlayer.setAudioAttributes(
+    com.google.android.exoplayer2.audio.AudioAttributes.Builder()
+        .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MOVIE)
+        .build(),
+    /* handleAudioFocus = */ true,
+)
+```
+
+注意 `USAGE_MEDIA` / `CONTENT_TYPE_MOVIE` 常量仍从 `android.media.AudioAttributes` 取，因为 ExoPlayer 的包装类没复制定义这些常量。
+
+### 预防
+
+- ExoPlayer 2.x 对音频属性、`TrackSelectionParameters` 等都用自己包装类，不要假设直接用 `android.media.*`
+- 升级到 Media3 (ExoPlayer 3.x) 时这类包装类大多被合并回 framework 类，迁移时要再次检查
+- 写 import 时尽量写全限定名避免歧义，特别是同名类
+
+---
+
+## 18. 真机 LAN 探测失败：WiFi connected but not validated
+
+### 症状
+
+模拟器上 App 启动后 Dashboard 显示「局域网」绿色标签，但同一局域网下的真机启动后却显示「远程」琥珀色标签。真机无 VPN，本应也走局域网。
+
+### 根因
+
+`Application.onCreate` 在用户点 App 图标的瞬间执行，此时 Android 的 WiFi stack 可能还没完成 validation（captive portal detection / DNS probe），路由不可用。`ConnectivityManager.onAvailable` 也在 validation 完成前就 fire。LAN 探测的 `GET` 请求在路由就绪前发出，TCP 连接失败，probe 返回 false，于是 fallback 到 Remote URL。
+
+模拟器不会触发这个问题，因为它的网络通过宿主 PC 桥接，PC 的 WiFi 早就 validated 了。
+
+### 修复
+
+[BaseUrlResolver.kt](../app/src/main/java/com/homedatacenter/app/util/BaseUrlResolver.kt) 的 `probeLanOnStartup` 加入三层防御：
+
+```kotlin
+fun probeLanOnStartup() {
+    // 1. 同步重试 + backoff
+    repeat(STARTUP_RETRY_COUNT) { attempt ->   // 2 次
+        if (probeUrl(LAN_URL, STARTUP_LAN_TIMEOUT_MS)) {  // 1000ms 超时
+            if (resolved != LAN_URL) {
+                resolved = LAN_URL
+                onUrlChanged?.invoke(LAN_URL)
+            }
+            lastProbedAt = System.currentTimeMillis()
+            return
+        }
+        if (attempt < STARTUP_RETRY_COUNT - 1) {
+            Thread.sleep(STARTUP_RETRY_GAP_MS.toLong())  // 400ms
+        }
+    }
+
+    // 2. 全部失败 → 3s 后异步重探
+    lastProbedAt = System.currentTimeMillis()
+    if (probing.compareAndSet(false, true)) {
+        Thread {
+            Thread.sleep(STARTUP_LATE_REPROBE_DELAY_MS.toLong())  // 3000ms
+            probeSync()
+            ...
+        }.start()
+    }
+}
+```
+
+加上 `NetworkChangeMonitor` 注册 `onCapabilitiesChanged` 带 `NET_CAPABILITY_VALIDATED` 的回调，validation 完成后立即触发 `forceProbe()` 切到 LAN。
+
+### 预防
+
+- 任何依赖「网络可用」的启动逻辑都要假设 `onAvailable` 不可靠
+- 用 `onCapabilitiesChanged` + `NET_CAPABILITY_VALIDATED` 作为「真正能上网」的信号
+- 启动同步探测加 backoff + 延迟异步兜底，覆盖各种 validation 时间窗口
+- 真机与模拟器行为不一致时，优先怀疑网络时序差异，不要假设是代码 bug
+
+---
+
+## 19. go2rtc 默认不转码音频，PCMA 不可播放
+
+### 症状
+
+直播视频流能放，但听不到声音。日志中无 audio track 信息。后端 go2rtc streams API 显示：
+
+```json
+{
+  "前门": {
+    "producers": [
+      { "url": "ffmpeg:rtsp://...#video=h264#width=1280#hardware=vaapi" }
+    ]
+  }
+}
+```
+
+没有 `#audio=...`，意味着 go2rtc 丢弃了 RTSP 流里的音频轨。
+
+### 根因
+
+摄像头（海康）RTSP 流默认音频编码是 PCMA（G.711 A-law），浏览器和 Android ExoPlayer 都不支持 PCMA 解码。go2rtc 的 ffmpeg producer 默认只处理视频，需要**显式**告诉它把音频转码到 AAC。
+
+### 修复
+
+[registry.go](../../home-datacenter/services/api/internal/camera/registry.go) 的 `rtspURL()` 在 `cam.Capabilities["audio"]==true` 时追加 `#audio=aac`：
+
+```go
+func (r *Registry) rtspURL(cam *model.Camera, user, pass string) string {
+    raw := fmt.Sprintf("rtsp://%s:%s@%s:%d/Streaming/Channels/%d", user, pass, cam.Host, cam.RTSPPort, cam.ChannelID)
+    codec := effectiveCodec(cam)
+    audioOn := cameraHasAudio(cam)
+
+    if codec == "passthrough" {
+        if audioOn {
+            return "ffmpeg:" + raw + "#video=copy#audio=aac"
+        }
+        return raw + "#audio=0"
+    }
+
+    audioFrag := ""
+    if audioOn {
+        audioFrag = "#audio=aac"
+    }
+    if codec == "h265" {
+        return "ffmpeg:" + raw + "#video=h265#hardware=vaapi" + audioFrag
+    }
+    return "ffmpeg:" + raw + "#video=h264#width=1280#hardware=vaapi" + audioFrag
+}
+```
+
+新增 `UpdateAudio()` 方法在 audio capability 变化时调用 `AddStream` 重新注册流，让 go2rtc 立即用新 URL：
+
+```go
+func (r *Registry) UpdateAudio(ctx context.Context, id uint, enabled bool) error {
+    var cam model.Camera
+    if err := r.DB.First(&cam, id).Error; err != nil { return err }
+    if cam.Capabilities == nil { cam.Capabilities = model.JSON{} }
+    cam.Capabilities["audio"] = enabled
+    r.DB.Model(&cam).Updates(map[string]any{"capabilities": cam.Capabilities, "updated_at": time.Now()})
+    user, pass, err := r.DecryptCredentials(&cam)
+    if err == nil {
+        rtspURL := r.rtspURL(&cam, user, pass)
+        _ = r.Go2.AddStream(ctx, cam.StreamName, rtspURL)
+    }
+    return nil
+}
+```
+
+HTTP 端点 `PUT /api/v1/cameras/:id/audio` 暴露给客户端调用：
+
+```go
+adminCam.PUT(":id/audio", camHandler.UpdateAudio)
+```
+
+Android 侧用 `setAudioAttributes` 让 ExoPlayer 走媒体音量 + 处理 AudioFocus（见 [§17](#17-exoplayer-audioattributes-类型用错导致编译失败)）。
+
+### 预防
+
+- RTSP 摄像头默认音频编码（PCMA / PCMU / G.726）大多不被 Web / Android 支持，需要服务端转码到 AAC
+- go2rtc 不会自动转码音频，必须在流 URL 上**显式**追加 `#audio=aac` 或 `#audio=opus`
+- `ffmpeg:` 前缀是必须的，否则 go2rtc 走 passthrough 不经过 ffmpeg
+- 音频 capability 默认关闭，需要通过 API 显式开启（避免无麦克风摄像头浪费转码资源）
+
+---
+
+## 20. ExoPlayer `prepare()` 时无 surface 导致 MediaCodec `BAD_INDEX`
+
+### 症状
+
+摄像头直播卡在 loading 圈，永远不进入 READY 状态。logcat 显示：
+
+```
+I  MediaCodec: setOutputSurface -- failed to set consumer usage (BAD_INDEX)
+W  ACodec  ...  98% buffers unfetched (increase minUndequeuedBuffers)
+I  hevc software decoder: prefetch default frames
+```
+
+录像回放（`RecordingsDialog`）正常，只有 Cameras 页直播出问题。
+
+### 根因
+
+`CameraCard`（Compose）用 `AndroidView` 异步创建 `StyledPlayerView`：
+
+```kotlin
+// 错的：AndroidView factory 异步执行
+AndroidView(factory = { ctx ->
+    StyledPlayerView(ctx).apply {
+        player = exoPlayer
+    }
+})
+```
+
+但 ExoPlayer 在 `prepare()` 时**同步**检查 surface，如果此时 `AndroidView` factory 还没执行，`playerView` 还不存在，ExoPlayer 会创建一个无 surface 的 MediaCodec 实例。MediaCodec 在 `configure()` 时拿不到 surface，进入「无表面渲染」模式，后续即使 `setOutputSurface` 被调用也会失败（`BAD_INDEX`），98% 的 buffer 永远拉不出来。
+
+`RecordingsDialog` 不出问题是因为它用 XML 静态声明 `StyledPlayerView`，`binding.playerView` 在 `onCreate` 时就 ready 了。
+
+### 修复
+
+把 `StyledPlayerView` 移到 `item_camera.xml` 静态声明（默认 `visibility=gone`）：
+
+```xml
+<com.google.android.exoplayer2.ui.StyledPlayerView
+    android:id="@+id/playerView"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:visibility="gone"
+    app:resize_mode="fill"
+    app:use_controller="false"
+    app:show_buffering="when_playing" />
+```
+
+在 `CameraAdapter.preparePlayback` 中**先**设置 player + 可见性，**再**调 `prepare()`：
+
+```kotlin
+val newPlayer = ExoPlayer.Builder(context, renderersFactory)
+    .setLoadControl(loadControl)
+    .build()
+    .apply {
+        setAudioAttributes(...)
+        setMediaSource(mediaSource)
+        playWhenReady = true
+        addListener(...)
+    }
+
+// 关键：先绑定 surface，再 prepare
+binding.playerView.player = newPlayer
+binding.playerView.visibility = View.VISIBLE
+newPlayer.prepare()
+```
+
+### 预防
+
+- ExoPlayer 与 Compose `AndroidView` 的组合在 surface 时序上有 race condition，避免组合使用
+- 任何需要 surface 的播放器（ExoPlayer / MediaPlayer / TextureView 渲染器）都应在 XML 静态声明，并在 `prepare()` / `start()` 之前绑定 surface
+- 录像回放没问题是因为 XML 同步绑定，所以同样代码模板在 Cameras 页直接复用即可，不要试图用 Compose 重写
+- 看到 `setOutputSurface BAD_INDEX` + `98% buffers unfetched` 立即怀疑 surface 时序问题，而不是去查 codec 配置
+
+---
+
 ## 总结：通用原则
 
 1. **Material 2 / 3 不能混用** — 主题 parent 和组件父样式必须对齐
@@ -624,3 +935,8 @@ fun getApiBaseUrl(): String = prefsManager.baseUrl ?: DEFAULT_BASE_URL
 8. **WebView 中用 WebRTC 要实现 onPermissionRequest** — 默认不授予媒体权限
 9. **同源代理路径的鉴权用 Cookie，REST 用 Authorization** — nginx auth_request 子请求看不到 SPA 加的头
 10. **任何有状态资源都假设 Fragment 会 recreate** — 在 onPause 释放，在 onResume 重建
+11. **XML 注释里不要写 `--`** — 用冒号或破折号 `—` 代替
+12. **ExoPlayer 2.x 有自己的包装类**（`AudioAttributes` / `TrackSelectionParameters`），不要直接用 `android.media.*`
+13. **真机网络时序与模拟器不同** — `onAvailable` 不可靠，用 `onCapabilitiesChanged` + `NET_CAPABILITY_VALIDATED`
+14. **RTSP 音频默认不可播放** — PCMA/PCMU 需要服务端转码到 AAC，go2rtc 流 URL 显式追加 `#audio=aac`
+15. **ExoPlayer 与 Compose `AndroidView` 的 surface 时序有 race** — `StyledPlayerView` 静态声明 + `playerView.player` 在 `prepare()` 之前设置

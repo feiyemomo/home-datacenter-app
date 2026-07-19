@@ -95,7 +95,11 @@ class ExoPlayerDialogFragment : DialogFragment() {
         val mediaSource = HlsMediaSource.Factory(dataSourceFactory)
             .createMediaSource(MediaItem.fromUri(url))
 
-        player = ExoPlayer.Builder(requireContext()).build().apply {
+        // Delegate to ExoPlayerRendererFactory: filters out broken
+        // goldfish decoders on emulators, enables decoder fallback on
+        // real devices. See util/ExoPlayerRendererFactory.kt.
+        val renderersFactory = ExoPlayerRendererFactory.create(requireContext())
+        player = ExoPlayer.Builder(requireContext(), renderersFactory).build().apply {
             setMediaSource(mediaSource)
             playWhenReady = true
 
