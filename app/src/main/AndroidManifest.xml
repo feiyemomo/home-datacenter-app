@@ -59,6 +59,11 @@
             android:exported="false"
             android:label="@string/users_title" />
 
+        <activity
+            android:name=".ui.network.NetworkDetailActivity"
+            android:exported="false"
+            android:label="@string/network_detail_title" />
+
     </application>
 
 </manifest>

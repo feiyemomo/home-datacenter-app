@@ -129,6 +129,16 @@ class HomeCenterRepository(
         }
     }
 
+    /**
+     * Decode a SystemStatus from the cached JSON string in PrefsManager.
+     * Used by [com.homedatacenter.app.ui.network.NetworkDetailActivity] to
+     * render the system stats card from cache before the network refresh
+     * completes.
+     */
+    fun decodeSystemStatus(raw: String): SystemStatus {
+        return NetworkFactory.json.decodeFromString(SystemStatus.serializer(), raw)
+    }
+
     suspend fun listCameras(
         token: String,
         useCache: Boolean = true,

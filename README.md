@@ -3,7 +3,7 @@
 家庭数据中心 Android 客户端 — 一个用 **Kotlin + Jetpack Compose + ExoPlayer** 实现的家庭 NVR / IoT 控制台，配合 [home-datacenter](https://github.com/feiyemomo/home-datacenter) 后端使用，提供摄像头预览、HLS 直播（含音频）、录像回放、报警查看、设备状态、天气信息、局域网/远程自动切换和实时 WebSocket 推送。
 
 > 服务端项目：<https://github.com/feiyemomo/home-datacenter>
-> 当前版本：**v1.5.0**（versionCode 20）
+> 当前版本：**v1.5.1**（versionCode 21）
 
 ---
 
@@ -35,7 +35,7 @@
 | Compile SDK | 36 |
 | Java / Kotlin | 17 / 2.0 |
 | AGP | 9.2.1 |
-| 当前版本 | 1.5.0 (versionCode 20) |
+| 当前版本 | 1.5.1 (versionCode 21) |
 | 默认服务器 | `https://api.feiyemomo.top/`（远程） / `http://192.168.31.234:8088/`（局域网，自动探测） |
 
 App 通过 `(user_id, access_key)` 换取 JWT 后访问 `home-datacenter` 的 REST API 与 WebSocket。**BaseUrlResolver** 在启动时通过后台守护线程异步探测局域网 `http://192.168.31.234:8088/` 是否可达（TTFB ~10ms vs Cloudflare Tunnel 1.4s+），可达则切到局域网，否则走远程 Cloudflare Tunnel。启动调度采用指数退避重试（1.5s → 4s → 9s → 16s），覆盖真机「WiFi connected but not validated」窗口；同时附加 TCP socket 直连探测作为 OkHttp cleartext 拒绝时的兜底。NetworkChangeMonitor 注册 ConnectivityManager.NetworkCallback，在 WiFi/移动网络切换时立即触发 re-probe，无需等 5 分钟 TTL。摄像头直播走 go2rtc 暴露的 MP4（主）+ HLS（备），后端根据摄像头 `capabilities.audio` 在 go2rtc 流 URL 上自动追加 `#audio=aac` 启用音频转码，前端通过 ExoPlayer `volume` 控制静音/取消静音。
@@ -51,6 +51,9 @@ App 通过 `(user_id, access_key)` 换取 JWT 后访问 `home-datacenter` 的 RE
 - **设置（Settings）**：**个人资料卡片**（用户名 / 角色 / JWT user_id / device_id / 签发与到期时间 / 剩余天数） + **管理员分区**（仅 `prefsManager.isAdmin=true` 时显示，入口跳转 `UsersActivity`） + 主题切换（明 / 暗 / 跟随系统） + 退出登录 + 版本号。
 - **管理员用户管理**（v1.5.0 新增）：`UsersActivity` 列出全部用户（含设备数 / 注册时间），FAB 创建用户并可选创建首台设备（一次性返回 64 位 AccessKey），点击列表项打开编辑对话框（改名 / 切换管理员 / 删除），自删与自降级在客户端先拦截、服务端再兜底。
 - **摄像头注册**（v1.5.0 新增，管理员）：`CamerasFragment` 右下角 FAB → `RegisterCameraDialog` 表单（名称 / 主机 IP / 厂商 / 通道 / ONVIF/RTSP 端口 / 用户名 / 密码 / PTZ/音频/动作复选框）→ `POST /api/v1/cameras`。
+- **设备实时状态**（v1.5.1 增强）：`DeviceAdapter` 显示三态（已吊销 / 在线 / 离线）— 在线状态由 `SystemStatus.onlineDeviceIds` 推断（DashboardFragment 通过 5s 轮询 + WS `device.status` / `online_list` 事件维护该列表到 PrefsManager 缓存），`DevicesFragment.onResume` 与 `revokeDevice` 之后强制刷新缓存并推送给 Adapter。
+- **网络详情页**（v1.5.1 新增）：Dashboard 网络质量卡片可点击跳转 `NetworkDetailActivity`，展示 `NetworkStatus` 完整字段（IPv6 启用/可达/地址、NAT 类型/公网 IP/端口、P2P 支持/原因、Relay 可用/类型、初始与实际策略、质量评分、检测时间）+ `/network/p2p/server-endpoint` 返回的服务端点（公网 IP / 端口 / IPv6 / NAT 类型 / 策略）+ `SystemStatus` 的 MQTT 连接状态、WS 在线客户端数、服务运行时长。支持下拉刷新与 toolbar 刷新按钮强制 `refresh=true`。
+- **MQTT / WebSocket 调试**（v1.5.1 合并到网络详情页）：因后端目前未暴露 `/mqtt/*` 端点，MQTT 调试入口在网络详情页的"MQTT / WebSocket"分区，展示 `mqtt_connected` 在线状态 + `ws_clients` 数量 + `uptime_seconds` 运行时长。
 - **登录（Login）**：user_id + access_key 设备绑定，登录后 JWT 持久化于 EncryptedSharedPreferences。
 - **底部导航**：Material 3 ActiveIndicator 胶囊样式，5 个 Tab（主页 / 设备 / 摄像头 / 报警 / 设置），高度 72dp 防止文字与图标重叠。
 - **网络层**：OkHttp 强制 HTTP/1.1 + 30s/60s/90s 超时 + 重试，针对 Cloudflare Tunnel 在移动网络上偶发的 stream 关闭问题。

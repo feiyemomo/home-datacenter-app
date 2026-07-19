@@ -44,8 +44,47 @@ class DevicesFragment : Fragment() {
     override fun onResume() {
         super.onResume()
         if (isAdded) {
+            // Refresh the cached online device ids before rendering the
+            // list. loadDevices() uses the freshest snapshot available
+            // in prefsManager.cachedSystemStatus, which DashboardFragment
+            // keeps warm via 5s polling. We kick off a refresh of the
+            // system status in parallel so that the next render picks
+            // up an authoritative onlineDeviceIds list.
+            refreshSystemStatus()
             loadDevices()
         }
+    }
+
+    private fun refreshSystemStatus() {
+        val mainActivity = activity as? MainActivity ?: return
+        val token = mainActivity.container.prefsManager.token ?: return
+        lifecycleScope.launch {
+            try {
+                mainActivity.container.getRepository().getSystemStatus(
+                    token,
+                    useCache = false,
+                    refreshCache = true,
+                )
+                activity?.runOnUiThread { applyOnlineSnapshot() }
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    /**
+     * Push the latest online device ids from the cached SystemStatus
+     * into the adapter so the status dots reflect reality.
+     */
+    private fun applyOnlineSnapshot() {
+        val mainActivity = activity as? MainActivity ?: return
+        val raw = mainActivity.container.prefsManager.cachedSystemStatus ?: return
+        val ids: List<Long> = try {
+            mainActivity.container.getRepository().decodeSystemStatus(raw).onlineDeviceIds
+                ?: emptyList()
+        } catch (_: Exception) {
+            emptyList()
+        }
+        adapter.onlineDeviceIds = ids.toSet()
     }
 
     private fun loadDevices() {
@@ -64,6 +103,7 @@ class DevicesFragment : Fragment() {
                     useCache = true
                 )
                 adapter.submitList(devices)
+                applyOnlineSnapshot()
                 showEmpty(devices.isEmpty())
             } catch (e: Exception) {
                 showEmpty(true)
@@ -87,6 +127,7 @@ class DevicesFragment : Fragment() {
                 )
                 activity?.runOnUiThread {
                     adapter.submitList(devices)
+                    applyOnlineSnapshot()
                     showEmpty(devices.isEmpty())
                 }
             } catch (_: Exception) {
@@ -112,6 +153,7 @@ class DevicesFragment : Fragment() {
             try {
                 mainActivity.container.getRepository().revokeDevice(token, device.id)
                 loadDevices()
+                refreshSystemStatus()
             } catch (e: Exception) {
                 // ignore
             }
