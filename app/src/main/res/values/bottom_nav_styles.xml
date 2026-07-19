@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Active tab indicator (the pill behind the icon+label).
+         Material 3 BottomNavigationView uses this style for the
+         active indicator; we override the shape appearance to make
+         it a sharper pill (16dp corners instead of the default 50%). -->
+    <style name="BottomNavActiveIndicator" parent="Widget.Material3.BottomNavigationView.ActiveIndicator">
+        <item name="shapeAppearance">@style/BottomNavPillShape</item>
+        <item name="backgroundTint">@color/primary</item>
+        <item name="android:paddingLeft">14dp</item>
+        <item name="android:paddingRight">14dp</item>
+        <item name="android:paddingTop">8dp</item>
+        <item name="android:paddingBottom">8dp</item>
+    </style>
+
+    <!-- Pill shape: 16dp rounded corners on all sides. -->
+    <style name="BottomNavPillShape">
+        <item name="cornerSize">16dp</item>
+        <item name="cornerFamily">rounded</item>
+    </style>
+
+    <!-- Active tab label: bold + slightly larger. -->
+    <style name="BottomNavTextActive">
+        <item name="android:textSize">11sp</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <!-- Inactive tab label: regular weight. -->
+    <style name="BottomNavTextInactive">
+        <item name="android:textSize">11sp</item>
+    </style>
+</resources>

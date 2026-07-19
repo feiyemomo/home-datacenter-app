@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Pill-shape active indicator for BottomNavigationView items.
+     Drawn behind the icon+label of the currently selected tab.
+     Uses the primary color (warm orange) to match the dashboard's
+     accent. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/primary" />
+    <corners android:radius="16dp" />
+</shape>

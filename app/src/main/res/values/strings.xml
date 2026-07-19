@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Home Datacenter</string>
+
+    <string name="login_title">欢迎回来</string>
+    <string name="login_subtitle">绑定您的设备以访问家庭数据中心</string>
+    <string name="hint_user_id">用户 ID</string>
+    <string name="hint_access_key">访问密钥</string>
+    <string name="hint_server_url">服务器地址</string>
+    <string name="btn_login">绑定设备</string>
+    <string name="login_in_progress">正在绑定...</string>
+    <string name="login_error">绑定失败，请检查凭据</string>
+    <string name="login_invalid_input">请输入用户 ID 和访问密钥</string>
+
+    <string name="nav_dashboard">主页</string>
+    <string name="nav_devices">设备</string>
+    <string name="nav_cameras">摄像头</string>
+    <string name="nav_alerts">报警</string>
+    <string name="nav_settings">设置</string>
+
+    <string name="dashboard_title">系统概览</string>
+    <string name="dashboard_greeting">你好</string>
+    <string name="stat_mqtt">MQTT 连接</string>
+    <string name="stat_ws_clients">在线客户端</string>
+    <string name="stat_devices">设备总数</string>
+    <string name="stat_cameras">摄像头</string>
+    <string name="status_online">在线</string>
+    <string name="status_offline">离线</string>
+    <string name="status_partial">部分在线</string>
+    <string name="alert_event_id">事件 ID</string>
+    <string name="alert_frame_time">抓拍时间</string>
+    <string name="alert_zones">检测区域</string>
+    <string name="alert_camera">摄像头</string>
+    <string name="alert_no_zones">无区域</string>
+    <string name="network_quality">网络质量</string>
+    <string name="network_strategy">连接策略</string>
+    <string name="network_ipv6">IPv6</string>
+    <string name="network_nat">NAT</string>
+    <string name="network_p2p">P2P</string>
+    <string name="network_relay">中继</string>
+    <string name="network_available">可用</string>
+    <string name="network_unavailable">不可用</string>
+    <string name="network_unknown">未知</string>
+    <string name="network_quality_format">%1$d / 5</string>
+    <string name="live_detection_title">实时检测报警</string>
+    <string name="live_detection_format">检测到 %1$s · %2$d%%</string>
+    <string name="live_detection_camera_unknown">未知摄像头</string>
+    <string name="stat_uptime">运行时间</string>
+    <string name="stat_server_time">服务器时间</string>
+    <string name="dashboard_live">实时</string>
+
+    <string name="devices_title">设备管理</string>
+    <string name="device_revoked">已吊销</string>
+    <string name="btn_revoke">吊销</string>
+    <string name="confirm_revoke_title">确认吊销</string>
+    <string name="confirm_revoke_message">确定要吊销此设备吗？吊销后该设备将无法访问系统。</string>
+    <string name="btn_cancel">取消</string>
+    <string name="btn_confirm">确定</string>
+
+    <string name="cameras_title">摄像头监控</string>
+    <string name="no_cameras">暂无摄像头</string>
+    <string name="camera_offline">离线</string>
+    <string name="camera_online">在线</string>
+    <string name="btn_play">播放</string>
+    <string name="btn_stop">收起</string>
+    <string name="btn_recordings">录像</string>
+    <string name="btn_alerts">报警</string>
+    <string name="recent_alerts">最近报警</string>
+    <string name="no_alerts">暂无报警</string>
+    <string name="view_all">全部</string>
+    <string name="weather_loading">天气加载中…</string>
+    <string name="weather_failed">天气获取失败</string>
+
+    <string name="settings_title">设置</string>
+    <string name="setting_server">服务器地址</string>
+    <string name="setting_server_summary">API 服务器的基础 URL</string>
+    <string name="setting_theme">外观设置</string>
+    <string name="setting_theme_summary">选择您喜欢的主题模式</string>
+    <string name="theme_light">浅色模式</string>
+    <string name="theme_dark">深色模式</string>
+    <string name="theme_system">跟随系统</string>
+    <string name="setting_account">账户</string>
+    <string name="setting_logout">退出登录</string>
+    <string name="setting_user">当前用户</string>
+    <string name="setting_admin_label">管理员</string>
+    <string name="confirm_logout_title">退出登录</string>
+    <string name="confirm_logout_message">确定要退出登录吗？</string>
+    <string name="setting_version">版本</string>
+
+    <string name="connected">已连接</string>
+    <string name="disconnected">已断开</string>
+    <string name="close">关闭</string>
+    <string name="loading">加载中...</string>
+    <string name="retry">重试</string>
+    <string name="error">错误</string>
+    <string name="success">成功</string>
+
+    <string name="badge_clip">录像</string>
+    <string name="badge_snapshot">截图</string>
+    <string name="network_upgrade_ipv6">可升级至 IPv6 直连</string>
+    <string name="network_upgrade_p2p">可升级至 P2P</string>
+    <string name="alert_snapshot_title">报警截图</string>
+    <string name="hint_view_snapshot">点击查看大图</string>
+    <string name="hint_jump_camera">跳转摄像头</string>
+    <string name="uptime_format_dh">%1$d天 %2$d小时</string>
+    <string name="uptime_format_hm">%1$d小时 %2$d分</string>
+    <string name="uptime_format_ms">%1$d分 %2$d秒</string>
+    <string name="detection_label_person">人员</string>
+    <string name="detection_label_car">车辆</string>
+    <string name="detection_label_truck">卡车</string>
+    <string name="detection_label_bus">公交车</string>
+    <string name="detection_label_bicycle">自行车</string>
+    <string name="detection_label_motorcycle">摩托车</string>
+    <string name="detection_label_dog">狗</string>
+    <string name="detection_label_cat">猫</string>
+    <string name="detection_label_bird">鸟</string>
+</resources>

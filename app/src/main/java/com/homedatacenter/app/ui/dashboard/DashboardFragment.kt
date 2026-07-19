@@ -1,0 +1,653 @@
+package com.homedatacenter.app.ui.dashboard
+
+import android.graphics.BitmapFactory
+import android.os.Bundle
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import androidx.fragment.app.Fragment
+import androidx.lifecycle.lifecycleScope
+import androidx.recyclerview.widget.LinearLayoutManager
+import com.homedatacenter.app.R
+import com.homedatacenter.app.data.api.NetworkFactory
+import com.homedatacenter.app.data.model.Alert
+import com.homedatacenter.app.data.model.AlertListData
+import com.homedatacenter.app.data.model.NetworkStatus
+import com.homedatacenter.app.data.model.SystemStatus
+import com.homedatacenter.app.data.model.WeatherResponse
+import com.homedatacenter.app.data.model.WsMessage
+import com.homedatacenter.app.data.model.WsMessageType
+import com.homedatacenter.app.data.ws.HomeCenterWebSocket
+import com.homedatacenter.app.data.ws.WsEventListener
+import com.homedatacenter.app.databinding.FragmentDashboardBinding
+import com.homedatacenter.app.databinding.ItemStatCardBinding
+import com.homedatacenter.app.ui.alerts.AlertListAdapter
+import com.homedatacenter.app.ui.alerts.AlertSnapshotDialogFragment
+import com.homedatacenter.app.ui.main.MainActivity
+import com.homedatacenter.app.util.AnimationHelper
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.doubleOrNull
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+class DashboardFragment : Fragment() {
+
+    private var _binding: FragmentDashboardBinding? = null
+    private val binding get() = _binding!!
+    private lateinit var alertAdapter: AlertListAdapter
+    private var statusPollingJob: Job? = null
+    private var liveAlertDismissJob: Job? = null
+    private var dashboardWebSocket: HomeCenterWebSocket? = null
+    private var latestSystemStatus: SystemStatus? = null
+
+    override fun onCreateView(
+        inflater: LayoutInflater,
+        container: ViewGroup?,
+        savedInstanceState: Bundle?
+    ): View {
+        _binding = FragmentDashboardBinding.inflate(inflater, container, false)
+        return binding.root
+    }
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+
+        val mainActivity = activity as? MainActivity ?: return
+        val baseUrl = mainActivity.container.getApiBaseUrl()
+        val token = mainActivity.container.prefsManager.token
+        val okHttpClient = mainActivity.container.okHttpClient
+
+        alertAdapter = AlertListAdapter(
+            baseUrl = baseUrl,
+            token = token,
+            okHttpClient = okHttpClient,
+            onSnapshotClick = { alert -> showSnapshotDialog(alert) },
+            onJumpCamera = { alert -> jumpToCamerasWithAlert(alert) },
+            onRowClick = null
+        )
+        binding.rvAlerts.layoutManager = LinearLayoutManager(context)
+        binding.rvAlerts.adapter = alertAdapter
+
+        binding.swipeRefresh.setOnRefreshListener { refreshAll() }
+        binding.btnViewAllAlerts.setOnClickListener {
+            (activity as? MainActivity)?.let {
+                it.binding.bottomNav.selectedItemId = R.id.nav_alerts
+            }
+        }
+
+        loadUserName()
+        setupDashboardWebSocket()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (isAdded && !isHidden) {
+            loadUserName()
+            refreshAll()
+            startStatusPolling()
+            connectDashboardWebSocket()
+        }
+    }
+
+    override fun onPause() {
+        stopStatusPolling()
+        super.onPause()
+    }
+
+    override fun onHiddenChanged(hidden: Boolean) {
+        super.onHiddenChanged(hidden)
+        if (!hidden && isAdded) {
+            loadUserName()
+            refreshAll()
+            startStatusPolling()
+            connectDashboardWebSocket()
+        } else if (hidden) {
+            stopStatusPolling()
+        }
+    }
+
+    private fun loadUserName() {
+        val mainActivity = activity as? MainActivity ?: return
+        val prefs = mainActivity.container.prefsManager
+        binding.tvUserName.text = prefs.userName ?: getString(R.string.app_name)
+    }
+
+    private fun refreshAll() {
+        loadWeather()
+        loadNetworkStatus()
+        loadRecentAlerts()
+        loadSystemStatus(onComplete = {
+            if (_binding != null) binding.swipeRefresh.isRefreshing = false
+        })
+    }
+
+    // --- 5-second status polling (matches web Dashboard) ---
+
+    private fun startStatusPolling() {
+        if (statusPollingJob?.isActive == true) return
+        statusPollingJob = viewLifecycleOwner.lifecycleScope.launch {
+            while (isActive && !isHidden) {
+                delay(5_000L)
+                loadSystemStatus()
+            }
+        }
+    }
+
+    private fun stopStatusPolling() {
+        statusPollingJob?.cancel()
+        statusPollingJob = null
+    }
+
+    // --- Weather ---
+
+    private fun loadWeather() {
+        val mainActivity = activity as? MainActivity ?: return
+        val token = mainActivity.container.prefsManager.token ?: return
+        val baseUrl = mainActivity.container.getApiBaseUrl()
+        val base = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
+        val url = "${base}api/v1/weather"
+
+        binding.progressWeather.visibility = View.VISIBLE
+        binding.tvWeatherError.visibility = View.GONE
+
+        lifecycleScope.launch {
+            try {
+                val client = mainActivity.container.okHttpClient
+                val req = Request.Builder().url(url).apply {
+                    if (!token.isNullOrEmpty()) addHeader("Authorization", "Bearer $token")
+                }.build()
+                val jsonStr = withContext(Dispatchers.IO) {
+                    client.newCall(req).execute().use { resp ->
+                        if (!resp.isSuccessful) {
+                            throw RuntimeException("HTTP ${resp.code}")
+                        }
+                        resp.body?.string() ?: throw RuntimeException("empty body")
+                    }
+                }
+                // The weather endpoint wraps wttr.in's response in our
+                // standard { code, message, data } envelope, so unwrap
+                // `data` before decoding as WeatherResponse.
+                val apiResp = NetworkFactory.json.decodeFromString(
+                    com.homedatacenter.app.data.model.ApiResponse.serializer(),
+                    jsonStr
+                )
+                val weather = apiResp.decodeData<WeatherResponse>()
+                    ?: throw RuntimeException("empty weather data")
+                updateWeatherUI(weather)
+            } catch (e: Exception) {
+                android.util.Log.w("Dashboard", "Weather load failed: ${e.message}")
+                binding.tvWeatherError.visibility = View.VISIBLE
+                binding.tvWeatherError.text = getString(R.string.weather_failed)
+            } finally {
+                binding.progressWeather.visibility = View.GONE
+            }
+        }
+    }
+
+    private fun updateWeatherUI(weather: WeatherResponse) {
+        val current = weather.currentCondition.firstOrNull() ?: return
+        val area = weather.nearestArea.firstOrNull()
+        val locationName = area?.areaName?.firstOrNull()?.value
+            ?: area?.region?.firstOrNull()?.value
+            ?: "—"
+
+        binding.tvWeatherLocation.text = locationName
+        binding.tvWeatherTemp.text = "${current.tempC}°"
+        binding.tvWeatherDesc.text = current.weatherDesc.firstOrNull()?.value ?: ""
+
+        val extra = buildString {
+            append("体感 ${current.feelsLikeC}°")
+            append("  湿度 ${current.humidity}%")
+            append("  风速 ${current.windSpeedKmph} km/h")
+        }
+        binding.tvWeatherExtra.text = extra
+
+        val iconUrl = current.weatherIconUrl.firstOrNull()?.value
+        if (!iconUrl.isNullOrEmpty()) {
+            val absoluteUrl = if (iconUrl.startsWith("http")) iconUrl else "https:$iconUrl"
+            loadWeatherIcon(absoluteUrl)
+        }
+    }
+
+    private fun loadWeatherIcon(url: String) {
+        val client = OkHttpClient()
+        lifecycleScope.launch {
+            try {
+                val bitmap = withContext(Dispatchers.IO) {
+                    val req = Request.Builder().url(url).build()
+                    client.newCall(req).execute().use { resp ->
+                        if (!resp.isSuccessful) return@use null
+                        resp.body?.byteStream()?.use { BitmapFactory.decodeStream(it) }
+                    }
+                }
+                if (bitmap != null) {
+                    binding.ivWeatherIcon.setImageBitmap(bitmap)
+                }
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    // --- System status (4 stat cards: Devices, MQTT, WS Clients, Uptime) ---
+
+    private fun loadSystemStatus(onComplete: (() -> Unit)? = null) {
+        val mainActivity = activity as? MainActivity ?: return
+        val token = mainActivity.container.prefsManager.token ?: return
+
+        // Cached first for instant display
+        val cachedStatus = mainActivity.container.prefsManager.cachedSystemStatus
+        if (!cachedStatus.isNullOrEmpty()) {
+            try {
+                val status = NetworkFactory.json.decodeFromString(
+                    SystemStatus.serializer(),
+                    cachedStatus
+                )
+                updateStats(status)
+            } catch (_: Exception) {
+            }
+        }
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val status = mainActivity.container.getRepository().getSystemStatus(
+                    token = token,
+                    useCache = false,
+                    refreshCache = true,
+                )
+                latestSystemStatus = status
+                updateStats(status)
+            } catch (error: Exception) {
+                android.util.Log.w("Dashboard", "System status load failed: ${error.message}")
+            } finally {
+                onComplete?.invoke()
+            }
+        }
+    }
+
+    private fun updateStats(status: SystemStatus) {
+        latestSystemStatus = status
+
+        val devicesCard = ItemStatCardBinding.bind(binding.cardDevices.root)
+        devicesCard.tvLabel.text = getString(R.string.stat_devices)
+        devicesCard.tvValue.text = status.onlineDeviceCount.toString()
+        devicesCard.ivIcon.setImageResource(R.drawable.ic_devices)
+        devicesCard.ivIcon.setColorFilter(resources.getColor(R.color.primary, null))
+        // Status dot: green if any devices online, gray otherwise.
+        applyStatCardDot(devicesCard.statusDot, status.onlineDeviceCount > 0)
+
+        val mqttCard = ItemStatCardBinding.bind(binding.cardMqtt.root)
+        mqttCard.tvLabel.text = getString(R.string.stat_mqtt)
+        mqttCard.tvValue.text = if (status.mqttConnected)
+            getString(R.string.status_online) else getString(R.string.status_offline)
+        mqttCard.ivIcon.setImageResource(R.drawable.ic_mqtt)
+        mqttCard.ivIcon.setColorFilter(resources.getColor(R.color.online, null))
+        applyStatCardDot(mqttCard.statusDot, status.mqttConnected)
+
+        val wsCard = ItemStatCardBinding.bind(binding.cardWs.root)
+        wsCard.tvLabel.text = getString(R.string.stat_ws_clients)
+        wsCard.tvValue.text = status.wsClients.toString()
+        wsCard.ivIcon.setImageResource(R.drawable.ic_ws)
+        wsCard.ivIcon.setColorFilter(resources.getColor(R.color.secondary, null))
+        // WS clients dot: green if >0 clients, gray otherwise.
+        applyStatCardDot(wsCard.statusDot, status.wsClients > 0)
+
+        val uptimeCard = ItemStatCardBinding.bind(binding.cardUptime.root)
+        uptimeCard.tvLabel.text = getString(R.string.stat_uptime)
+        uptimeCard.tvValue.text = formatUptime(status.uptimeSeconds)
+        uptimeCard.ivIcon.setImageResource(R.drawable.ic_dashboard)
+        uptimeCard.ivIcon.setColorFilter(resources.getColor(R.color.accent, null))
+        // Uptime dot: green if uptime > 1h, yellow otherwise (recently started).
+        applyStatCardDot(uptimeCard.statusDot, on = status.uptimeSeconds >= 3_600,
+            warning = status.uptimeSeconds in 1 until 3_600)
+
+        // Top status banner — aggregates MQTT + WS + devices into one pill.
+        updateStatusBanner(status)
+    }
+
+    /** Update the top-right compact status pill based on overall system health. */
+    private fun updateStatusBanner(status: SystemStatus) {
+        val allOk = status.mqttConnected && status.wsClients > 0 && status.onlineDeviceCount > 0
+        val partialOk = status.mqttConnected || status.wsClients > 0 || status.onlineDeviceCount > 0
+
+        val (dotRes, text) = when {
+            allOk -> R.drawable.circle_online to getString(R.string.status_online)
+            partialOk -> R.drawable.circle_warning to getString(R.string.status_partial)
+            else -> R.drawable.circle_error to getString(R.string.status_offline)
+        }
+        binding.statusBannerDot.setBackgroundResource(dotRes)
+        binding.statusBannerText.text = text
+    }
+
+    /**
+     * Show/hide a stat card's status dot.
+     * - [on] = true: green (online), false: gray (offline)
+     * - [warning] = true: yellow (degraded) — overrides [on]
+     */
+    private fun applyStatCardDot(view: View, on: Boolean, warning: Boolean = false) {
+        val res = when {
+            warning -> R.drawable.circle_warning
+            on -> R.drawable.circle_online
+            else -> R.drawable.circle_offline
+        }
+        view.visibility = View.VISIBLE
+        view.setBackgroundResource(res)
+    }
+
+    /** Format a duration in seconds as "X天 Y小时" / "X小时 Y分" / "X分 Y秒". */
+    private fun formatUptime(seconds: Long): String {
+        val s = seconds.coerceAtLeast(0)
+        val days = s / 86_400
+        val hours = (s % 86_400) / 3_600
+        val mins = (s % 3_600) / 60
+        return when {
+            days >= 1 -> getString(R.string.uptime_format_dh, days, hours)
+            hours >= 1 -> getString(R.string.uptime_format_hm, hours, mins)
+            else -> getString(R.string.uptime_format_ms, mins, s % 60)
+        }
+    }
+
+    // --- Network quality card (stars, strategy, IPv6/P2P/Relay dots) ---
+
+    private fun loadNetworkStatus() {
+        val mainActivity = activity as? MainActivity ?: return
+        val token = mainActivity.container.prefsManager.token ?: return
+
+        // Cached first
+        val cached = mainActivity.container.prefsManager.cachedNetworkStatus
+        if (!cached.isNullOrEmpty()) {
+            try {
+                val status = NetworkFactory.json.decodeFromString(
+                    NetworkStatus.serializer(),
+                    cached
+                )
+                updateNetworkStatus(status)
+            } catch (_: Exception) {
+            }
+        }
+
+        lifecycleScope.launch {
+            try {
+                val status = mainActivity.container.getRepository().getNetworkStatus(token)
+                updateNetworkStatus(status)
+            } catch (e: Exception) {
+                android.util.Log.w("Dashboard", "Network status load failed: ${e.message}")
+                updateNetworkStatusError()
+            }
+        }
+    }
+
+    private fun updateNetworkStatus(status: NetworkStatus) {
+        // Stars (1..5)
+        val stars = listOf(binding.star1, binding.star2, binding.star3, binding.star4, binding.star5)
+        val q = status.quality.coerceIn(0, 5)
+        stars.forEachIndexed { idx, iv ->
+            iv.setImageResource(if (idx < q) R.drawable.ic_star_on else R.drawable.ic_star_off)
+        }
+
+        // Strategy text — the web shows the static "Relay" floor and an
+        // upgrade arrow when the achievable strategy is better than the
+        // initial one (e.g. "Relay ↑ upgradable to P2P"). We mirror that
+        // here: tvNetworkStrategy always shows the initial path, and
+        // tvNetworkUpgrade shows the better target when applicable.
+        val initialLabel = when (status.initial) {
+            "ipv6_direct" -> "IPv6 Direct"
+            "p2p" -> "P2P"
+            "relay" -> getString(R.string.network_relay)
+            else -> status.initial.ifBlank { getString(R.string.network_unknown) }
+        }
+        binding.tvNetworkStrategy.text = initialLabel
+
+        // Upgrade hint: only when the achievable strategy differs from
+        // the initial path (e.g. initial=relay, strategy=p2p).
+        val canUpgrade = status.strategy != status.initial &&
+            status.strategy != "relay" && status.strategy.isNotBlank()
+        if (canUpgrade) {
+            binding.tvNetworkUpgrade.visibility = View.VISIBLE
+            binding.tvNetworkUpgrade.text = when (status.strategy) {
+                "ipv6_direct" -> "↑ " + getString(R.string.network_upgrade_ipv6)
+                "p2p" -> "↑ " + getString(R.string.network_upgrade_p2p)
+                else -> ""
+            }
+        } else {
+            binding.tvNetworkUpgrade.visibility = View.GONE
+        }
+
+        // Capability dots: IPv6, P2P, Relay
+        applyDot(binding.dotIPv6, status.ipv6.reachable)
+        applyDot(binding.dotP2P, status.p2p.supported)
+        applyDot(binding.dotRelay, status.relay.available)
+    }
+
+    private fun updateNetworkStatusError() {
+        val stars = listOf(binding.star1, binding.star2, binding.star3, binding.star4, binding.star5)
+        stars.forEach { it.setImageResource(R.drawable.ic_star_off) }
+        binding.tvNetworkStrategy.text = getString(R.string.network_unknown)
+        binding.tvNetworkUpgrade.visibility = View.GONE
+        applyDot(binding.dotIPv6, false)
+        applyDot(binding.dotP2P, false)
+        applyDot(binding.dotRelay, false)
+    }
+
+    private fun applyDot(view: View, on: Boolean) {
+        view.setBackgroundResource(if (on) R.drawable.circle_online else R.drawable.circle_offline)
+    }
+
+    // --- Real-time WebSocket events ---
+
+    private fun setupDashboardWebSocket() {
+        if (dashboardWebSocket != null) return
+        val mainActivity = activity as? MainActivity ?: return
+        val token = mainActivity.container.prefsManager.token ?: return
+        dashboardWebSocket = HomeCenterWebSocket(
+            client = mainActivity.container.okHttpClient,
+            wsUrl = mainActivity.container.getWsUrl(),
+            token = token,
+            listener = object : WsEventListener {
+                override fun onConnected() {
+                    dashboardWebSocket?.subscribe("device")
+                    dashboardWebSocket?.subscribe("camera")
+                    dashboardWebSocket?.subscribe("camera.motion")
+                }
+
+                override fun onMessage(message: WsMessage) {
+                    activity?.runOnUiThread {
+                        if (_binding != null) handleWebSocketMessage(message)
+                    }
+                }
+
+                override fun onDisconnected(code: Int, reason: String?) = Unit
+
+                override fun onError(throwable: Throwable, reconnectAttempt: Int) {
+                    android.util.Log.w(
+                        "Dashboard",
+                        "WebSocket error, reconnect #$reconnectAttempt: ${throwable.message}",
+                    )
+                }
+            },
+        )
+    }
+
+    private fun connectDashboardWebSocket() {
+        setupDashboardWebSocket()
+        dashboardWebSocket?.connect()
+    }
+
+    private fun handleWebSocketMessage(message: WsMessage) {
+        when {
+            message.type == WsMessageType.ONLINE_LIST -> applyOnlineList(message)
+            message.type != WsMessageType.EVENT -> Unit
+            message.topic == "device.status" -> applyDeviceStatus(message)
+            message.topic == "camera.online" || message.topic == "camera.offline" -> {
+                loadSystemStatus()
+            }
+            message.topic == "camera.motion" -> showLiveDetection(message)
+        }
+    }
+
+    private fun applyOnlineList(message: WsMessage) {
+        val payload = message.payload ?: return
+        val ids = (payload["device_ids"] as? JsonArray)
+            ?.mapNotNull { it.jsonPrimitive.longOrNull }
+            ?: return
+        val current = latestSystemStatus ?: return
+        updateStats(
+            current.copy(
+                onlineDeviceCount = ids.size,
+                onlineDeviceIds = ids,
+            ),
+        )
+    }
+
+    private fun applyDeviceStatus(message: WsMessage) {
+        val payload = message.payload ?: return
+        val deviceId = payload["device_id"]?.jsonPrimitive?.longOrNull ?: return
+        val status = payload["status"]?.jsonPrimitive?.contentOrNull ?: return
+        val current = latestSystemStatus ?: return
+        val ids = current.onlineDeviceIds.orEmpty().toMutableSet()
+        if (status == "online" || status == "heartbeat") ids.add(deviceId) else ids.remove(deviceId)
+        updateStats(
+            current.copy(
+                onlineDeviceCount = ids.size,
+                onlineDeviceIds = ids.toList(),
+            ),
+        )
+    }
+
+    private fun showLiveDetection(message: WsMessage) {
+        val payload = message.payload ?: return
+        if (payload["type"]?.jsonPrimitive?.contentOrNull != "detection") return
+
+        val timestamp = payload["ts"]?.jsonPrimitive?.doubleOrNull
+            ?: (System.currentTimeMillis() / 1000.0)
+        val alert = Alert(
+            id = payload["event_id"]?.jsonPrimitive?.contentOrNull
+                ?: timestamp.toLong().toString(),
+            cameraSlug = payload["camera_slug"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            cameraId = payload["camera_id"]?.jsonPrimitive?.longOrNull,
+            cameraName = payload["camera_name"]?.jsonPrimitive?.contentOrNull.orEmpty(),
+            label = payload["label"]?.jsonPrimitive?.contentOrNull ?: "unknown",
+            confidence = payload["confidence"]?.jsonPrimitive?.doubleOrNull ?: 0.0,
+            startTime = timestamp,
+            endTime = 0.0,
+            zones = (payload["zones"] as? JsonArray)?.mapNotNull {
+                it.jsonPrimitive.contentOrNull
+            }.orEmpty(),
+            hasClip = payload["has_clip"]?.jsonPrimitive?.booleanOrNull ?: false,
+            hasSnapshot = payload["has_snapshot"]?.jsonPrimitive?.booleanOrNull ?: false,
+        )
+
+        binding.tvLiveAlertLabel.text = formatLabel(alert.label)
+        binding.tvLiveAlertConfidence.text = "${(alert.confidence * 100).toInt()}%"
+        binding.tvLiveAlertCamera.text = buildString {
+            append(
+                alert.cameraName.ifBlank {
+                    alert.cameraSlug.ifBlank {
+                        getString(R.string.live_detection_camera_unknown)
+                    }
+                },
+            )
+            if (alert.zones.isNotEmpty()) append(" · ${alert.zones.joinToString(", ")}")
+        }
+        binding.liveAlertBanner.visibility = View.VISIBLE
+        AnimationHelper.fadeIn(binding.liveAlertBanner, 250)
+
+        // Prepend to the alerts list (deduplicated)
+        val merged = listOf(alert) + alertAdapter.currentList.filterNot { it.id == alert.id }
+        alertAdapter.submitList(merged.take(5))
+        binding.tvAlertsEmpty.visibility = View.GONE
+        binding.rvAlerts.visibility = View.VISIBLE
+
+        // Auto-dismiss after 8 seconds
+        liveAlertDismissJob?.cancel()
+        liveAlertDismissJob = viewLifecycleOwner.lifecycleScope.launch {
+            delay(8_000L)
+            if (_binding != null) binding.liveAlertBanner.visibility = View.GONE
+        }
+    }
+
+    private fun formatLabel(label: String): String {
+        val res = when (label.lowercase(Locale.getDefault())) {
+            "person" -> R.string.detection_label_person
+            "car" -> R.string.detection_label_car
+            "truck" -> R.string.detection_label_truck
+            "bus" -> R.string.detection_label_bus
+            "bicycle" -> R.string.detection_label_bicycle
+            "motorcycle" -> R.string.detection_label_motorcycle
+            "dog" -> R.string.detection_label_dog
+            "cat" -> R.string.detection_label_cat
+            "bird" -> R.string.detection_label_bird
+            else -> 0
+        }
+        return if (res != 0) getString(res) else label
+    }
+
+    // --- Snapshot modal ---
+
+    private fun showSnapshotDialog(alert: Alert) {
+        val mainActivity = activity as? MainActivity ?: return
+        val baseUrl = mainActivity.container.getApiBaseUrl()
+        val token = mainActivity.container.prefsManager.token
+        val client = mainActivity.container.okHttpClient
+        val dialog = AlertSnapshotDialogFragment.newInstance(alert, baseUrl, token, client)
+        dialog.show(parentFragmentManager, AlertSnapshotDialogFragment.TAG)
+    }
+
+    /** Jump from a recent alert row to the cameras tab.
+     *  Currently just switches tabs — cameras fragment will display
+     *  the camera list; future enhancement could auto-scroll to the
+     *  specific camera identified by [alert.cameraId]. */
+    private fun jumpToCamerasWithAlert(alert: Alert) {
+        (activity as? MainActivity)?.let {
+            it.binding.bottomNav.selectedItemId = R.id.nav_cameras
+        }
+    }
+
+    // --- Recent alerts (last 5) ---
+
+    private fun loadRecentAlerts() {
+        val mainActivity = activity as? MainActivity ?: return
+        val token = mainActivity.container.prefsManager.token ?: return
+
+        lifecycleScope.launch {
+            try {
+                val resp = mainActivity.container.getApi().listAlerts("Bearer $token", limit = 5)
+                val alerts = if (resp.isSuccess) {
+                    resp.decodeData<AlertListData>()?.alerts ?: emptyList()
+                } else {
+                    emptyList()
+                }
+                alertAdapter.submitList(alerts)
+                binding.tvAlertsEmpty.visibility = if (alerts.isEmpty()) View.VISIBLE else View.GONE
+                binding.rvAlerts.visibility = if (alerts.isEmpty()) View.GONE else View.VISIBLE
+                AnimationHelper.fadeIn(binding.rvAlerts, 300)
+            } catch (_: Exception) {
+                binding.tvAlertsEmpty.visibility = View.VISIBLE
+                binding.rvAlerts.visibility = View.GONE
+            }
+        }
+    }
+
+    override fun onDestroyView() {
+        stopStatusPolling()
+        liveAlertDismissJob?.cancel()
+        liveAlertDismissJob = null
+        dashboardWebSocket?.disconnect()
+        dashboardWebSocket = null
+        binding.rvAlerts.adapter = null
+        _binding = null
+        super.onDestroyView()
+    }
+}

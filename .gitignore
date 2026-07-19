@@ -1,0 +1,100 @@
+# Gradle
+.gradle/
+build/
+
+# Kotlin
+.kotlin/
+
+# Android Studio / IntelliJ
+*.iml
+.idea/caches
+.idea/libraries
+.idea/modules.xml
+.idea/workspace.xml
+.idea/navEditor.xml
+.idea/assetWizardSettings.xml
+.idea/deploymentTargetSelector.xml
+.idea/other.xml
+.idea/runConfigurations.xml
+.idea/.name
+.idea/.gitignore
+.idea/compiler.xml
+.idea/gradle.xml
+.idea/jarRepositories.xml
+.idea/misc.xml
+.idea/vcs.xml
+.idea/navEditor.xml
+.idea/encodings.xml
+.idea/scopes
+.idea/codeStyles/
+
+# Local config
+local.properties
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Native
+.cxx/
+.externalNativeBuild/
+
+# APK / AAB / mapping (do not commit built artifacts)
+*.apk
+*.aab
+*.ap_
+*.dex
+*.apks
+
+# Keystores
+# Project-level debug keystore is intentionally committed so that all
+# debug builds carry the same signature regardless of which machine
+# builds them (prevents "package invalid" on update installs).
+# Release keystores must NEVER be committed.
+*.jks
+*.keystore
+!app/keystore/
+!app/keystore/home-debug.jks
+
+# Logs
+*.log
+*.logcat
+build*.log
+log_*.txt
+
+# Screenshots / captures
+captures/
+/captures
+
+# Backups
+*.bak
+*.orig
+~*
+
+# NDK / cmake
+.cxx/
+
+# ProGuard (only commit rules, not output)
+*.mapping
+
+# Profile / heap dump
+*.hprof
+*.prof
+
+# Lint
+lint-results/
+lint-baseline.xml
+
+# Stray nested copy of the backend project (lives in its own repo:
+# https://github.com/feiyemomo/home-datacenter). Excluding so it
+# does not get committed into the Android app repo by accident.
+/home-datacenter/
+
+# Stray logcat dumps from on-device debugging
+*.logcat
+Small-Phone-Android-*
+
+# Build reports (gradle generates these into build/)
+build/reports/
