@@ -17,22 +17,25 @@ class HomeCenterApp : Application() {
         super.onCreate()
         ThemeManager.init(this)
         container = AppContainer(this)
-        // Synchronously probe the LAN (NAS) URL so the first API call
-        // goes to the fast local endpoint when the device is on the
-        // home network. Blocks up to 800ms — a TCP handshake to a
-        // same-LAN host takes ~10ms, so 800ms is generous. If LAN is
-        // unreachable we fall through to the Cloudflare Tunnel URL.
-        // Skip when a user override is set (manual base URL pref).
+        // Always register the NetworkChangeMonitor — it fires
+        // forceProbe on every WiFi/cellular handoff, which is the
+        // reliable signal for "network just changed, re-probe now".
+        // We register it unconditionally (even when a user override
+        // for baseUrl is set) because the monitor itself is cheap
+        // and the resolver's forceProbe is a no-op when a user
+        // override is in effect.
+        networkMonitor = NetworkChangeMonitor(this, container).also {
+            it.register()
+        }
+        // Synchronously probe the LAN (NAS) URL only when the user
+        // hasn't set a manual baseUrl override. probeLanOnStartup
+        // now runs on background daemon threads (no main-thread
+        // blocking) — the first API call may go to the remote URL
+        // while the probe is in flight; once LAN is confirmed
+        // reachable the resolver switches and AppContainer.resetApi
+        // fires to rebuild the Retrofit instance against the LAN.
         if (container.prefsManager.baseUrl.isNullOrBlank()) {
             container.baseUrlResolver.probeLanOnStartup()
-            // Register for real-time network changes so WiFi ↔
-            // cellular handoff triggers an immediate re-probe
-            // instead of waiting for the 5-minute TTL. This makes
-            // walking out of (or back into) home WiFi range pick up
-            // the right URL within seconds rather than minutes.
-            networkMonitor = NetworkChangeMonitor(this, container).also {
-                it.register()
-            }
         }
     }
 }

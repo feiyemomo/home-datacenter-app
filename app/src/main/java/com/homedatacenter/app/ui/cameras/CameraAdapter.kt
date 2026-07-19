@@ -103,6 +103,13 @@ class CameraAdapter(
         private var thumbnailError by mutableStateOf(false)
         private var isPlaying by mutableStateOf(false)
         private var playerLoading by mutableStateOf(false)
+        // Audio toggle state per camera. Defaults to ON when the
+        // camera has audio capability — the user expects to hear
+        // sound when they tap play. The mute button toggles this,
+        // which sets ExoPlayer.volume to 0.0 or 1.0. We don't
+        // remove/add the audio track because that would require
+        // re-preparing the media source (3-5s of buffering).
+        private var audioEnabled by mutableStateOf(true)
 
         init {
             binding.composeView.setViewCompositionStrategy(
@@ -117,6 +124,10 @@ class CameraAdapter(
                 thumbnailJob?.cancel()
                 thumbnailError = false
                 boundCamera = camera
+                // Reset audio toggle to ON whenever a new camera is
+                // bound — the previous camera's mute state shouldn't
+                // carry over to the next camera in the list.
+                audioEnabled = true
                 // Check cache first — if we have a cached snapshot
                 // for this camera, show it immediately and skip the
                 // HTTP fetch. This makes scroll-back instant instead
@@ -142,8 +153,11 @@ class CameraAdapter(
                         thumbnailError = thumbnailError,
                         isPlaying = isPlaying,
                         playerLoading = playerLoading,
+                        audioEnabled = audioEnabled,
+                        hasAudioCapability = camera.hasAudio,
                         onPlay = { startInlinePlayback(camera) },
                         onStop = ::stopInlinePlayback,
+                        onToggleAudio = { toggleAudio() },
                         onRecordings = { onRecordingsClick(camera) },
                         onAlerts = { onAlertsClick(camera) },
                     )
@@ -337,6 +351,13 @@ class CameraAdapter(
             newPlayer.apply {
                 setMediaSource(mediaSource)
                 playWhenReady = true
+                // Apply the current mute state. audioEnabled is the
+                // user's per-camera toggle (defaults to true on each
+                // new camera bind). volume 1.0 = audible, 0.0 = muted.
+                // ExoPlayer handles volume scaling internally; the
+                // audio renderer is always active (so toggling back
+                // on doesn't require re-creating the renderer).
+                volume = if (audioEnabled) 1.0f else 0.0f
                 addListener(object : Player.Listener {
                     override fun onPlaybackStateChanged(state: Int) {
                         val stateName = when (state) {
@@ -354,6 +375,35 @@ class CameraAdapter(
                         if (state == Player.STATE_IDLE || state == Player.STATE_ENDED) {
                             playerLoading = false
                         }
+                    }
+
+                    override fun onTracksChanged(
+                        tracks: com.google.android.exoplayer2.Tracks,
+                    ) {
+                        // Log track info so we can verify the audio
+                        // track is actually present in the stream.
+                        // go2rtc's stream.mp4 should expose one video
+                        // (H.264) and one audio (AAC) track when the
+                        // camera's source URL has #audio=aac.
+                        // ExoPlayer 2.19's Tracks groups formats by
+                        // type — we count video/audio groups via the
+                        // TrackGroupArray of each group.
+                        var videoCount = 0
+                        var audioCount = 0
+                        for (groupInfo in tracks.groups) {
+                            val group = groupInfo.mediaTrackGroup
+                            for (i in 0 until group.length) {
+                                val mime = group.getFormat(i).sampleMimeType
+                                if (mime?.startsWith("video/") == true) videoCount++
+                                if (mime?.startsWith("audio/") == true) audioCount++
+                            }
+                        }
+                        android.util.Log.i(
+                            TAG,
+                            "onTracksChanged: camera='${camera.name}' " +
+                                "videoTracks=$videoCount audioTracks=$audioCount " +
+                                "audioCapability=${camera.hasAudio}",
+                        )
                     }
 
                     override fun onPlayerError(error: PlaybackException) {
@@ -400,6 +450,25 @@ class CameraAdapter(
                 activePlayers.remove(oldPlayer)
                 oldPlayer.release()
             }
+        }
+
+        /**
+         * Toggles the audio mute state for the currently-playing
+         * camera. Sets ExoPlayer.volume to 0.0 (muted) or 1.0
+         * (audible) — the audio renderer stays active either way,
+         * so toggling back on is instant (no re-prepare needed).
+         *
+         * Safe to call when no player is attached (no-op); the
+         * audioEnabled state still flips so the next playback picks
+         * up the new state.
+         */
+        private fun toggleAudio() {
+            audioEnabled = !audioEnabled
+            player?.volume = if (audioEnabled) 1.0f else 0.0f
+            android.util.Log.i(
+                TAG,
+                "toggleAudio: audioEnabled=$audioEnabled player=${player != null}",
+            )
         }
 
         fun releasePlayer() {
