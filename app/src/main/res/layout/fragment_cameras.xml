@@ -62,4 +62,22 @@
         app:layout_constraintEnd_toEndOf="parent"
         android:visibility="gone" />
 
+    <!-- Admin-only: register a new camera. Visibility is toggled
+         from CamerasFragment.onViewCreated based on prefsManager.isAdmin.
+         The server still enforces admin-gating on POST /api/v1/cameras,
+         so this is a UX hint, not a security boundary. -->
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/fabRegisterCamera"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginEnd="20dp"
+        android:layout_marginBottom="20dp"
+        android:contentDescription="@string/camera_register_title"
+        android:src="@drawable/ic_camera"
+        app:backgroundTint="@color/primary"
+        app:tint="@android:color/white"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        android:visibility="gone" />
+
 </androidx.constraintlayout.widget.ConstraintLayout>

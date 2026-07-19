@@ -38,6 +38,7 @@ import okhttp3.Request
 class CameraAdapter(
     private val onRecordingsClick: (Camera) -> Unit,
     private val onAlertsClick: (Camera) -> Unit,
+    private val onSettingsClick: (Camera) -> Unit = {},
     private val baseUrl: String? = null,
     private val token: String? = null,
     private val okHttpClient: OkHttpClient? = null,
@@ -155,9 +156,11 @@ class CameraAdapter(
                         playerLoading = playerLoading,
                         audioEnabled = audioEnabled,
                         hasAudioCapability = camera.hasAudio,
+                        showSettingsButton = true,
                         onPlay = { startInlinePlayback(camera) },
                         onStop = ::stopInlinePlayback,
                         onToggleAudio = { toggleAudio() },
+                        onSettings = { onSettingsClick(camera) },
                         onRecordings = { onRecordingsClick(camera) },
                         onAlerts = { onAlertsClick(camera) },
                     )

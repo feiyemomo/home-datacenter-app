@@ -49,6 +49,16 @@
             android:exported="false"
             android:label="@string/app_name" />
 
+        <activity
+            android:name=".ui.cameras.CameraDetailActivity"
+            android:exported="false"
+            android:label="@string/camera_detail_title" />
+
+        <activity
+            android:name=".ui.admin.UsersActivity"
+            android:exported="false"
+            android:label="@string/users_title" />
+
     </application>
 
 </manifest>

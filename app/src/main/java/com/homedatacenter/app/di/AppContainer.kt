@@ -6,6 +6,7 @@ import com.homedatacenter.app.data.api.NetworkFactory
 import com.homedatacenter.app.data.repository.HomeCenterRepository
 import com.homedatacenter.app.util.BaseUrlResolver
 import com.homedatacenter.app.util.PrefsManager
+import com.homedatacenter.app.util.RoleManager
 import okhttp3.OkHttpClient
 
 class AppContainer(private val context: Context) {
@@ -69,6 +70,16 @@ class AppContainer(private val context: Context) {
             currentRepository = HomeCenterRepository(getApi(), prefsManager)
         }
         return currentRepository!!
+    }
+
+    /**
+     * Role manager — caches the result of /api/v1/user/me in
+     * [PrefsManager] so UI code can synchronously decide whether to
+     * show admin-only controls. Server-side enforcement remains
+     * authoritative — see [RoleManager] for the threat model.
+     */
+    val roleManager: RoleManager by lazy {
+        RoleManager(prefsManager, getRepository())
     }
 
     fun getWsUrl(): String {

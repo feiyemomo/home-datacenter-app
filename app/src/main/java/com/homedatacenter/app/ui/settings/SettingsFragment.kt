@@ -1,6 +1,7 @@
 package com.homedatacenter.app.ui.settings
 
 import android.app.AlertDialog
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.view.LayoutInflater
@@ -11,10 +12,16 @@ import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.homedatacenter.app.R
 import com.homedatacenter.app.databinding.FragmentSettingsBinding
+import com.homedatacenter.app.ui.admin.UsersActivity
 import com.homedatacenter.app.ui.main.MainActivity
+import com.homedatacenter.app.util.JwtUtil
 import com.homedatacenter.app.util.PrefsManager
 import com.homedatacenter.app.util.ThemeManager
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.concurrent.TimeUnit
 
 class SettingsFragment : Fragment() {
 
@@ -36,13 +43,15 @@ class SettingsFragment : Fragment() {
         val mainActivity = activity as? MainActivity ?: return
         val prefs = mainActivity.container.prefsManager
 
-        // Server URL is hardcoded — the app talks to a single fixed
-        // backend (see AppContainer.DEFAULT_BASE_URL). The setting
-        // was previously shown but only confused users.
-
         setupThemeSelector(prefs)
+        setupProfileCard(prefs)
+        setupAdminSection(prefs)
+        setupJwtInfo(prefs)
 
         binding.btnLogout.setOnClickListener { showLogoutDialog() }
+        binding.btnOpenUsers.setOnClickListener {
+            startActivity(Intent(requireContext(), UsersActivity::class.java))
+        }
 
         loadUserInfo()
         setupVersion()
@@ -70,23 +79,82 @@ class SettingsFragment : Fragment() {
         }
     }
 
+    private fun setupProfileCard(prefs: PrefsManager) {
+        // Initial render from cached prefs so the card is populated
+        // before the /me call resolves.
+        if (!prefs.userName.isNullOrEmpty()) {
+            val adminLabel = if (prefs.isAdmin) {
+                " (${getString(R.string.setting_admin_label)})"
+            } else ""
+            binding.tvUserName.text = prefs.userName + adminLabel
+        }
+    }
+
+    private fun setupAdminSection(prefs: PrefsManager) {
+        val isAdmin = prefs.isAdmin
+        binding.tvAdminSectionLabel.visibility = if (isAdmin) View.VISIBLE else View.GONE
+        binding.cardAdmin.visibility = if (isAdmin) View.VISIBLE else View.GONE
+    }
+
+    private fun setupJwtInfo(prefs: PrefsManager) {
+        val token = prefs.token
+        val userId = JwtUtil.userId(token)
+        val deviceId = JwtUtil.deviceId(token)
+        val issuedAt = JwtUtil.issuedAt(token)
+        val expiresAt = JwtUtil.expiresAt(token)
+        val remaining = JwtUtil.secondsUntilExpiry(token)
+
+        binding.tvUserId.text = if (userId != null) {
+            "${getString(R.string.profile_user_id)}: $userId"
+        } else {
+            "${getString(R.string.profile_user_id)}: -"
+        }
+        binding.tvDeviceId.text = if (deviceId != null) {
+            "${getString(R.string.profile_device_id)}: $deviceId"
+        } else {
+            "${getString(R.string.profile_device_id)}: -"
+        }
+
+        val fmt = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+        binding.tvTokenIssued.text = if (issuedAt != null) {
+            "${getString(R.string.profile_token_issued)}: ${fmt.format(Date(issuedAt * 1000L))}"
+        } else {
+            "${getString(R.string.profile_token_issued)}: -"
+        }
+        binding.tvTokenExpires.text = if (expiresAt != null) {
+            "${getString(R.string.profile_token_expires)}: ${fmt.format(Date(expiresAt * 1000L))}"
+        } else {
+            "${getString(R.string.profile_token_expires)}: -"
+        }
+        binding.tvTokenRemaining.text = if (remaining != null) {
+            if (remaining <= 0) {
+                binding.tvTokenRemaining.setTextColor(requireContext().getColor(R.color.error))
+                getString(R.string.profile_token_expired)
+            } else {
+                val days = TimeUnit.SECONDS.toDays(remaining)
+                "${getString(R.string.profile_token_remaining)}: $days 天"
+            }
+        } else {
+            "${getString(R.string.profile_token_remaining)}: -"
+        }
+    }
+
     private fun loadUserInfo() {
         val mainActivity = activity as? MainActivity ?: return
         val prefs = mainActivity.container.prefsManager
         val token = prefs.token ?: return
 
-        if (!prefs.userName.isNullOrEmpty()) {
-            val name = prefs.userName!!
-            val adminLabel = if (prefs.isAdmin) " (${getString(R.string.setting_admin_label)})" else ""
-            binding.tvUserName.text = name + adminLabel
-        }
-
         lifecycleScope.launch {
             try {
                 val user = mainActivity.container.getRepository().getMe(token)
                 prefs.saveUserInfo(user.name, user.isAdmin)
-                val adminLabel = if (user.isAdmin) " (${getString(R.string.setting_admin_label)})" else ""
+                prefs.userId = user.id
+                val adminLabel = if (user.isAdmin) {
+                    " (${getString(R.string.setting_admin_label)})"
+                } else ""
                 binding.tvUserName.text = user.name + adminLabel
+                // Refresh admin section visibility based on fresh role.
+                setupAdminSection(prefs)
             } catch (_: Exception) {
             }
         }

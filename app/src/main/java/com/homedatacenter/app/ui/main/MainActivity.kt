@@ -5,6 +5,7 @@ import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.commit
+import androidx.lifecycle.lifecycleScope
 import com.homedatacenter.app.HomeCenterApp
 import com.homedatacenter.app.R
 import com.homedatacenter.app.databinding.ActivityMainBinding
@@ -15,6 +16,7 @@ import com.homedatacenter.app.ui.dashboard.DashboardFragment
 import com.homedatacenter.app.ui.devices.DevicesFragment
 import com.homedatacenter.app.ui.login.LoginActivity
 import com.homedatacenter.app.ui.settings.SettingsFragment
+import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
 
@@ -53,6 +55,13 @@ class MainActivity : AppCompatActivity() {
         // status bar), so this probe has a high probability of
         // succeeding. It's a no-op if the resolver already picked LAN.
         container.baseUrlResolver.forceProbe()
+        // Refresh /me on launch — admin status may have changed since
+        // last login (server-side demotion takes effect immediately,
+        // but our local cache in PrefsManager may be stale). This
+        // updates the role cache so role-based UI (admin-only buttons,
+        // FAB on CamerasFragment, Users button in SettingsFragment)
+        // shows correctly.
+        refreshRole()
     }
 
     override fun onResume() {
@@ -64,6 +73,25 @@ class MainActivity : AppCompatActivity() {
         // over-probing in the common case (user is just switching
         // tabs inside the app — no MainActivity.onResume fires).
         container.baseUrlResolver.forceProbe()
+        // Refresh role on resume — covers the case where the admin
+        // demoted themselves in another session (e.g. web dashboard).
+        refreshRole()
+    }
+
+    private fun refreshRole() {
+        val token = container.prefsManager.token ?: return
+        lifecycleScope.launch {
+            try {
+                container.roleManager.refresh(token)
+            } catch (_: Exception) {
+            }
+            // Re-evaluate admin-gated UI after role refresh. The
+            // individual fragments read prefsManager.isAdmin in their
+            // own onViewCreated, so they will pick up the new value
+            // when the user next navigates to them. Only the bottom
+            // nav needs an explicit refresh here.
+            runOnUiThread { updateMenuByPermission() }
+        }
     }
 
     private fun setupFragments(savedInstanceState: Bundle?) {

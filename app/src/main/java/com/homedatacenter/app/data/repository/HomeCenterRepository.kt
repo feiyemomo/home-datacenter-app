@@ -5,11 +5,16 @@ import com.homedatacenter.app.data.model.ApiException
 import com.homedatacenter.app.data.model.BindData
 import com.homedatacenter.app.data.model.BindRequest
 import com.homedatacenter.app.data.model.Camera
+import com.homedatacenter.app.data.model.CreateUserRequest
+import com.homedatacenter.app.data.model.CreateUserResult
+import com.homedatacenter.app.data.model.DeleteUserResult
 import com.homedatacenter.app.data.model.Device
 import com.homedatacenter.app.data.model.DeviceList
 import com.homedatacenter.app.data.model.IceConfig
 import com.homedatacenter.app.data.model.SystemStatus
+import com.homedatacenter.app.data.model.UpdateUserRequest
 import com.homedatacenter.app.data.model.User
+import com.homedatacenter.app.data.model.UserList
 import com.homedatacenter.app.data.api.NetworkFactory
 import com.homedatacenter.app.util.PrefsManager
 
@@ -313,6 +318,70 @@ class HomeCenterRepository(
             com.homedatacenter.app.data.model.GotoPresetRequest(speed),
         )
         ensureSuccess(resp)
+    }
+
+    /**
+     * Toggle live audio (PCMA -> AAC transcode). Re-pushes the go2rtc
+     * stream on the server side; the client should re-fetch the camera
+     * (or invalidate the camera cache) to pick up the new stream URL.
+     */
+    suspend fun updateCameraAudio(token: String, cameraId: Long, enabled: Boolean) {
+        val resp = api.updateCameraAudio(
+            bearer(token),
+            cameraId,
+            com.homedatacenter.app.data.model.UpdateAudioRequest(enabled),
+        )
+        ensureSuccess(resp)
+        prefsManager.lastCamerasFetchTime = 0L
+    }
+
+    // --- User management (admin) ---
+
+    suspend fun listUsers(token: String): List<User> {
+        val resp = api.listUsers(bearer(token))
+        ensureSuccess(resp)
+        return resp.decodeData<UserList>()?.users ?: emptyList()
+    }
+
+    suspend fun createUser(
+        token: String,
+        name: String,
+        isAdmin: Boolean,
+        initialDeviceName: String?,
+    ): CreateUserResult {
+        val resp = api.createUser(
+            bearer(token),
+            CreateUserRequest(name = name, isAdmin = isAdmin, initialDeviceName = initialDeviceName),
+        )
+        ensureSuccess(resp)
+        return resp.decodeDataOrThrow<CreateUserResult>()
+    }
+
+    suspend fun getUser(token: String, userId: Long): User {
+        val resp = api.getUser(bearer(token), userId)
+        ensureSuccess(resp)
+        return resp.decodeDataOrThrow<User>()
+    }
+
+    suspend fun updateUser(
+        token: String,
+        userId: Long,
+        name: String? = null,
+        isAdmin: Boolean? = null,
+    ): User {
+        val resp = api.updateUser(
+            bearer(token),
+            userId,
+            UpdateUserRequest(name = name, isAdmin = isAdmin),
+        )
+        ensureSuccess(resp)
+        return resp.decodeDataOrThrow<User>()
+    }
+
+    suspend fun deleteUser(token: String, userId: Long): Int {
+        val resp = api.deleteUser(bearer(token), userId)
+        ensureSuccess(resp)
+        return resp.decodeData<DeleteUserResult>()?.deletedDevices ?: 0
     }
 
     private fun bearer(token: String): String = "Bearer $token"

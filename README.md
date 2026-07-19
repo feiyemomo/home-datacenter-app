@@ -3,7 +3,7 @@
 家庭数据中心 Android 客户端 — 一个用 **Kotlin + Jetpack Compose + ExoPlayer** 实现的家庭 NVR / IoT 控制台，配合 [home-datacenter](https://github.com/feiyemomo/home-datacenter) 后端使用，提供摄像头预览、HLS 直播（含音频）、录像回放、报警查看、设备状态、天气信息、局域网/远程自动切换和实时 WebSocket 推送。
 
 > 服务端项目：<https://github.com/feiyemomo/home-datacenter>
-> 当前版本：**v1.4.4**（versionCode 19）
+> 当前版本：**v1.5.0**（versionCode 20）
 
 ---
 
@@ -35,7 +35,7 @@
 | Compile SDK | 36 |
 | Java / Kotlin | 17 / 2.0 |
 | AGP | 9.2.1 |
-| 当前版本 | 1.4.4 (versionCode 19) |
+| 当前版本 | 1.5.0 (versionCode 20) |
 | 默认服务器 | `https://api.feiyemomo.top/`（远程） / `http://192.168.31.234:8088/`（局域网，自动探测） |
 
 App 通过 `(user_id, access_key)` 换取 JWT 后访问 `home-datacenter` 的 REST API 与 WebSocket。**BaseUrlResolver** 在启动时通过后台守护线程异步探测局域网 `http://192.168.31.234:8088/` 是否可达（TTFB ~10ms vs Cloudflare Tunnel 1.4s+），可达则切到局域网，否则走远程 Cloudflare Tunnel。启动调度采用指数退避重试（1.5s → 4s → 9s → 16s），覆盖真机「WiFi connected but not validated」窗口；同时附加 TCP socket 直连探测作为 OkHttp cleartext 拒绝时的兜底。NetworkChangeMonitor 注册 ConnectivityManager.NetworkCallback，在 WiFi/移动网络切换时立即触发 re-probe，无需等 5 分钟 TTL。摄像头直播走 go2rtc 暴露的 MP4（主）+ HLS（备），后端根据摄像头 `capabilities.audio` 在 go2rtc 流 URL 上自动追加 `#audio=aac` 启用音频转码，前端通过 ExoPlayer `volume` 控制静音/取消静音。
@@ -45,10 +45,12 @@ App 通过 `(user_id, access_key)` 换取 JWT 后访问 `home-datacenter` 的 RE
 ## 功能特性
 
 - **首页（Dashboard）**：天气卡片 + 系统状态网格（MQTT / 设备 / 摄像头 / 运行时长） + 网络质量卡片（含**当前路径标签**：局域网=绿点 / 远程=琥珀点，每 5s 刷新） + 最近报警列表 + 实时检测 WS 横幅。
-- **摄像头（Cameras）**：缩略图卡片 + 点击内联直播（MP4 优先 + 音频支持） + **播放时显示音频开关按钮**（仅在摄像头 `capabilities.audio=true` 时显示，🔊/🔇 切换 ExoPlayer `volume`，无需重新 prepare） + 录像回放对话框（拖动进度条） + 单摄像头的报警快照 / 剪辑对话框。
+- **摄像头（Cameras）**：缩略图卡片 + 点击内联直播（MP4 优先 + 音频支持） + **播放时显示音频开关按钮**（仅在摄像头 `capabilities.audio=true` 时显示，🔊/🔇 切换 ExoPlayer `volume`，无需重新 prepare） + 录像回放对话框（拖动进度条） + 单摄像头的报警快照 / 剪辑对话框 + **每张卡片右上角设置齿轮**（⚙，跳转 `CameraDetailActivity` 进行 PTZ/预置位/音频/录制/编解码/删除等高级控制，管理员才能修改）。
 - **报警（Alerts）**：报警列表，可展开查看事件 ID / 抓拍时间 / 检测区域，支持跳转摄像头页和打开快照模态。
 - **设备（Devices）**：所有已绑定设备的状态卡片，支持撤销设备。
-- **设置（Settings）**：主题切换（明 / 暗） + 关于信息 + 退出登录。
+- **设置（Settings）**：**个人资料卡片**（用户名 / 角色 / JWT user_id / device_id / 签发与到期时间 / 剩余天数） + **管理员分区**（仅 `prefsManager.isAdmin=true` 时显示，入口跳转 `UsersActivity`） + 主题切换（明 / 暗 / 跟随系统） + 退出登录 + 版本号。
+- **管理员用户管理**（v1.5.0 新增）：`UsersActivity` 列出全部用户（含设备数 / 注册时间），FAB 创建用户并可选创建首台设备（一次性返回 64 位 AccessKey），点击列表项打开编辑对话框（改名 / 切换管理员 / 删除），自删与自降级在客户端先拦截、服务端再兜底。
+- **摄像头注册**（v1.5.0 新增，管理员）：`CamerasFragment` 右下角 FAB → `RegisterCameraDialog` 表单（名称 / 主机 IP / 厂商 / 通道 / ONVIF/RTSP 端口 / 用户名 / 密码 / PTZ/音频/动作复选框）→ `POST /api/v1/cameras`。
 - **登录（Login）**：user_id + access_key 设备绑定，登录后 JWT 持久化于 EncryptedSharedPreferences。
 - **底部导航**：Material 3 ActiveIndicator 胶囊样式，5 个 Tab（主页 / 设备 / 摄像头 / 报警 / 设置），高度 72dp 防止文字与图标重叠。
 - **网络层**：OkHttp 强制 HTTP/1.1 + 30s/60s/90s 超时 + 重试，针对 Cloudflare Tunnel 在移动网络上偶发的 stream 关闭问题。
@@ -352,7 +354,12 @@ versionName = "1.4.3"
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/v1/user/me` | 当前用户信息 |
+| GET | `/api/v1/user/me` | 当前用户信息（id / name / is_admin） |
+| GET | `/api/v1/user` | 用户列表（管理员） |
+| POST | `/api/v1/user` | 创建用户（管理员，可选 `initial_device_name`，返回一次性 `access_key`） |
+| GET | `/api/v1/user/{id}` | 用户详情（管理员） |
+| PUT | `/api/v1/user/{id}` | 修改用户（管理员，`name` / `is_admin` 部分更新） |
+| DELETE | `/api/v1/user/{id}` | 删除用户（管理员，级联删除设备） |
 | GET | `/api/v1/device/list` | 设备列表 |
 | DELETE | `/api/v1/device/{id}` | 撤销设备 |
 
