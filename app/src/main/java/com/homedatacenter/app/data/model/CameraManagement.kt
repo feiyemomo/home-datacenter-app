@@ -55,3 +55,8 @@ data class SetPresetRequest(
 data class GotoPresetRequest(
     val speed: Double = 0.5,
 )
+
+@Serializable
+data class UpdateAudioRequest(
+    val enabled: Boolean,
+)

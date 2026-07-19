@@ -1,5 +1,6 @@
 package com.homedatacenter.app.ui.cameras
 
+import android.content.Intent
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -41,14 +42,34 @@ class CamerasFragment : Fragment() {
         adapter = CameraAdapter(
             onRecordingsClick = { camera -> showRecordingsDialog(camera) },
             onAlertsClick = { camera -> showAlertsDialog(camera) },
+            onSettingsClick = { camera -> openCameraDetail(camera) },
             baseUrl = baseUrl,
             token = token,
-            okHttpClient = okHttpClient
+            okHttpClient = okHttpClient,
         )
         binding.recyclerView.layoutManager = LinearLayoutManager(context)
         binding.recyclerView.adapter = adapter
 
         binding.swipeRefresh.setOnRefreshListener { loadCamerasFromNetwork() }
+
+        // Admin-only: show FAB for registering a new camera. The
+        // server still enforces admin-gating on POST /api/v1/cameras,
+        // so a non-admin who somehow sees the FAB will receive 403.
+        val isAdmin = mainActivity.container.prefsManager.isAdmin
+        binding.fabRegisterCamera?.visibility = if (isAdmin) View.VISIBLE else View.GONE
+        binding.fabRegisterCamera?.setOnClickListener {
+            val ctx = context ?: return@setOnClickListener
+            RegisterCameraDialog(ctx, mainActivity.container) { loadCamerasFromNetwork() }.show()
+        }
+    }
+
+    private fun openCameraDetail(camera: Camera) {
+        val ctx = context ?: return
+        val json = NetworkFactory.json.encodeToString(Camera.serializer(), camera)
+        val intent = Intent(ctx, CameraDetailActivity::class.java).apply {
+            putExtra(CameraDetailActivity.EXTRA_CAMERA_JSON, json)
+        }
+        startActivity(intent)
     }
 
     override fun onResume() {

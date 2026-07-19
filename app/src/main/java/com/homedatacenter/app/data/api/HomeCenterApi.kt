@@ -2,8 +2,10 @@ package com.homedatacenter.app.data.api
 
 import com.homedatacenter.app.data.model.ApiResponse
 import com.homedatacenter.app.data.model.BindRequest
+import com.homedatacenter.app.data.model.CreateUserRequest
 import com.homedatacenter.app.data.model.DeviceList
 import com.homedatacenter.app.data.model.SystemStatus
+import com.homedatacenter.app.data.model.UpdateUserRequest
 import com.homedatacenter.app.data.model.User
 import retrofit2.http.Body
 import retrofit2.http.DELETE
@@ -143,4 +145,43 @@ interface HomeCenterApi {
     @GET("api/v1/weather")
     @retrofit2.http.Streaming
     suspend fun getWeather(@Header("Authorization") auth: String): okhttp3.ResponseBody
+
+    // --- Camera audio toggle (admin) ---
+
+    @PUT("api/v1/cameras/{id}/audio")
+    suspend fun updateCameraAudio(
+        @Header("Authorization") auth: String,
+        @Path("id") id: Long,
+        @Body request: com.homedatacenter.app.data.model.UpdateAudioRequest,
+    ): ApiResponse
+
+    // --- User management (admin except /me) ---
+
+    @GET("api/v1/user")
+    suspend fun listUsers(@Header("Authorization") auth: String): ApiResponse
+
+    @POST("api/v1/user")
+    suspend fun createUser(
+        @Header("Authorization") auth: String,
+        @Body request: CreateUserRequest,
+    ): ApiResponse
+
+    @GET("api/v1/user/{id}")
+    suspend fun getUser(
+        @Header("Authorization") auth: String,
+        @Path("id") id: Long,
+    ): ApiResponse
+
+    @PUT("api/v1/user/{id}")
+    suspend fun updateUser(
+        @Header("Authorization") auth: String,
+        @Path("id") id: Long,
+        @Body request: UpdateUserRequest,
+    ): ApiResponse
+
+    @DELETE("api/v1/user/{id}")
+    suspend fun deleteUser(
+        @Header("Authorization") auth: String,
+        @Path("id") id: Long,
+    ): ApiResponse
 }

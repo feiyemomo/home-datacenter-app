@@ -208,6 +208,31 @@ val prefs = EncryptedSharedPreferences.create(
 
 `SettingsFragment` 调 `container.prefsManager.clearAuth()` → `container.resetApi()` → 跳回 `LoginActivity`。
 
+### 角色化 UI（v1.5.0）
+
+后端故意**不把 `is_admin` 写入 JWT**，每次需要管理员权限的请求都重新查数据库（`middleware.RequireAdmin`），因此降级立即生效。客户端用 `RoleManager` 缓存 `/api/v1/user/me` 的结果到 `PrefsManager`，让 UI 在 `/me` 解析前可以同步判断是否隐藏管理员入口（FAB、UsersActivity 跳转按钮、CameraDetailActivity 的修改控件等）：
+
+```kotlin
+class RoleManager(
+    private val prefsManager: PrefsManager,
+    private val repository: HomeCenterRepository,
+) {
+    fun isAdminCached(): Boolean = prefsManager.isAdmin
+    suspend fun refresh(token: String) = withContext(Dispatchers.IO) {
+        try {
+            val user = repository.getMe(token)
+            prefsManager.saveUserInfo(user.name, user.isAdmin)
+            prefsManager.userId = user.id
+            user
+        } catch (_: Exception) { null }   // 网络失败时保留旧角色，服务端仍会兜底 403
+    }
+}
+```
+
+`MainActivity.onCreate` 与 `onResume` 都会触发 `refreshRole()`，确保用户从其他会话被降级后回到本应用时立刻刷新底部导航与设置页的可见项。
+
+服务端始终是权威来源：即使客户端缓存过期，把管理员按钮暴露给非管理员用户，下一次 API 调用也会返回 `403 admin only`，仅是 UX 小问题而非安全边界。
+
 ---
 
 ## 4.5. Base URL 自动探测与切换

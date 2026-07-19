@@ -114,4 +114,75 @@
     <string name="detection_label_dog">狗</string>
     <string name="detection_label_cat">猫</string>
     <string name="detection_label_bird">鸟</string>
+
+    <!-- Camera detail / control page -->
+    <string name="camera_detail_title">摄像头控制</string>
+    <string name="camera_ptz_section">云台控制 (PTZ)</string>
+    <string name="camera_ptz_up">上</string>
+    <string name="camera_ptz_down">下</string>
+    <string name="camera_ptz_left">左</string>
+    <string name="camera_ptz_right">右</string>
+    <string name="camera_ptz_stop">停止</string>
+    <string name="camera_ptz_speed">速度</string>
+    <string name="camera_ptz_unsupported">此摄像头不支持云台</string>
+    <string name="camera_presets_section">预设位</string>
+    <string name="camera_presets_empty">暂无预设位</string>
+    <string name="camera_preset_add">添加预设</string>
+    <string name="camera_preset_alias">别名</string>
+    <string name="camera_preset_token">预设位 token</string>
+    <string name="camera_preset_goto">前往</string>
+    <string name="camera_preset_delete">删除</string>
+    <string name="camera_settings_section">设置</string>
+    <string name="camera_audio_enable">启用音频</string>
+    <string name="camera_audio_disable">禁用音频</string>
+    <string name="camera_audio_summary">开启后重新推流并附加 AAC 音轨</string>
+    <string name="camera_recording_enable">开启持续录像</string>
+    <string name="camera_recording_disable">关闭持续录像</string>
+    <string name="camera_recording_summary">由 Frigate 执行 24/7 持续录制</string>
+    <string name="camera_codec_section">视频编码</string>
+    <string name="camera_codec_h264">切换为 H264 (推荐)</string>
+    <string name="camera_delete">删除摄像头</string>
+    <string name="camera_delete_confirm">确定要删除此摄像头吗？该操作会从服务器移除并停止推流。</string>
+    <string name="camera_admin_required">此操作需要管理员权限</string>
+    <string name="camera_register_title">注册摄像头</string>
+
+    <!-- Users management (admin) -->
+    <string name="users_title">用户管理</string>
+    <string name="users_create">新建用户</string>
+    <string name="users_empty">暂无用户</string>
+    <string name="user_name_label">用户名</string>
+    <string name="user_admin_label">管理员</string>
+    <string name="user_devices_count">设备数: %1$d</string>
+    <string name="user_action_edit">编辑</string>
+    <string name="user_action_delete">删除</string>
+    <string name="user_create_initial_device">同时创建首个设备</string>
+    <string name="user_device_name_hint">设备名称 (可选)</string>
+    <string name="user_access_key_label">访问密钥 (仅显示一次)</string>
+    <string name="user_access_key_copy">复制密钥</string>
+    <string name="user_access_key_copied">已复制到剪贴板</string>
+    <string name="user_delete_confirm">删除此用户将吊销其所有设备。该操作不可撤销。</string>
+    <string name="user_last_admin_guard">无法删除最后一个管理员</string>
+    <string name="user_self_delete_guard">无法删除当前登录用户</string>
+    <string name="user_demote_self_guard">无法取消当前登录用户的管理员身份</string>
+
+    <!-- Profile card -->
+    <string name="profile_title">账户信息</string>
+    <string name="profile_user_id">用户 ID</string>
+    <string name="profile_device_id">设备 ID</string>
+    <string name="profile_token_issued">签发时间</string>
+    <string name="profile_token_expires">到期时间</string>
+    <string name="profile_token_remaining">剩余有效期</string>
+    <string name="profile_token_expired">已过期</string>
+    <string name="profile_my_devices">我的设备</string>
+    <string name="profile_admin_section">管理员功能</string>
+    <string name="profile_open_users">用户管理</string>
+    <string name="profile_open_users_summary">查看、创建、编辑系统用户</string>
+
+    <!-- Common UI -->
+    <string name="action_copy">复制</string>
+    <string name="action_close">关闭</string>
+    <string name="action_save">保存</string>
+    <string name="action_create">创建</string>
+    <string name="action_update">更新</string>
+    <string name="action_settings">设置</string>
 </resources>

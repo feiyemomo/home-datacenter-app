@@ -54,9 +54,11 @@ fun CameraCard(
     playerLoading: Boolean,
     audioEnabled: Boolean,
     hasAudioCapability: Boolean,
+    showSettingsButton: Boolean = true,
     onPlay: () -> Unit,
     onStop: () -> Unit,
     onToggleAudio: () -> Unit,
+    onSettings: () -> Unit = {},
     onRecordings: () -> Unit,
     onAlerts: () -> Unit,
     modifier: Modifier = Modifier,
@@ -168,6 +170,30 @@ fun CameraCard(
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Text(text = "▶", color = Color.White, fontSize = 24.sp)
+                    }
+                }
+
+                // Settings gear — opens the camera control screen
+                // (PTZ, presets, codec, recording, delete). Hidden
+                // when playing (the playing overlay has its own
+                // close/audio controls instead).
+                if (showSettingsButton) {
+                    Surface(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(8.dp)
+                            .size(32.dp)
+                            .clickable(onClick = onSettings),
+                        shape = CircleShape,
+                        color = Color.Black.copy(alpha = 0.55f),
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                text = "⚙",
+                                color = Color.White,
+                                fontSize = 16.sp,
+                            )
+                        }
                     }
                 }
             }
