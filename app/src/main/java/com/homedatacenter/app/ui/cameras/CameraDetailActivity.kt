@@ -585,19 +585,25 @@ class CameraDetailActivity : AppCompatActivity() {
      * Returns true if WebRTC is available for streaming, false if
      * the caller should fall back to ExoPlayer. Safe to call
      * repeatedly — subsequent calls are no-ops.
+     *
+     * v1.5.6: prefers the pre-warmed WebRtcClient from AppContainer
+     * (PeerConnectionFactory + EGL context pre-built on app launch
+     * or login) to save ~300-500ms on first camera detail open.
+     * Falls back to synchronous init when warming isn't ready yet.
      */
     private fun ensureWebRtcClient(): Boolean {
         if (webRtcClient != null) return true
         val baseUrl = container.getApiBaseUrl().ifBlank { return false }
         val token = container.prefsManager.token
         return try {
-            val client = WebRtcClient(
+            // Prefer the warmed-up client. takeWarmWebRtcClient
+            // atomically removes it from the warm cache (one-shot).
+            val client = container.takeWarmWebRtcClient() ?: WebRtcClient(
                 context = this,
                 okHttpClient = container.okHttpClient,
                 baseUrl = baseUrl,
                 token = token,
-            )
-            client.init()
+            ).also { it.init() }
             webRtcClient = client
             // Init the SurfaceViewRenderer with the WebRTC client's
             // EGL context. Must run on the main thread (EGL surface
