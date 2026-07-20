@@ -9,8 +9,8 @@
     9sp with 4dp/2dp padding + tighter 1dp horizontal margin.
 
     Color encodes motion_score:
-      - High-score (top 25%):  bright orange #FF7043 (warm = "lots of motion")
-      - Mid-score (25-75%):   amber #FFB300
+      - High-score (top 25%):  yellow #FFB300 (v1.6.8: merged with mid)
+      - Mid-score (25-75%):   yellow #FFB300
       - Low-score (bottom 25%): teal #4DB6AC (cool = "minor motion")
       - PeakObjects > 0:      red #EF5350 (AI detected person/car)
 -->

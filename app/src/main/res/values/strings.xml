@@ -60,6 +60,7 @@
 
     <string name="cameras_title">摄像头监控</string>
     <string name="no_cameras">暂无摄像头</string>
+    <string name="no_devices">暂无设备</string>
     <string name="camera_offline">离线</string>
     <string name="camera_online">在线</string>
     <string name="btn_play">播放</string>

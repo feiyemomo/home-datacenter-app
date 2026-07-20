@@ -1,3 +1,27 @@
 <resources>
     <dimen name="item_transform_image_length">160dp</dimen>
+
+    <!-- v1.6.8: large tablet overrides (936dp+ — 10"+ tablets, desktop
+         windows via Samsung DeX / ChromeOS). -->
+    <!-- Bottom nav capped tighter (600dp) and centered, matching the
+         dashboard content max width so both feel "framed". -->
+    <dimen name="bottom_nav_max_width">600dp</dimen>
+    <!-- Dashboard stats: 4 columns (same as 600dp — already a single
+         row). Kept here so a w936dp screen doesn't fall back to the
+         phone default if values-w600dp doesn't apply for some reason
+         (e.g. different smallest-width qualifier). -->
+    <integer name="dashboard_stats_column_count">4</integer>
+    <!-- Camera list: still 2 columns on large tablets. 3 columns
+         would shrink each card below the comfortable tap-target
+         width (~180dp). 2 columns keeps cards reasonably wide
+         (~440dp each on a 936dp screen). -->
+    <integer name="camera_list_column_count">2</integer>
+    <!-- Same thumbnail size as w600dp — already large enough. -->
+    <dimen name="camera_card_thumb_width">240dp</dimen>
+    <dimen name="camera_card_thumb_height">135dp</dimen>
+    <dimen name="camera_card_height">159dp</dimen>
+    <!-- Dashboard content capped to 840dp on large tablets so the
+         cards don't get absurdly wide. -->
+    <dimen name="fragment_content_max_width">840dp</dimen>
+    <dimen name="fragment_title_size">28sp</dimen>
 </resources>

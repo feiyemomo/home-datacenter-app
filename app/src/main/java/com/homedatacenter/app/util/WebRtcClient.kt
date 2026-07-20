@@ -363,8 +363,14 @@ class WebRtcClient(
         // partial SDP anyway — backend will reject if it can't
         // pick a candidate, and the listener's onError -> MP4
         // fallback kicks in.
+        // v1.6.10: when there are no STUN/TURN servers (LAN mode
+        // passes an empty iceServers list), host candidate gathering
+        // completes in <100ms — drop the timeout to 800ms so a
+        // stuck gather fails 1.2s faster. With STUN/TURN (remote
+        // mode), keep 2s to allow STUN round-trips to complete.
+        val iceTimeoutMs = if (iceServers.isEmpty()) 800L else 2_000L
         val gatheringComplete = withContext(Dispatchers.IO) {
-            waitForIceGathering(pc, timeoutMs = 2_000)
+            waitForIceGathering(pc, timeoutMs = iceTimeoutMs)
         }
         if (!gatheringComplete) {
             Log.w(TAG, "ICE gathering timed out; sending partial offer")
@@ -510,6 +516,34 @@ class WebRtcClient(
             try { it.dispose() } catch (_: Exception) {}
         }
         peerConnection = null
+    }
+
+    /**
+     * v1.6.10: re-attaches the current videoTrack (if any) to a
+     * freshly-init'd SurfaceViewRenderer. Used by CameraDetailActivity
+     * .onResume to recover video after the EGL surface was torn down
+     * in onPause — the PeerConnection stayed alive so we don't need
+     * to re-do SDP/signaling; we just rebind the renderer.
+     *
+     * Returns true if a track was attached, false if no track is
+     * available (caller should call startStream to rebuild).
+     */
+    fun reattachVideoTrack(surfaceRenderer: SurfaceViewRenderer): Boolean {
+        val vt = videoTrack ?: return false
+        val pc = peerConnection ?: return false
+        val state = pc.iceConnectionState()
+        if (state != PeerConnection.IceConnectionState.CONNECTED &&
+            state != PeerConnection.IceConnectionState.COMPLETED) {
+            return false
+        }
+        return try {
+            vt.addSink(surfaceRenderer)
+            Log.d(TAG, "Video track re-attached on resume (PC state=$state)")
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "reattachVideoTrack failed: ${e.message}")
+            false
+        }
     }
 
     /** Releases the PeerConnectionFactory + EGL context (call from Activity.onDestroy). */

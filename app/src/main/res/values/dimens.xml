@@ -6,4 +6,33 @@
     <dimen name="reflow_text_block_horizontal_gap">8dp</dimen>
     <dimen name="reflow_text_title_size">22sp</dimen>
     <dimen name="reflow_text_description_size">13sp</dimen>
+
+    <!-- v1.6.8: responsive dimensions. Phone-first defaults; wide
+         screens override these in values-w600dp / values-w936dp.
+         Layouts reference these via @dimen/... so a single XML
+         adapts across phones (360-411dp), small tablets/landscape
+         (600-935dp), and large tablets (936dp+). -->
+    <!-- Bottom navigation bar: full-width on phones, capped on
+         tablets so the bar doesn't stretch awkwardly across the
+         whole screen. The container still floats 16dp from the
+         edges; on tablets a max_width forces it to a centered
+         capsule instead of an edge-to-edge strip. -->
+    <dimen name="bottom_nav_max_width">0dp</dimen>
+    <!-- Dashboard stats grid column count. Phones use 2 columns
+         (2x2 grid); tablets use 4 columns (1x4 row). -->
+    <integer name="dashboard_stats_column_count">2</integer>
+    <!-- Camera list column count. Phones use 1 column (full-width
+         cards); tablets use 2 columns (side-by-side cards). -->
+    <integer name="camera_list_column_count">1</integer>
+    <!-- Camera card thumbnail size. Bigger on tablets so the
+         extra horizontal real estate is put to use. -->
+    <dimen name="camera_card_thumb_width">192dp</dimen>
+    <dimen name="camera_card_thumb_height">108dp</dimen>
+    <dimen name="camera_card_height">132dp</dimen>
+    <!-- Fragment content max width on wide screens. 0dp = no cap
+         (full width). Tablets cap to keep content readable. -->
+    <dimen name="fragment_content_max_width">0dp</dimen>
+    <!-- Title typography. Phones use 24sp; tablets bump to 26sp
+         for better visual hierarchy at larger widths. -->
+    <dimen name="fragment_title_size">24sp</dimen>
 </resources>

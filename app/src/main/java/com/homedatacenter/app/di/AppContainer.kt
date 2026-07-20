@@ -109,12 +109,18 @@ class AppContainer(private val context: Context) {
     // camera detail page the factory is ready and only the actual
     // SDP/ICE negotiation (~200-500ms on LAN) remains.
     //
-    // The warmed client is consumed by CameraDetailActivity.ensureWebRtcClient
-    // — first call takes it out; subsequent calls build a fresh one
-    // the slow way. If the user opens a camera before warming is
-    // done, ensureWebRtcClient falls back to synchronous init.
+    // v1.6.10: changed from one-shot warm cache (takeWarmWebRtcClient
+    // — first caller wins, subsequent callers rebuild synchronously)
+    // to a LONG-LIVED SHARED instance. The PeerConnectionFactory +
+    // EGL context are thread-safe and can serve multiple
+    // CameraDetailActivity instances over the app lifetime. Each
+    // CameraDetailActivity only creates its own PeerConnection (still
+    // per-activity) but reuses the shared factory. This saves
+    // 300-500ms on every camera open after the first one, and lets
+    // us keep the factory alive across onPause/onResume so the
+    // resume path is instant.
     @Volatile
-    private var warmWebRtcClient: WebRtcClient? = null
+    private var sharedWebRtcClient: WebRtcClient? = null
     private val warmScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var warmJob: Job? = null
 
@@ -125,7 +131,7 @@ class AppContainer(private val context: Context) {
      * already warmed.
      */
     fun warmWebRtc() {
-        if (warmWebRtcClient != null || warmJob?.isActive == true) return
+        if (sharedWebRtcClient != null || warmJob?.isActive == true) return
         val baseUrl = getApiBaseUrl().ifBlank { return }
         val token = prefsManager.token ?: return
         warmJob = warmScope.launch {
@@ -142,8 +148,8 @@ class AppContainer(private val context: Context) {
                 kotlinx.coroutines.withContext(Dispatchers.Main) {
                     client.init()
                 }
-                warmWebRtcClient = client
-                Log.d("AppContainer", "WebRtcClient warmed up")
+                sharedWebRtcClient = client
+                Log.d("AppContainer", "WebRtcClient warmed up (shared)")
             } catch (e: Exception) {
                 Log.w("AppContainer", "WebRtc warm-up failed: ${e.message}")
             }
@@ -151,14 +157,46 @@ class AppContainer(private val context: Context) {
     }
 
     /**
-     * Take the warmed-up WebRtcClient if available. Returns null when
-     * warming isn't done yet or has failed — caller should fall back
-     * to synchronous creation. The returned client is removed from
-     * the warm cache so a second call returns null.
+     * v1.6.10: returns the shared WebRtcClient, creating + initializing
+     * it synchronously if needed. The returned client is NOT removed
+     * from the cache — multiple CameraDetailActivity instances share
+     * the same factory + EGL context. Caller is responsible for
+     * calling release() on the PeerConnection (not the factory) when
+     * the activity is destroyed.
+     *
+     * Returns null if baseUrl or token is unavailable, or if factory
+     * init fails (e.g. WebRTC native lib load error on emulator).
      */
-    fun takeWarmWebRtcClient(): WebRtcClient? {
-        return warmWebRtcClient.also { warmWebRtcClient = null }
+    fun getOrInitWebRtcClient(): WebRtcClient? {
+        sharedWebRtcClient?.let { return it }
+        val baseUrl = getApiBaseUrl().ifBlank { return null }
+        val token = prefsManager.token ?: return null
+        return try {
+            val client = WebRtcClient(
+                context = context,
+                okHttpClient = okHttpClient,
+                baseUrl = baseUrl,
+                token = token,
+            )
+            // init() must run on the main thread (EGL + PeerConnectionFactory
+            // require a Looper). Since this function is called from
+            // CameraDetailActivity.onCreate (already on main thread),
+            // a direct call is safe.
+            client.init()
+            sharedWebRtcClient = client
+            Log.d("AppContainer", "WebRtcClient init synchronously (shared)")
+            client
+        } catch (e: Exception) {
+            Log.w("AppContainer", "WebRtcClient init failed: ${e.message}")
+            null
+        }
     }
+
+    /** v1.6.10: legacy one-shot API kept for compatibility — delegates
+     *  to the shared instance and returns it WITHOUT removing from
+     *  the cache. Old call sites behave identically except the client
+     *  can now be reused. */
+    fun takeWarmWebRtcClient(): WebRtcClient? = sharedWebRtcClient
 
     // --- ICE config 预取 (v1.5.7) ---
     //

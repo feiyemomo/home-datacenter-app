@@ -16,14 +16,22 @@
         android:layout_height="wrap_content"
         android:orientation="vertical">
 
-        <!-- Top app bar -->
+        <!-- v1.6.10: toolbar theme was ThemeOverlay.Material3.Dark.ActionBar
+             but the toolbar background is the light card_bg color, so
+             the Dark.ActionBar overlay (which forces colorOnSurface to
+             white) made the navigation icon white-on-near-white and
+             nearly invisible. Switched to Light overlay so the
+             navigation icon + title text both render dark. Also added
+             explicit app:navigationIconTint to match titleTextColor —
+             guarantees contrast regardless of how the drawable is tinted. -->
         <com.google.android.material.appbar.MaterialToolbar
             android:id="@+id/toolbar"
             android:layout_width="match_parent"
             android:layout_height="?attr/actionBarSize"
             android:background="@color/card_bg"
-            android:theme="@style/ThemeOverlay.Material3.Dark.ActionBar"
+            android:theme="@style/ThemeOverlay.Material3.Light"
             app:navigationIcon="@drawable/ic_baseline_arrow_back_24"
+            app:navigationIconTint="@color/text_primary"
             app:title="@string/camera_detail_title"
             app:titleTextColor="@color/text_primary" />
 

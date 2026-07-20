@@ -7,7 +7,9 @@ import android.view.View
 import android.view.ViewGroup
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
+import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
+import com.homedatacenter.app.R
 import com.homedatacenter.app.data.api.NetworkFactory
 import com.homedatacenter.app.data.model.Camera
 import com.homedatacenter.app.databinding.FragmentCamerasBinding
@@ -47,7 +49,18 @@ class CamerasFragment : Fragment() {
             token = token,
             okHttpClient = okHttpClient,
         )
-        binding.recyclerView.layoutManager = LinearLayoutManager(context)
+        // v1.6.8: pick layout manager based on screen width. Phones
+        // (1 column) use LinearLayoutManager — full-width cards with
+        // 192x108dp thumbnails. Tablets / large landscape (2 columns)
+        // use GridLayoutManager so the extra horizontal real estate
+        // isn't wasted on a single stretched card. Column count is
+        // read from @integer/camera_list_column_count so the sw600dp
+        // / sw936dp resource qualifiers drive the layout choice —
+        // no runtime screen-width probing needed.
+        val columnCount = resources.getInteger(R.integer.camera_list_column_count)
+        binding.recyclerView.layoutManager =
+            if (columnCount <= 1) LinearLayoutManager(context)
+            else GridLayoutManager(context, columnCount)
         binding.recyclerView.adapter = adapter
 
         binding.swipeRefresh.setOnRefreshListener { loadCamerasFromNetwork() }
