@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    v1.6.2: green pill background for the per-day recording count
+    chip in item_day_recording.xml. Matches the "online" color used
+    elsewhere in the app (#66BB6A) so the user associates green =
+    "this day has data".
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/online" />
+    <corners android:radius="10dp" />
+</shape>

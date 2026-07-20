@@ -3,7 +3,7 @@
 家庭数据中心 Android 客户端 — 一个用 **Kotlin + Jetpack Compose + ExoPlayer + WebRTC** 实现的家庭 NVR / IoT 控制台，配合 [home-datacenter](https://github.com/feiyemomo/home-datacenter) 后端使用，提供摄像头预览、WebRTC/MP4/HLS 直播（含音频）、录像回放、报警查看、设备状态、天气信息、局域网/远程自动切换和实时 WebSocket 推送。
 
 > 服务端项目：<https://github.com/feiyemomo/home-datacenter>
-> 当前版本：**v1.6.1**（versionCode 44）
+> 当前版本：**v1.6.2**（versionCode 45）
 
 ---
 
@@ -35,7 +35,7 @@
 | Compile SDK | 36 |
 | Java / Kotlin | 17 / 2.0 |
 | AGP | 9.2.1 |
-| 当前版本 | 1.6.1 (versionCode 44) |
+| 当前版本 | 1.6.2 (versionCode 45) |
 | 默认服务器 | `https://api.feiyemomo.top/`（远程） / `http://192.168.31.234:8088/`（局域网，自动探测） |
 
 App 通过 `(user_id, access_key)` 换取 JWT 后访问 `home-datacenter` 的 REST API 与 WebSocket。**BaseUrlResolver** 在启动时通过后台守护线程异步探测局域网 `http://192.168.31.234:8088/` 是否可达（TTFB ~10ms vs Cloudflare Tunnel 1.4s+），可达则切到局域网，否则走远程 Cloudflare Tunnel。启动调度采用指数退避重试（1.5s → 4s → 9s → 16s），覆盖真机「WiFi connected but not validated」窗口；同时附加 TCP socket 直连探测作为 OkHttp cleartext 拒绝时的兜底。NetworkChangeMonitor 注册 ConnectivityManager.NetworkCallback，在 WiFi/移动网络切换时立即触发 re-probe，无需等 5 分钟 TTL。摄像头直播走 go2rtc 暴露的 MP4（主）+ HLS（备），后端根据摄像头 `capabilities.audio` 在 go2rtc 流 URL 上自动追加 `#audio=aac` 启用音频转码，前端通过 ExoPlayer `volume` 控制静音/取消静音。
@@ -450,6 +450,7 @@ versionName = "1.4.3"
 - **进度条吸附（snap-to-range）**：`onStopTrackingTouch` 释放 SeekBar 时调用 `snapProgressToRangeEdge(progress)` 检查最近的 motion range 边缘；若距离 < `motionSnapRadiusMs`（**v1.6.1：30s → 120s**，约对应屏幕上 1px）则自动吸附到该边缘。v1.6.0 的 30s 半径仅 0.25px，用户根本感受不到吸附；120s 让用户在拖动到 motion 附近时能明显感受到"咬住"边缘的效果。吸附后的 `progress` 更新 SeekBar 视觉与位置标签，并作为 seek 目标传给 ExoPlayer。
 - **报警精确跳转**：`AlertsFragment.jumpToCameraAtTimestamp` / `DashboardFragment.jumpToCamerasWithAlert` 启动 `CameraDetailActivity` 时附带 `EXTRA_INITIAL_TIMESTAMP`（报警 `start_time`）；`CameraDetailActivity.onCreate` 检测到该 extra 后自动调用 `showRecordings(initialTimestamp)`，`RecordingsDialog` 构造函数接受 `initialTimestamp` 参数后通过 `pendingInitialTimestamp` 延迟到 `loadRecordings` 完成再触发 `openDayForTimestamp` —— **v1.6.1 修复了 v1.6.0 的时序竞态 BUG**：v1.6.0 在 init 中 `binding.root.post { openDayForTimestamp }` 总是在 `loadRecordings()` 网络请求完成前执行，导致 `allRecordings` 为空时 `playDayAsPlaylist` 过滤出空列表并显示"该日期无录像"。
 - **默认进入整天模式（v1.6.1）**：`RecordingsDialog` 在 `loadRecordings` 完成后，如果没有 `initialTimestamp`，自动调用 `showDayPicker()` 弹出日期选择器——之前默认显示分条录像列表，整天播放是次要入口；按用户要求"以整天查看为先"调换位置，分条列表可通过取消日期选择器或点"返回列表"按钮进入。
+- **按天列表 UI（v1.6.2）**：`RecordingsDialog` 默认列表从 60s-bucket 分条视图改为按 LOCAL 日期分组的现代化卡片列表（`item_day_recording.xml` + `DayRecordingAdapter`）。每张卡片显示：大日期数字 + 月份/年 + 星期 + 录像段数 + 总时长 + 绿色"N 段"状态 chip。点击任意一张卡片直接进入当天的 24h ExoPlayer 播放列表。`groupRecordingsByDay` 函数把后端返回的 ~10k 条 60s buckets 按 LOCAL 日期分组聚合成 ~7 张卡片（最新在前）。删除了 v1.5.x 的 `RecordingAdapter`、`item_recording.xml` 的引用、`loadMoreRecordings` 分页逻辑、`showDayPicker` 日期选择器（不再需要——列表本身就是按天选）、`playRecording` 单段播放方法（整天播放是唯一入口）。报警跳转的 `pendingInitialTimestamp` 仍生效——点击报警后仍自动跳到对应日期的整天播放并 seek 到精确时刻。
 - **报警推送精确跳转**：`AlertsFragment.onJumpCamera` / `DashboardFragment.jumpToCamerasWithAlert` 现在直接 `startActivity(CameraDetailActivity)`，Intent extra `EXTRA_INITIAL_TIMESTAMP = alert.startTime.toLong()`。`CameraDetailActivity.onCreate` 检测到该 extra 后 `post { showRecordings(initialTs) }`，`RecordingsDialog` 构造参数新增 `initialTimestamp: Long`，内部 `openDayForTimestamp` 锚定到报警所在日期并构建播放列表，`pendingAlertSeekMs` 标志在 ExoPlayer 首次 `STATE_READY` 时一次性 seek 到报警精确时刻（用 `clipStartOffsets.binarySearch` 计算目标 window 与位置）。失败回退到旧的「切换到 cameras tab」行为。DashboardFragment 的实时报警横幅也加了点击监听，复用同一 jump 逻辑。
 
 ### Surface 时序

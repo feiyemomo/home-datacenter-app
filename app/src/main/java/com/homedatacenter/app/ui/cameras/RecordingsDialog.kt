@@ -1,7 +1,6 @@
 package com.homedatacenter.app.ui.cameras
 
 import android.app.Dialog
-import android.app.DatePickerDialog
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
@@ -26,7 +25,7 @@ import com.homedatacenter.app.data.model.Camera
 import com.homedatacenter.app.data.model.Recording
 import com.homedatacenter.app.di.AppContainer
 import com.homedatacenter.app.databinding.DialogRecordingsBinding
-import com.homedatacenter.app.databinding.ItemRecordingBinding
+import com.homedatacenter.app.databinding.ItemDayRecordingBinding
 import com.homedatacenter.app.util.ExoPlayerRendererFactory
 import com.homedatacenter.app.util.PlayerFullscreenHelper
 import kotlinx.coroutines.CoroutineScope
@@ -59,24 +58,19 @@ class RecordingsDialog(
 ) : Dialog(context, R.style.FullScreenDialog) {
 
     private lateinit var binding: DialogRecordingsBinding
-    private lateinit var adapter: RecordingAdapter
+    private lateinit var dayAdapter: DayRecordingAdapter
     private val baseUrl = container.getApiBaseUrl()
     private val token = container.prefsManager.token
     private var player: ExoPlayer? = null
     private var fullscreenHelper: PlayerFullscreenHelper? = null
 
-    // v1.5.10: virtual pagination state. The backend's
-    // /api/v1/cameras/:id/recordings endpoint returns ALL 7 days of
-    // 60s-aggregated buckets in one shot (~10080 entries) — loading
-    // them into the RecyclerView at once causes a noticeable hitch
-    // (DiffUtil + 10k binds). We keep [allRecordings] as the full
-    // source of truth and only expose [visibleRecordings] (default
-    // 50) to the adapter. When the user scrolls near the bottom we
-    // append the next batch from [allRecordings].
+    // v1.6.2: source-of-truth for the per-day list view. v1.5.x
+    // kept [allRecordings] + [visibleRecordings] for virtual
+    // pagination of 60s buckets (~10k items for 7 days). v1.6.2
+    // changed the default entry to a per-DAY list (~7 items max),
+    // so pagination is no longer needed — we just hand the whole
+    // grouped list to [dayAdapter] in one shot.
     private val allRecordings = mutableListOf<Recording>()
-    private val visibleRecordings = mutableListOf<Recording>()
-    private var isLoadingMore = false
-    private val pageBatchSize = 50
 
     // v1.5.11: big scrub bar state for the full-day playlist mode.
     // [dayTotalMs] is the full 24h window (constant once a day is
@@ -110,28 +104,18 @@ class RecordingsDialog(
     // opens the dialog with initialTimestamp; cleared after the first
     // STATE_READY so subsequent state changes don't re-seek.
     private var pendingAlertSeekMs: Long = 0L
-    // v1.6.1: deferred initial action. The dialog can be opened in
-    // three modes:
-    //   1. With initialTimestamp > 0 (alert click) — auto-open the
-    //      day playlist for that timestamp and seek to the exact
-    //      moment after ExoPlayer reports STATE_READY.
-    //   2. With initialTimestamp == 0 (manual "查看录像" button) —
-    //      auto-open the day picker so the user picks a date and
-    //      starts the full-day playlist mode (v1.6.1: this is now
-    //      the default entry per user request "以整天查看为先").
-    //   3. Falls back to the per-clip recording list when the user
-    //      cancels the day picker or the recordings list is empty.
-    //
-    // Either action MUST run AFTER [loadRecordings] has populated
-    // [allRecordings] — otherwise [playDayAsPlaylist]'s filter step
-    // finds nothing and shows "该日期无录像" even though recordings
-    // exist for that day. v1.6.0 had this race: it posted the call
-    // via binding.root.post which executes on the next frame, but
-    // the network request typically takes 100-500ms — the post
-    // always lost the race. v1.6.1 defers the action to the
-    // loadRecordings completion callback on the main thread.
+    // v1.6.1: deferred initial action for alert-click jump. When the
+    // dialog is opened with initialTimestamp > 0 (alert click), we
+    // can't call openDayForTimestamp directly from [init] because
+    // [loadRecordings] hasn't populated [allRecordings] yet — the
+    // playlist filter step would find nothing and show "该日期无录像".
+    // v1.6.0 used binding.root.post which raced with the network
+    // request (post always won). v1.6.1 introduced this flag and
+    // fires it from [loadRecordings]'s main-thread completion callback.
+    // v1.6.2: the other mode (auto-open day picker) was removed —
+    // the per-day list is now the default entry, so no deferred
+    // action is needed when initialTimestamp == 0.
     private var pendingInitialTimestamp: Long = 0L
-    private var pendingAutoOpenDayPicker: Boolean = false
     // v1.6.0: motion ranges in day-relative ms (0..dayTotalMs). Cached
     // from [loadAlertRangesForDay] so the SeekBar snap logic in
     // [onStopTrackingTouch] can find the nearest range edge without
@@ -183,54 +167,41 @@ class RecordingsDialog(
         loadRecordings()
         binding.toolbar.setNavigationOnClickListener { dismiss() }
         binding.toolbar.title = "${camera.name} - 录像"
-        // v1.5.10: "Play full day" entry point — opens a date picker,
-        // then loads all 60s clips from the selected day into an
-        // ExoPlayer playlist so the user can scrub through a full 24h
-        // as one continuous video (the challenge the user explicitly
-        // asked for). Implementation lives in [playDayAsPlaylist].
-        binding.btnPlayDay.setOnClickListener { showDayPicker() }
+        // v1.6.2: btnPlayDay is no longer used. v1.5.x opened a
+        // DatePickerDialog to pick a day for full-day playback; but
+        // v1.6.2 made the per-DAY list the default entry, so the
+        // user picks a day by tapping a row directly. The button
+        // stays in the layout (GONE) to avoid touching every binding
+        // call site — cheap to keep.
+        binding.btnPlayDay.visibility = View.GONE
 
-        // v1.6.1: defer the initial action to [loadRecordings]
+        // v1.6.1: defer the alert-click jump to [loadRecordings]
         // completion. v1.6.0 used binding.root.post which races with
-        // the network request — see [pendingInitialTimestamp] doc
-        // for the full story. Two modes:
-        //   - initialTimestamp > 0 (alert click): auto-open the day
-        //     playlist for that timestamp + seek to exact moment
-        //   - initialTimestamp == 0 (manual open): auto-open day
-        //     picker per user request "以整天查看为先" (v1.6.1 makes
-        //     full-day playback the default entry; the per-clip list
-        //     is reachable via the "返回列表" button or by canceling
-        //     the picker).
+        // the network request — see [pendingInitialTimestamp] doc.
+        // v1.6.2: the auto-open-day-picker mode was removed; the
+        // default entry is now the per-day list itself, so no
+        // deferred action is needed when initialTimestamp == 0.
         if (initialTimestamp > 0L) {
             pendingInitialTimestamp = initialTimestamp
-        } else {
-            pendingAutoOpenDayPicker = true
         }
     }
 
     private fun setupRecyclerView() {
-        adapter = RecordingAdapter(
-            baseUrl = baseUrl,
-            token = token,
-            onPlayRecording = { recording -> playRecording(recording) }
+        // v1.6.2: switched from RecordingAdapter (per-60s-clip list)
+        // to DayRecordingAdapter (per-day card list). Each row shows
+        // the date + weekday + recording count + total duration +
+        // a green "N 段" status chip. Tapping a row launches
+        // playDayAsPlaylist for that date — no separate date picker
+        // dialog needed.
+        dayAdapter = DayRecordingAdapter(
+            onPlayDay = { dayRec -> playDayAsPlaylist(dayRec.dayStartCalendar) }
         )
         binding.recyclerView.layoutManager = LinearLayoutManager(context)
-        binding.recyclerView.adapter = adapter
-        // v1.5.10: paginate on scroll. Trigger when the user is
-        // within 10 items of the end so the next batch is loaded
-        // before they reach the bottom (no visible "loading more"
-        // pause for fast scrollers).
-        binding.recyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
-            override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
-                if (dy <= 0 || isLoadingMore) return
-                val lm = rv.layoutManager as? LinearLayoutManager ?: return
-                val lastVisible = lm.findLastVisibleItemPosition()
-                val total = adapter.itemCount
-                if (lastVisible >= total - 10) {
-                    loadMoreRecordings()
-                }
-            }
-        })
+        binding.recyclerView.adapter = dayAdapter
+        // v1.6.2: removed the pagination scroll listener. The
+        // backend returns 7 days of 60s buckets (~10k items), but we
+        // group them into ~7 day cards — far below any pagination
+        // threshold.
     }
 
     private fun loadRecordings() {
@@ -264,34 +235,34 @@ class RecordingsDialog(
                     // are appended on scroll via [loadMoreRecordings].
                     allRecordings.clear()
                     allRecordings.addAll(recordings)
-                    visibleRecordings.clear()
-                    visibleRecordings.addAll(recordings.take(pageBatchSize))
-                    adapter.submitList(visibleRecordings.toList())
+                    // v1.6.2: group recordings by LOCAL day and
+                    // hand the per-day list to [dayAdapter]. Each
+                    // DayRecording aggregates the count + total
+                    // duration of all 60s buckets that fall on that
+                    // LOCAL date. Days with zero recordings are NOT
+                    // synthesized — only days that have at least
+                    // one recording appear, since the user explicitly
+                    // asked "标注每一天是否有录像数据" and the
+                    // backend only returns days with recordings
+                    // (the /recordings endpoint returns the last 7
+                    // days' buckets, omitting empty days entirely).
+                    val dayList = groupRecordingsByDay(recordings)
+                    dayAdapter.submitList(dayList)
                     binding.progressBar.visibility = View.GONE
                     binding.recyclerView.visibility = View.VISIBLE
                     binding.tvEmpty.visibility = if (recordings.isEmpty()) View.VISIBLE else View.GONE
                     if (recordings.isEmpty()) {
                         binding.tvEmpty.text = if (resp.isSuccess) "暂无录像" else "加载失败: ${resp.message}"
                     }
-                    // v1.5.10: only show the "Play full day" button
-                    // when there's at least one recording to play.
-                    binding.btnPlayDay.visibility =
-                        if (recordings.isNotEmpty()) View.VISIBLE else View.GONE
 
                     // v1.6.1: now that allRecordings is populated,
-                    // fire whichever deferred action was requested
-                    // in [init]. See [pendingInitialTimestamp] doc
-                    // for why this MUST happen here (after the network
-                    // call) rather than in a binding.root.post.
-                    if (recordings.isNotEmpty()) {
-                        if (pendingInitialTimestamp > 0L) {
-                            val ts = pendingInitialTimestamp
-                            pendingInitialTimestamp = 0L
-                            openDayForTimestamp(ts)
-                        } else if (pendingAutoOpenDayPicker) {
-                            pendingAutoOpenDayPicker = false
-                            showDayPicker()
-                        }
+                    // fire the deferred alert-click jump if any.
+                    // v1.6.2: removed the auto-open-day-picker
+                    // branch — the per-day list is the default.
+                    if (recordings.isNotEmpty() && pendingInitialTimestamp > 0L) {
+                        val ts = pendingInitialTimestamp
+                        pendingInitialTimestamp = 0L
+                        openDayForTimestamp(ts)
                     }
                 }
             } catch (e: Exception) {
@@ -306,20 +277,56 @@ class RecordingsDialog(
     }
 
     /**
-     * v1.5.10: append the next page of recordings to the visible
-     * list. No-op when we've already exposed everything from
-     * [allRecordings]. Uses [ListAdapter.submitList] with a copy
-     * so DiffUtil can compute the minimal diff (one append).
+     * v1.6.2: groups a flat list of [Recording] (each a 60s bucket)
+     * by LOCAL date and produces a list of [DayRecording] items for
+     * [DayRecordingAdapter]. Days with no recordings are NOT
+     * synthesized — the backend's /recordings endpoint only returns
+     * buckets that actually exist (last 7 days), so empty days
+     * never reach this function.
+     *
+     * The resulting list is sorted by date DESC (most recent first)
+     * because that matches the typical mental model: "what happened
+     * today / yesterday" is at the top, older days at the bottom.
+     *
+     * Timezone: hardcoded Asia/Shanghai — see [formatDayTime] for
+     * why (JVM-default tz is unreliable on the user's device).
      */
-    private fun loadMoreRecordings() {
-        if (isLoadingMore) return
-        if (visibleRecordings.size >= allRecordings.size) return
-        isLoadingMore = true
-        val nextEnd = (visibleRecordings.size + pageBatchSize).coerceAtMost(allRecordings.size)
-        visibleRecordings.addAll(allRecordings.subList(visibleRecordings.size, nextEnd))
-        adapter.submitList(visibleRecordings.toList()) {
-            isLoadingMore = false
+    private fun groupRecordingsByDay(recordings: List<Recording>): List<DayRecording> {
+        val parseFmt = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
+            timeZone = TimeZone.getTimeZone("UTC")
         }
+        val tz = TimeZone.getTimeZone("Asia/Shanghai")
+        val dayMap = mutableMapOf<String, MutableList<Recording>>()
+        for (rec in recordings) {
+            val instant = try { parseFmt.parse(rec.startAt)?.time ?: continue } catch (_: Exception) { continue }
+            val cal = Calendar.getInstance(tz).apply { timeInMillis = instant }
+            // Truncate to LOCAL 00:00 — used both as the map key and
+            // (later) as the dayFilterStart for playDayAsPlaylist.
+            cal.set(Calendar.HOUR_OF_DAY, 0)
+            cal.set(Calendar.MINUTE, 0)
+            cal.set(Calendar.SECOND, 0)
+            cal.set(Calendar.MILLISECOND, 0)
+            val key = String.format(Locale.US, "%04d-%02d-%02d",
+                cal.get(Calendar.YEAR),
+                cal.get(Calendar.MONTH) + 1,
+                cal.get(Calendar.DAY_OF_MONTH))
+            dayMap.getOrPut(key) { mutableListOf() }.add(rec)
+        }
+        return dayMap.entries.map { (key, recs) ->
+            DayRecording(
+                dayStartCalendar = Calendar.getInstance(tz).apply {
+                    // Re-parse the key into a Calendar — easier than
+                    // passing the truncated Calendar through the map.
+                    val parts = key.split("-")
+                    set(parts[0].toInt(), parts[1].toInt() - 1, parts[2].toInt(),
+                        0, 0, 0)
+                    set(Calendar.MILLISECOND, 0)
+                },
+                recordingCount = recs.size,
+                totalDurationSeconds = recs.sumOf { it.durationSeconds },
+                totalSizeBytes = recs.sumOf { it.sizeBytes },
+            )
+        }.sortedByDescending { it.dayStartCalendar.timeInMillis }
     }
 
     /**
@@ -336,23 +343,11 @@ class RecordingsDialog(
      * v1.5.17 attempt anchored at LOCAL 08:00, but the user's actual
      * recordings start at LOCAL 16:00+ (depends on when motion was
      * detected that day), so even 8am left 8h of empty SeekBar.
+     *
+     * v1.6.2: deleted. The per-day list is the default entry now,
+     * so no separate date picker dialog is needed — the user just
+     * taps a row in the list to play that day.
      */
-    private fun showDayPicker() {
-        val cal = Calendar.getInstance()
-        DatePickerDialog(
-            context,
-            { _, year, month, day ->
-                val dayCal = Calendar.getInstance().apply {
-                    set(year, month, day, 0, 0, 0)
-                    set(Calendar.MILLISECOND, 0)
-                }
-                playDayAsPlaylist(dayCal)
-            },
-            cal.get(Calendar.YEAR),
-            cal.get(Calendar.MONTH),
-            cal.get(Calendar.DAY_OF_MONTH),
-        ).show()
-    }
 
     /**
      * v1.6.0: opens the day playlist for the date containing
@@ -879,90 +874,15 @@ class RecordingsDialog(
         return bestSnap
     }
 
-    private fun playRecording(recording: Recording) {
-        val url = buildRecordingUrl(recording.id)
-        if (url.isEmpty()) return
-
-        android.util.Log.d("RecordingsDialog", "Playing recording ${recording.id} from $url")
-
-        binding.videoContainer.visibility = View.VISIBLE
-        binding.recyclerView.visibility = View.GONE
-
-        player?.release()
-        // Delegate to ExoPlayerRendererFactory: on emulators it filters
-        // out the broken goldfish decoders, on real devices it just
-        // enables decoder fallback. See util/ExoPlayerRendererFactory.kt.
-        val renderersFactory = ExoPlayerRendererFactory.create(context)
-        player = ExoPlayer.Builder(context, renderersFactory).build().apply {
-            // Route audio through the media stream and let ExoPlayer
-            // manage AudioFocus — pauses on phone call, resumes after.
-            setAudioAttributes(
-                com.google.android.exoplayer2.audio.AudioAttributes.Builder()
-                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
-                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MOVIE)
-                    .build(),
-                /* handleAudioFocus = */ true,
-            )
-            val dataSourceFactory = DefaultHttpDataSource.Factory().apply {
-                setConnectTimeoutMs(15000)
-                setReadTimeoutMs(60000)
-                if (!token.isNullOrEmpty()) {
-                    setDefaultRequestProperties(mutableMapOf(
-                        "Authorization" to "Bearer $token",
-                        "Cookie" to "home_token=$token"
-                    ))
-                }
-            }
-            val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory)
-                .createMediaSource(MediaItem.fromUri(url))
-            setMediaSource(mediaSource)
-            playWhenReady = true
-            addListener(object : Player.Listener {
-                override fun onPlaybackStateChanged(state: Int) {
-                    binding.progressPlayer.visibility = if (state == Player.STATE_BUFFERING) View.VISIBLE else View.GONE
-                }
-                override fun onPlayerError(error: PlaybackException) {
-                    android.util.Log.e("RecordingsDialog", "Player error: ${error.message}")
-                }
-            })
-            prepare()
-        }
-        binding.playerView.player = player
-        binding.btnBack.setOnClickListener {
-            player?.release()
-            player = null
-            fullscreenHelper?.release()
-            fullscreenHelper = null
-            binding.btnPlaybackSpeed.visibility = View.GONE
-            binding.btnFullscreen.visibility = View.GONE
-            binding.videoContainer.visibility = View.GONE
-            binding.recyclerView.visibility = View.VISIBLE
-        }
-
-        // Attach fullscreen + speed button handlers. The fullscreen
-        // helper hides the toolbar and rotates the underlying Activity
-        // to landscape; the speed button opens a popup with 0.5x /
-        // 1x / 1.5x / 2x options. v1.5.3: the ExoPlayer 2.x default
-        // controller layout doesn't ship a fullscreen button, so we
-        // pass a standalone overlay (btnFullscreen) that the helper
-        // wires to [toggleFullscreen].
-        if (fullscreenHelper == null) {
-            val helper = PlayerFullscreenHelper(
-                playerView = binding.playerView,
-                hostView = binding.root,
-                hideOnFullscreen = listOf(binding.toolbar, binding.btnBack),
-                speedButton = binding.btnPlaybackSpeed,
-                fullscreenButton = binding.btnFullscreen,
-            )
-            helper.attach()
-            fullscreenHelper = helper
-        }
-        fullscreenHelper?.onPlayerChanged(player)
-        // Speed + fullscreen buttons are only meaningful when a
-        // recording is loaded.
-        binding.btnPlaybackSpeed.visibility = View.VISIBLE
-        binding.btnFullscreen.visibility = View.VISIBLE
-    }
+    /**
+     * v1.6.2: deleted [playRecording]. v1.5.x exposed a per-clip
+     * list (item_recording.xml + RecordingAdapter) where tapping a
+     * row played that single 60s bucket via this method. v1.6.2
+     * replaced the per-clip list with the per-day list, so this
+     * method became dead code. The fullscreen + speed button setup
+     * that lived here is duplicated in [playDayAsPlaylist] (which is
+     * the only playback path now).
+     */
 
     private fun buildRecordingUrl(recId: Long): String {
         if (baseUrl.isNullOrBlank()) return ""
@@ -983,60 +903,85 @@ class RecordingsDialog(
         super.dismiss()
     }
 
-    class RecordingAdapter(
-        private val baseUrl: String?,
-        private val token: String?,
-        private val onPlayRecording: (Recording) -> Unit
-    ) : ListAdapter<Recording, RecordingAdapter.RecordingViewHolder>(DiffCallback()) {
+    /**
+     * v1.6.2: data class for the per-day list view. Each instance
+     * represents one LOCAL day's worth of recordings (aggregated
+     * from the backend's 60s buckets). The [dayStartCalendar] is
+     * LOCAL 00:00 of that day — pass it directly to
+     * [playDayAsPlaylist] as the dayFilterStart.
+     */
+    data class DayRecording(
+        val dayStartCalendar: Calendar,
+        val recordingCount: Int,
+        val totalDurationSeconds: Int,
+        val totalSizeBytes: Long,
+    )
 
-        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecordingViewHolder {
-            val b = ItemRecordingBinding.inflate(LayoutInflater.from(parent.context), parent, false)
-            return RecordingViewHolder(b)
+    /**
+     * v1.6.2: replaces v1.5.x's [RecordingAdapter] as the default
+     * list adapter for [RecordingsDialog]. Each row shows one day's
+     * recording summary and is tappable to launch full-day playback.
+     *
+     * Layout: [item_day_recording.xml]
+     *  - Large day-of-month + small month/year on the left
+     *  - Weekday + recording count + total duration in the middle
+     *  - Green "N 段" status chip on the right (always green since
+     *    the backend only returns days with recordings — empty days
+     *    are not synthesized)
+     *
+     * Removed: the v1.5.x thumbnail + per-60s-bucket duration list
+     * (item_recording.xml + RecordingAdapter). The per-clip view is
+     * not reachable from the UI anymore — the user explicitly asked
+     * for "以整天查看为先", so the per-day list is the only entry.
+     */
+    class DayRecordingAdapter(
+        private val onPlayDay: (DayRecording) -> Unit,
+    ) : ListAdapter<DayRecording, DayRecordingAdapter.DayViewHolder>(DiffCallback()) {
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): DayViewHolder {
+            val b = ItemDayRecordingBinding.inflate(
+                LayoutInflater.from(parent.context), parent, false)
+            return DayViewHolder(b)
         }
 
-        override fun onBindViewHolder(holder: RecordingViewHolder, position: Int) {
+        override fun onBindViewHolder(holder: DayViewHolder, position: Int) {
             holder.bind(getItem(position))
         }
 
-        inner class RecordingViewHolder(private val binding: ItemRecordingBinding) : RecyclerView.ViewHolder(binding.root) {
-            fun bind(recording: Recording) {
-                // v1.5.19: hardcode Asia/Shanghai instead of relying on
-                // TimeZone.getDefault(). The logcat from v1.5.18 showed
-                // tz=GMT on the user's device, even though the device's
-                // system setting is Asia/Shanghai — the JVM default
-                // was mutated somewhere (likely by a library or by
-                // TimeZone.setDefault() in a third-party init path).
-                // Since this app is single-user / single-region (the
-                // user's home in China), hardcoding Asia/Shanghai is
-                // safe and avoids the fragility of JVM-default.
-                val fmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).apply {
-                    timeZone = TimeZone.getTimeZone("Asia/Shanghai")
-                }
-                try {
-                    val date = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
-                        timeZone = TimeZone.getTimeZone("UTC")
-                    }.parse(recording.startAt)
-                    if (date != null) {
-                        binding.tvTime.text = fmt.format(date)
-                    } else {
-                        binding.tvTime.text = recording.startAt
-                    }
-                } catch (_: Exception) {
-                    binding.tvTime.text = recording.startAt
-                }
-
-                val minutes = recording.durationSeconds / 60
-                val seconds = recording.durationSeconds % 60
-                binding.tvDuration.text = String.format("%02d:%02d", minutes, seconds)
-                binding.tvSize.text = recording.sizeHuman
-
-                binding.btnPlay.setOnClickListener { onPlayRecording(recording) }
+        inner class DayViewHolder(
+            private val binding: ItemDayRecordingBinding,
+        ) : RecyclerView.ViewHolder(binding.root) {
+            fun bind(day: DayRecording) {
+                val cal = day.dayStartCalendar
+                // Date block.
+                binding.tvDayOfMonth.text =
+                    cal.get(Calendar.DAY_OF_MONTH).toString()
+                binding.tvMonthYear.text = String.format(Locale.US,
+                    "%04d年%d月", cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1)
+                // Weekday — Locale.CHINA gives "星期X" in Chinese.
+                binding.tvWeekday.text = String.format(Locale.CHINA, "%tA", cal)
+                // Stats: "N 段 · HH:mm:ss 总时长"
+                val h = day.totalDurationSeconds / 3600
+                val m = (day.totalDurationSeconds % 3600) / 60
+                val s = day.totalDurationSeconds % 60
+                val durStr = if (h > 0) String.format("%d时%02d分", h, m)
+                             else String.format("%02d分%02d秒", m, s)
+                binding.tvStats.text = "${day.recordingCount} 段 · $durStr"
+                // Status chip — always green since the backend omits
+                // empty days. Tapping the row launches full-day playback.
+                binding.tvStatus.text = "${day.recordingCount} 段"
+                binding.root.setOnClickListener { onPlayDay(day) }
             }
         }
 
-        class DiffCallback : DiffUtil.ItemCallback<Recording>() {
-            override fun areItemsTheSame(oldItem: Recording, newItem: Recording) = oldItem.id == newItem.id
-            override fun areContentsTheSame(oldItem: Recording, newItem: Recording) = oldItem == newItem
+        class DiffCallback : DiffUtil.ItemCallback<DayRecording>() {
+            override fun areItemsTheSame(oldItem: DayRecording, newItem: DayRecording): Boolean {
+                return oldItem.dayStartCalendar.get(Calendar.YEAR) == newItem.dayStartCalendar.get(Calendar.YEAR) &&
+                       oldItem.dayStartCalendar.get(Calendar.DAY_OF_YEAR) == newItem.dayStartCalendar.get(Calendar.DAY_OF_YEAR)
+            }
+            override fun areContentsTheSame(oldItem: DayRecording, newItem: DayRecording): Boolean {
+                return oldItem == newItem
+            }
         }
     }
 }
