@@ -70,9 +70,44 @@ class PlayerFullscreenHelper(
      * helper wires [View.OnClickListener] to [toggleFullscreen].
      */
     private val fullscreenButton: View? = null,
+    /**
+     * v1.6.4: views that should fade in/out with the ExoPlayer
+     * controller's visibility while in fullscreen. The user asked:
+     * "全屏时，点击播放器收起进度条等的插件，再次点击是在展现".
+     * Instead of writing a separate tap-to-toggle mechanism, we hook
+     * StyledPlayerView's existing [ControllerVisibilityListener] —
+     * ExoPlayer's controller is already click-to-toggle by default,
+     * so its visibility transitions are exactly the "tap playerView
+     * to show/hide chrome" signal we need.
+     *
+     * Behavior:
+     *  - Enter fullscreen: [hideOnFullscreen] views go GONE (toolbar);
+     *    [controllerSyncViews] follow the controller (VISIBLE by default
+     *    since the controller auto-shows on enter).
+     *  - Tap video while controller visible: controller auto-hides
+     *    after [show_timeout]; listener fires, [controllerSyncViews]
+     *    go GONE.
+     *  - Tap video again: controller re-shows; listener fires,
+     *    [controllerSyncViews] go VISIBLE.
+     *  - Exit fullscreen: [hideOnFullscreen] + [controllerSyncViews]
+     *    all restore to VISIBLE (their pre-fullscreen state).
+     *
+     * Typical members: dayScrubBarContainer, motionChipScroller,
+     * btnBack, btnPlaybackSpeed. NOT [fullscreenButton] (it must
+     * always be reachable to exit fullscreen) and NOT [toolbar]
+     * (it should stay GONE for the whole fullscreen session).
+     */
+    private val controllerSyncViews: List<View> = emptyList(),
 ) {
     private var isFullscreen: Boolean = false
     private var player: ExoPlayer? = null
+    // v1.6.4: latch for the playerView tap-to-toggle behavior. True
+    // means the synced chrome (dayScrubBarContainer + chip scroller +
+    // buttons) is currently VISIBLE; false means the user has tapped
+    // to hide it. Starts true so the first fullscreen entry shows
+    // chrome by default (matches the v1.5.x "always visible" UX the
+    // user is used to).
+    private var controllerOverlayVisible: Boolean = true
     // v1.6.4: default to MATCH_PARENT so the first exit-fullscreen
     // restores the player to fill its container (matches the typical
     // XML layout_height="match_parent"). The previous default was 0,
@@ -132,6 +167,34 @@ class PlayerFullscreenHelper(
         }
         speedButton?.let { attachSpeedButton(it) }
         fullscreenButton?.setOnClickListener { toggleFullscreen() }
+        // v1.6.4: wire playerView tap-to-toggle for [controllerSyncViews]
+        // while in fullscreen. The user asked: "全屏时，点击播放器收起
+        // 进度条等的插件，再次点击是在展现". We can't rely on
+        // StyledPlayerView's controller visibility listener because
+        // the host typically calls useController=false (custom scrub
+        // bar instead of ExoPlayer's built-in one), so the controller
+        // never shows/hides and the listener never fires. Instead we
+        // register a direct OnClickListener on the playerView — the
+        // click flips [controllerSyncViews] between VISIBLE and GONE
+        // while in fullscreen.
+        //
+        // We also latch the user's "hidden" intent so subsequent
+        // fullscreen entries remember it (e.g. user hides chrome,
+        // exits fullscreen, re-enters — chrome stays hidden until
+        // they tap to show again). The latch is reset only on exit
+        // so non-fullscreen always shows chrome.
+        if (controllerSyncViews.isNotEmpty()) {
+            playerView.isClickable = true
+            playerView.isFocusable = true
+            playerView.setOnClickListener {
+                if (!isFullscreen) return@setOnClickListener
+                val target = if (controllerOverlayVisible) View.GONE else View.VISIBLE
+                controllerSyncViews.forEach { v ->
+                    if (v.visibility != target) v.visibility = target
+                }
+                controllerOverlayVisible = !controllerOverlayVisible
+            }
+        }
         // v1.5.7: no clipChildren manipulation needed — we no longer
         // use bringToFront/elevation; siblings are hidden via
         // [hideOnFullscreen] (visibility=GONE) instead.
@@ -273,8 +336,23 @@ class PlayerFullscreenHelper(
         }
 
         // Hide/show non-player UI elements.
-        val visibility = if (isFullscreen) View.GONE else View.VISIBLE
-        hideOnFullscreen.forEach { it.visibility = visibility }
+        // v1.6.4: [hideOnFullscreen] views (toolbar) always go GONE in
+        // fullscreen and VISIBLE outside. [controllerSyncViews] follow
+        // [controllerOverlayVisible] when IN fullscreen (initially
+        // true → VISIBLE; tap playerView to toggle). When exiting
+        // fullscreen we always restore them to VISIBLE regardless of
+        // latch state — non-fullscreen is the "normal" layout per the
+        // user's request "正常未全屏时，播放器就放在顶部".
+        val hideVisibility = if (isFullscreen) View.GONE else View.VISIBLE
+        hideOnFullscreen.forEach { it.visibility = hideVisibility }
+        if (controllerSyncViews.isNotEmpty()) {
+            val syncVisibility = if (isFullscreen && !controllerOverlayVisible) View.GONE else View.VISIBLE
+            controllerSyncViews.forEach { v ->
+                if (v.visibility != syncVisibility) {
+                    v.visibility = syncVisibility
+                }
+            }
+        }
 
         // Expand/collapse the player view itself. We save the
         // original height so we can restore it exactly when exiting
