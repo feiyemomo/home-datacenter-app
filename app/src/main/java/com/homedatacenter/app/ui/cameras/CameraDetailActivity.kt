@@ -647,10 +647,15 @@ class CameraDetailActivity : AppCompatActivity() {
 
         // Fetch ICE config (cached after first call). The list may
         // be empty on LAN — host candidates are enough there.
+        // v1.5.7: prefer container.getCachedIceConfig() to skip the
+        // network round-trip entirely. The cache is warmed by
+        // DashboardFragment.refreshAll() -> AppContainer.prefetchIceConfig(),
+        // so by the time the user opens a camera the config is
+        // usually already in memory.
         lifecycleScope.launch {
             val iceConfig = cachedIceConfig ?: try {
                 val token = container.prefsManager.token ?: ""
-                container.getRepository().getIceConfig(token).also {
+                container.getOrFetchIceConfig(token).also {
                     cachedIceConfig = it
                 }
             } catch (e: Exception) {
