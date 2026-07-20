@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- v1.6.3: red pill for chips with PeakObjects > 0 (AI detected
-     person/car). Takes precedence over motion-score colors. -->
-<shape xmlns:android="http://schemas.android.com/apk/res/android"
-    android:shape="rectangle">
-    <solid android:color="#EF5350" />
-    <corners android:radius="14dp" />
-</shape>
