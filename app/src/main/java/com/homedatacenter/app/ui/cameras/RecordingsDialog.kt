@@ -870,14 +870,17 @@ class RecordingsDialog(
 
         inner class RecordingViewHolder(private val binding: ItemRecordingBinding) : RecyclerView.ViewHolder(binding.root) {
             fun bind(recording: Recording) {
-                val fmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).apply {
-                    // v1.5.18: explicitly use LOCAL timezone. The JVM
-                    // default should be LOCAL, but on some devices/
-                    // emulators it can default to UTC, which would
-                    // format the parsed UTC instant back as UTC —
-                    // showing "08:35:00" for a 16:35 LOCAL recording.
-                    // User reported: list times are 8h behind reality.
-                    timeZone = TimeZone.getDefault()
+                // v1.5.19: hardcode Asia/Shanghai instead of relying on
+                // TimeZone.getDefault(). The logcat from v1.5.18 showed
+                // tz=GMT on the user's device, even though the device's
+                // system setting is Asia/Shanghai — the JVM default
+                // was mutated somewhere (likely by a library or by
+                // TimeZone.setDefault() in a third-party init path).
+                // Since this app is single-user / single-region (the
+                // user's home in China), hardcoding Asia/Shanghai is
+                // safe and avoids the fragility of JVM-default.
+                val fmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).apply {
+                    timeZone = TimeZone.getTimeZone("Asia/Shanghai")
                 }
                 try {
                     val date = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
@@ -885,11 +888,6 @@ class RecordingsDialog(
                     }.parse(recording.startAt)
                     if (date != null) {
                         binding.tvTime.text = fmt.format(date)
-                        android.util.Log.d("RecordingsDialog",
-                            "rec bind: startAt='${recording.startAt}' " +
-                            "-> parsed UTC ms=${date.time} " +
-                            "-> formatted LOCAL='${fmt.format(date)}' " +
-                            "(tz=${TimeZone.getDefault().id})")
                     } else {
                         binding.tvTime.text = recording.startAt
                     }
