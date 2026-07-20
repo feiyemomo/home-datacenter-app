@@ -561,6 +561,33 @@ private fun resolveHlsUrl(camera: Camera): String {
 
 **v1.6.1 修复 4：默认进入整天模式**。按用户要求"以整天查看为先"，v1.6.1 在 `loadRecordings` 完成后，如果录像非空且没有 `initialTimestamp`，自动调用 `showDayPicker()` 弹出日期选择器。v1.6.0 默认显示分条录像列表、整天播放是 toolbar 右上的次要入口；v1.6.1 调换位置——默认进入整天模式，分条列表可通过取消日期选择器或点击"返回列表"按钮进入。
 
+**v1.6.2 重构：按天列表 UI**。v1.6.1 的 `showDayPicker()` 是系统 `DatePickerDialog`——用户要先选日期、然后开始播放，看不到哪天有录像、哪天没有。v1.6.2 把默认列表从「60s-bucket 分条列表」彻底改成「按 LOCAL 日期分组的现代化卡片列表」：
+
+- 新 layout `item_day_recording.xml`：左侧大日期数字（28sp）+ 月份/年（11sp），中间星期 + "N 段 · HH:mm:ss 总时长"，右侧绿色 "N 段" chip + 右箭头。整体 `bg_card_rounded` 圆角卡片，14dp 内边距，6dp 外边距。
+- 新 adapter `DayRecordingAdapter`：每行一张 `DayRecording` 卡片，点击行触发 `onPlayDay(day)` → `playDayAsPlaylist(day.dayStartCalendar)` 直接进入当天 24h 播放。
+- 新分组函数 `groupRecordingsByDay(recordings)`：用 `SimpleDateFormat` UTC 解析每条 `Recording.startAt`，转 `Asia/Shanghai` Calendar，截到 LOCAL 00:00，按 `yyyy-MM-dd` key 分组聚合成 `DayRecording(dayStartCalendar, recordingCount, totalDurationSeconds, totalSizeBytes)`。结果按日期 DESC 排序（最新在前）。
+- 新 drawable `bg_chip_green.xml`：绿色圆角矩形（`@color/online` #66BB6A），用于状态 chip 背景。
+
+删除的代码：
+- `RecordingAdapter` 内部类（v1.5.x 的 60s-bucket 列表 adapter，已被 `DayRecordingAdapter` 替代）
+- `playRecording(recording)` 方法（单段播放路径，已被 `playDayAsPlaylist` 取代为唯一播放入口）
+- `loadMoreRecordings()` + `visibleRecordings` + `pageBatchSize` + `isLoadingMore`（分页逻辑，按天列表通常只有 ~7 项不需要分页）
+- `showDayPicker()` 方法 + `pendingAutoOpenDayPicker` flag（不再需要弹日期选择器，列表本身就是按天选）
+- `binding.btnPlayDay.setOnClickListener` 监听（按钮永久 GONE，保留只为不动 binding call site）
+- import `DatePickerDialog` + `ItemRecordingBinding`
+
+保留的代码：
+- `pendingInitialTimestamp` + `openDayForTimestamp` + `pendingAlertSeekMs`：报警跳转路径仍生效——点击报警后自动跳到对应日期的整天播放并 seek 到精确时刻
+- `playDayAsPlaylist` + `loadAlertRangesForDay` + `snapProgressToRangeEdge`：整天播放的所有逻辑（motion-ranges 标红、SeekBar 吸附、binarySearch 寻找目标 window）保持不变
+- `item_recording.xml` layout 文件：留在仓库作为历史参考，不再被任何代码引用
+
+时序：
+1. `init` 设置 `pendingInitialTimestamp`（仅当 `initialTimestamp > 0`，即报警跳转时）
+2. `setupRecyclerView` 创建 `DayRecordingAdapter`，点击行 → `playDayAsPlaylist(day.dayStartCalendar)`
+3. `loadRecordings` 完成后调 `groupRecordingsByDay(recordings)` → `dayAdapter.submitList(dayList)`
+4. 如果有 `pendingInitialTimestamp`，调 `openDayForTimestamp(ts)` 直接进入整天播放（绕过列表）
+5. 用户在播放中点"返回列表"按钮 → 回到按天列表（`videoContainer.GONE` + `recyclerView.VISIBLE`）
+
 **报警推送精确跳转**：`AlertsFragment.onJumpCamera` / `DashboardFragment.jumpToCamerasWithAlert` 现在直接 `startActivity(CameraDetailActivity)`，Intent extra `EXTRA_INITIAL_TIMESTAMP = alert.startTime.toLong()`。流程：
 1. `CameraDetailActivity.onCreate` 检测到 `EXTRA_INITIAL_TIMESTAMP > 0`，`binding.root.post { showRecordings(initialTs) }`（post 是为了让 `startPlayback()` 的直播流先初始化完成，避免 surface 冲突）。
 2. `showRecordings(initialTs)` 构造 `RecordingsDialog(context, camera, container, initialTimestamp = initialTs)`。
