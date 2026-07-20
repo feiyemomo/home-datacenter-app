@@ -51,6 +51,18 @@ class AlertsDialog(
     private var player: ExoPlayer? = null
     private var fullscreenHelper: PlayerFullscreenHelper? = null
 
+    // v1.5.10: virtual pagination state. The backend's
+    // /api/v1/cameras/alerts?limit=50 returns up to 50 alerts in
+    // one shot — that's normally fine, but the alert dialog ALSO
+    // fetches thumbnails per item (base64 decode + Bitmap alloc),
+    // so loading all 50 at once causes a noticeable hitch on
+    // first display. We keep [allAlerts] as the source of truth
+    // and expose [visibleAlerts] (default 20) to the adapter.
+    private val allAlerts = mutableListOf<Alert>()
+    private val visibleAlerts = mutableListOf<Alert>()
+    private var isLoadingMore = false
+    private val pageBatchSize = 20
+
     init {
         binding = DialogAlertsBinding.inflate(LayoutInflater.from(context))
         setContentView(binding.root)
@@ -69,6 +81,21 @@ class AlertsDialog(
         )
         binding.recyclerView.layoutManager = LinearLayoutManager(context)
         binding.recyclerView.adapter = adapter
+        // v1.5.10: paginate on scroll. Same threshold as
+        // RecordingsDialog — trigger when within 5 items of the
+        // end (smaller batch size since each row carries a
+        // thumbnail load).
+        binding.recyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
+                if (dy <= 0 || isLoadingMore) return
+                val lm = rv.layoutManager as? LinearLayoutManager ?: return
+                val lastVisible = lm.findLastVisibleItemPosition()
+                val total = adapter.itemCount
+                if (lastVisible >= total - 5) {
+                    loadMoreAlerts()
+                }
+            }
+        })
     }
 
     private fun loadAlerts() {
@@ -85,7 +112,7 @@ class AlertsDialog(
                 android.util.Log.d("AlertsDialog",
                     "API response: code=${resp.code}, message='${resp.message}', data=${resp.data}")
 
-                val allAlerts = if (resp.isSuccess) {
+                val fetchedAlerts = if (resp.isSuccess) {
                     val decoded = resp.decodeData<AlertListData>()
                     android.util.Log.d("AlertsDialog",
                         "Decoded ${decoded?.alerts?.size ?: 0} alerts (total=${decoded?.total})")
@@ -99,14 +126,26 @@ class AlertsDialog(
                 // Filter alerts for this camera. The backend annotates alerts with
                 // camera_id via LookupByFrigateSlug — if the slug doesn't match,
                 // camera_id is null/0. Try multiple matching strategies.
-                val filtered = filterAlertsForCamera(allAlerts, allAlerts)
+                val filtered = filterAlertsForCamera(fetchedAlerts, fetchedAlerts)
 
                 withContext(Dispatchers.Main) {
-                    adapter.submitList(filtered)
+                    // v1.5.10: keep the full list, expose only the
+                    // first page to the adapter. Subsequent pages
+                    // are appended on scroll via [loadMoreAlerts].
+                    // Note: [filterAlertsForCamera]'s strategy 3
+                    // returns the same list reference passed in —
+                    // copy first so we don't clear the data we're
+                    // about to addAll.
+                    val filteredCopy = filtered.toList()
+                    allAlerts.clear()
+                    allAlerts.addAll(filteredCopy)
+                    visibleAlerts.clear()
+                    visibleAlerts.addAll(filteredCopy.take(pageBatchSize))
+                    adapter.submitList(visibleAlerts.toList())
                     binding.progressBar.visibility = View.GONE
                     binding.recyclerView.visibility = View.VISIBLE
-                    binding.tvEmpty.visibility = if (filtered.isEmpty()) View.VISIBLE else View.GONE
-                    if (filtered.isEmpty()) {
+                    binding.tvEmpty.visibility = if (filteredCopy.isEmpty()) View.VISIBLE else View.GONE
+                    if (filteredCopy.isEmpty()) {
                         binding.tvEmpty.text = if (resp.isSuccess) {
                             if (allAlerts.isEmpty()) "暂无报警事件"
                             else "未找到此摄像头的报警（共 ${allAlerts.size} 条）"
@@ -123,6 +162,22 @@ class AlertsDialog(
                     binding.tvEmpty.text = "加载失败: ${e.message}"
                 }
             }
+        }
+    }
+
+    /**
+     * v1.5.10: append the next page of alerts to the visible list.
+     * Mirrors [RecordingsDialog.loadMoreRecordings]. No-op when
+     * we've already exposed everything from [allAlerts].
+     */
+    private fun loadMoreAlerts() {
+        if (isLoadingMore) return
+        if (visibleAlerts.size >= allAlerts.size) return
+        isLoadingMore = true
+        val nextEnd = (visibleAlerts.size + pageBatchSize).coerceAtMost(allAlerts.size)
+        visibleAlerts.addAll(allAlerts.subList(visibleAlerts.size, nextEnd))
+        adapter.submitList(visibleAlerts.toList()) {
+            isLoadingMore = false
         }
     }
 

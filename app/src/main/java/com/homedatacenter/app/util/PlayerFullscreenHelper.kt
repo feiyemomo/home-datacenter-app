@@ -83,6 +83,27 @@ class PlayerFullscreenHelper(
     // is typically false already (dialogs handle insets themselves).
     private var savedHostFitsSystemWindows: Boolean = false
     private var savedParentFitsSystemWindows: Boolean = false
+    // v1.5.10: v1.5.9 only disabled fitsSystemWindows on hostView +
+    // its direct parent, but CameraDetailActivity's playerView lives
+    // inside a ScrollView which is itself a child of the content view.
+    // The ScrollView's fitsSystemWindows=true applied the status bar
+    // inset as top padding EVEN when its child LinearLayout had
+    // fitsSystemWindows=false — leaving the player stuck below the
+    // status bar.
+    //
+    // Fix: walk the ENTIRE ancestor chain from hostView up to the
+    // android.R.id.content root, saving + clearing fitsSystemWindows
+    // AND topPadding on each one. This guarantees the player surface
+    // can render edge-to-edge under the (hidden) status bar.
+    private data class SavedInsetState(
+        val view: View,
+        val fitsSystemWindows: Boolean,
+        val paddingTop: Int,
+        val paddingBottom: Int,
+        val paddingLeft: Int,
+        val paddingRight: Int,
+    )
+    private val savedAncestorStates = mutableListOf<SavedInsetState>()
 
     /**
      * Attaches the fullscreen button click listener. Must be called
@@ -196,20 +217,53 @@ class PlayerFullscreenHelper(
                 }
             }
         }
-        // Disable fitsSystemWindows on the host chain while in
-        // fullscreen. We save the previous values to restore exactly.
+        // v1.5.10: walk the ENTIRE ancestor chain (hostView →
+        // parent → ... → android.R.id.content) and clear
+        // fitsSystemWindows + padding on each View. Without this, a
+        // ScrollView that sits between the player and the content
+        // root keeps its top padding (status bar inset) even when
+        // its child's fitsSystemWindows is false, leaving the player
+        // stuck below the status bar.
         if (isFullscreen) {
-            savedHostFitsSystemWindows = hostView.fitsSystemWindows
-            (hostView.parent as? View)?.let { p ->
-                savedParentFitsSystemWindows = p.fitsSystemWindows
-                p.fitsSystemWindows = false
+            savedAncestorStates.clear()
+            var node: View? = hostView
+            val rootView = hostView.rootView
+            while (node != null && node !== rootView) {
+                savedAncestorStates.add(
+                    SavedInsetState(
+                        view = node,
+                        fitsSystemWindows = node.fitsSystemWindows,
+                        paddingTop = node.paddingTop,
+                        paddingBottom = node.paddingBottom,
+                        paddingLeft = node.paddingLeft,
+                        paddingRight = node.paddingRight,
+                    )
+                )
+                node.fitsSystemWindows = false
+                node.setPadding(0, 0, 0, 0)
+                node = node.parent as? View
             }
-            hostView.fitsSystemWindows = false
+            // Also clear the root view's fitsSystemWindows + padding
+            // so the very top-level FrameLayout (android.R.id.content)
+            // doesn't reserve space for the status bar.
+            rootView.fitsSystemWindows = false
         } else {
-            hostView.fitsSystemWindows = savedHostFitsSystemWindows
-            (hostView.parent as? View)?.let { p ->
-                p.fitsSystemWindows = savedParentFitsSystemWindows
+            // Restore in reverse order so each view's parent is
+            // already restored when the view itself is restored
+            // (matters for layout pass ordering).
+            savedAncestorStates.asReversed().forEach { state ->
+                state.view.fitsSystemWindows = state.fitsSystemWindows
+                state.view.setPadding(
+                    state.paddingLeft,
+                    state.paddingTop,
+                    state.paddingRight,
+                    state.paddingBottom,
+                )
             }
+            savedAncestorStates.clear()
+            // Restore host's saved chain flag for compatibility with
+            // the old v1.5.9 fields (unused but kept for clarity).
+            hostView.fitsSystemWindows = savedHostFitsSystemWindows
         }
 
         // Hide/show non-player UI elements.
