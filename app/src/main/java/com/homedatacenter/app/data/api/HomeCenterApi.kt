@@ -157,6 +157,21 @@ interface HomeCenterApi {
     @retrofit2.http.Streaming
     suspend fun getWeather(@Header("Authorization") auth: String): okhttp3.ResponseBody
 
+    // --- In-app self-update (v1.6.11) ---
+
+    /** GET /api/v1/release/latest → UpdateInfo (version, size, url). */
+    @GET("api/v1/release/latest")
+    suspend fun getLatestRelease(@Header("Authorization") auth: String): ApiResponse
+
+    /**
+     * GET /api/v1/release/latest/apk → APK file stream. Returns
+     * ResponseBody so the caller can stream to disk without loading
+     * the whole 90MB APK into memory. Caller MUST close the body.
+     */
+    @GET("api/v1/release/latest/apk")
+    @retrofit2.http.Streaming
+    suspend fun downloadLatestApk(@Header("Authorization") auth: String): okhttp3.ResponseBody
+
     // --- Camera audio toggle (admin) ---
 
     @PUT("api/v1/cameras/{id}/audio")

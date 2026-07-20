@@ -44,6 +44,12 @@ class HomeCenterApp : Application() {
         // call warmWebRtc() after successful auth.
         if (!container.prefsManager.token.isNullOrBlank()) {
             container.warmWebRtc()
+            // v1.6.11: silent background check for a new APK version.
+            // Result is cached in AppContainer.cachedUpdateInfo —
+            // SettingsFragment reads it to show a "new version
+            // available" hint. We do NOT auto-prompt here (would
+            // interrupt the user on every cold start).
+            container.checkUpdateOnStartup()
         }
     }
 }
