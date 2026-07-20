@@ -137,6 +137,10 @@ class DashboardFragment : Fragment() {
         loadSystemStatus(onComplete = {
             if (_binding != null) binding.swipeRefresh.isRefreshing = false
         })
+        // v1.5.7: pre-fetch ICE config so the first WebRTC stream
+        // doesn't wait for an extra round-trip. Idempotent — the
+        // AppContainer skips if already cached.
+        (activity as? MainActivity)?.container?.prefetchIceConfig()
     }
 
     /**

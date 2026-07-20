@@ -13,7 +13,10 @@
         android:paddingStart="20dp"
         android:paddingEnd="20dp"
         android:paddingTop="20dp"
-        android:paddingBottom="20dp">
+        android:paddingBottom="96dp">
+        <!-- v1.5.7: paddingBottom=96dp (72dp BottomNav + 24dp breathing
+             room) so the logout button and version text aren't clipped
+             by the bottom navigation bar. -->
 
         <TextView
             android:layout_width="wrap_content"

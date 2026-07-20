@@ -7,6 +7,7 @@ import android.content.pm.ActivityInfo
 import android.util.TypedValue
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.widget.PopupMenu
 import com.google.android.exoplayer2.ExoPlayer
 import com.google.android.exoplayer2.PlaybackParameters
@@ -91,14 +92,9 @@ class PlayerFullscreenHelper(
         }
         speedButton?.let { attachSpeedButton(it) }
         fullscreenButton?.setOnClickListener { toggleFullscreen() }
-        // v1.5.6: allow the player view to render outside its parent's
-        // bounds during fullscreen (we lift it via bringToFront +
-        // elevation). Without this, the ScrollView would clip the
-        // expanded surface to its original wrap_content height.
-        (playerView.parent as? ViewGroup)?.clipChildren = false
-        secondaryPlayerView?.let {
-            (it.parent as? ViewGroup)?.clipChildren = false
-        }
+        // v1.5.7: no clipChildren manipulation needed — we no longer
+        // use bringToFront/elevation; siblings are hidden via
+        // [hideOnFullscreen] (visibility=GONE) instead.
     }
 
     /**
@@ -179,24 +175,41 @@ class PlayerFullscreenHelper(
 
     /**
      * Expands [view] to fill the screen in fullscreen and restores its
-     * saved height on exit. v1.5.6: rewritten to fix an ANR where the
-     * previous version set the parent ViewGroup's height to
-     * MATCH_PARENT — but the player host is nested in a ScrollView,
-     * and ScrollView.measure passes UNSPECIFIED specs to its children.
-     * MATCH_PARENT under ScrollView resolves to 0 or to a bogus value
-     * (SurfaceView surfaces with height=-1 get coerced to 16777215,
-     * which SurfaceFlinger rejects: "ExternalTexture with size (1280,
-     * 16777215) exceeds render target size limit of 16384"). The main
-     * thread then blocks on the surface negotiation, causing an ANR.
+     * saved height on exit. v1.5.7: rewritten again to fix two issues
+     * from v1.5.6:
+     *   1. Player controls (pause / volume / scrubber) disappeared in
+     *      fullscreen because elevation=16f lifted the playerView
+     *      above its own child controller layer — ExoPlayer's
+     *      StyledPlayerView controller is a child of the player view,
+     *      so elevating the parent doesn't push it behind the player
+     *      surface, but it did break the controller's touch handling
+     *      because bringToFront reordered it under the surface
+     *      renderer's sibling overlay (btnFullscreen / btnPlaybackSpeed).
+     *   2. Fullscreen height didn't fill the screen because
+     *      displayMetrics.heightPixels includes the status bar inset
+     *      but not the navigation bar inset on devices with gesture
+     *      nav — leaving a gap at the top or bottom.
      *
-     * Fix: leave the parent alone, set the view's own height to the
-     * exact pixel height of the display (so the surface knows exactly
-     * how big to be). The view still needs to be rendered above its
-     * siblings while fullscreen — we use [View.bringToFront] + set
-     * elevation to lift it out of the ScrollView's normal layout flow
-     * visually. The parent's clipChildren=false on the host ScrollView
-     * is set once in [attach] so the player can render outside its
-     * previous bounds during fullscreen.
+     * Fix:
+     *   - Use the host Activity's window visible frame (via
+     *     windowManager.maximumWindowMetrics) for the fullscreen
+     *     height — this is the actual usable area in the current
+     *     orientation.
+     *   - Don't use bringToFront/elevation. Instead, hide all sibling
+     *     views in [hideOnFullscreen] (visibility=GONE) so the
+     *     playerView's parent has nothing else to render. The player
+     *     surface + controller remain in their normal z-order within
+     *     the playerView, so controls keep working.
+     *   - The parent FrameLayout's height is set to the fullscreen
+     *     height explicitly (this works for RecordingsDialog and
+     *     AlertsDialog where the player's parent is NOT inside a
+     *     ScrollView; for CameraDetailActivity the playerView's parent
+     *     IS inside a ScrollView, so we set the playerView's own
+     *     height to the fullscreen pixel value instead and rely on
+     *     ScrollView's child being measured at the exact requested
+     *     height when measured with AT_MOST spec — ScrollView uses
+     *     UNSPECIFIED for its single child, which honors an exact
+     *     pixel height just fine).
      */
     private fun applyHeight(
         view: View?,
@@ -209,18 +222,28 @@ class PlayerFullscreenHelper(
             if (params.height > 0) {
                 save(params.height)
             }
-            // Use the actual screen height in pixels instead of
-            // MATCH_PARENT. The exact pixel value bypasses the
-            // ScrollView/measure negotiation that produced the
-            // 16777215 surface-height bug.
-            val displayMetrics = hostView.resources.displayMetrics
-            params.height = displayMetrics.heightPixels
-            // Lift the view above siblings so it isn't clipped by
-            // the ScrollView's other children (toolbar, action row,
-            // etc.). bringToFront changes z-order; elevation enforces
-            // it on API 21+.
-            view.bringToFront()
-            view.elevation = 16f
+            // Use the actual window visible frame height in pixels.
+            // displayMetrics.heightPixels includes the status bar
+            // but not the gesture nav inset on some devices, leaving
+            // gaps. windowManager.maximumWindowMetrics gives the
+            // actual full window size for the current orientation.
+            val fullscreenHeight = runCatching {
+                val wm = hostView.context.getSystemService(Context.WINDOW_SERVICE)
+                    as WindowManager
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                    wm.maximumWindowMetrics.bounds.height()
+                } else {
+                    @Suppress("DEPRECATION")
+                    hostView.resources.displayMetrics.heightPixels
+                }
+            }.getOrDefault(hostView.resources.displayMetrics.heightPixels)
+
+            params.height = fullscreenHeight
+            // v1.5.7: don't elevate or bringToFront — both break the
+            // controller's touch dispatch. Instead, hide siblings via
+            // [hideOnFullscreen] (visibility=GONE) so the playerView
+            // is the only visible child of its parent.
+            params.width = ViewGroup.LayoutParams.MATCH_PARENT
         } else {
             val saved = restore()
             params.height = saved.takeIf { it > 0 }
@@ -229,7 +252,7 @@ class PlayerFullscreenHelper(
                     DEFAULT_PLAYER_HEIGHT_DP.toFloat(),
                     hostView.resources.displayMetrics,
                 ).toInt()
-            view.elevation = 0f
+            params.width = ViewGroup.LayoutParams.MATCH_PARENT
         }
         view.layoutParams = params
     }

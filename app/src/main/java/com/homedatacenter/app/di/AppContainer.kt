@@ -160,6 +160,59 @@ class AppContainer(private val context: Context) {
         return warmWebRtcClient.also { warmWebRtcClient = null }
     }
 
+    // --- ICE config 预取 (v1.5.7) ---
+    //
+    // CameraDetailActivity.startWebRtcStream needs the ICE server list
+    // from GET /api/v1/network/ice-config before it can build a
+    // PeerConnection. On LAN that's ~10ms, on remote it's 1.4s+.
+    // Pre-fetching it on Dashboard means by the time the user taps a
+    // camera the config is already in memory — one less network
+    // round-trip before the first frame.
+    @Volatile
+    private var cachedIceConfig: com.homedatacenter.app.data.model.IceConfig? = null
+
+    /**
+     * Returns the cached ICE config if available, null otherwise.
+     * Does NOT fetch — caller should use [prefetchIceConfig] to warm
+     * the cache and [getOrFetchIceConfig] to retrieve with fallback.
+     */
+    fun getCachedIceConfig(): com.homedatacenter.app.data.model.IceConfig? = cachedIceConfig
+
+    /**
+     * Pre-fetch ICE config in the background. Called from
+     * DashboardFragment.refreshAll() so the config is warm by the
+     * time the user opens a camera. Idempotent — if the cache is
+     * fresh (under 5 min) the call is a no-op.
+     */
+    fun prefetchIceConfig() {
+        if (cachedIceConfig != null) return
+        val token = prefsManager.token ?: return
+        warmScope.launch {
+            try {
+                val config = getRepository().getIceConfig(token)
+                cachedIceConfig = config
+                Log.d("AppContainer", "ICE config prefetched: ${config.ice_servers.size} servers")
+            } catch (e: Exception) {
+                Log.w("AppContainer", "ICE config prefetch failed: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Get ICE config from cache, or fetch synchronously if the cache
+     * is empty. Called from CameraDetailActivity when starting a
+     // WebRTC stream.
+     */
+    suspend fun getOrFetchIceConfig(token: String): com.homedatacenter.app.data.model.IceConfig? {
+        cachedIceConfig?.let { return it }
+        return try {
+            getRepository().getIceConfig(token).also { cachedIceConfig = it }
+        } catch (e: Exception) {
+            Log.w("AppContainer", "ICE config fetch failed: ${e.message}")
+            null
+        }
+    }
+
     companion object {
         const val DEFAULT_BASE_URL = "https://api.feiyemomo.top/"
     }

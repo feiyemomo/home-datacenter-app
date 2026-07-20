@@ -296,9 +296,17 @@ class WebRtcClient(
 
         // Wait for ICE gathering — non-trickle ICE requires all
         // candidates to be in the local SDP before sending.
-        // Typical: ~200-500ms on LAN, up to 5s with STUN/TURN.
+        // Typical: ~200-500ms on LAN (host candidates only), up to
+        // 5s with STUN/TURN.
+        // v1.5.7: reduce timeout from 5s -> 2s so a stuck gathering
+        // phase fails faster and falls back to MP4. On LAN the
+        // host candidate is gathered in <100ms; 2s is still 4x
+        // headroom for STUN. If gathering times out we send the
+        // partial SDP anyway — backend will reject if it can't
+        // pick a candidate, and the listener's onError -> MP4
+        // fallback kicks in.
         val gatheringComplete = withContext(Dispatchers.IO) {
-            waitForIceGathering(pc, timeoutMs = 5_000)
+            waitForIceGathering(pc, timeoutMs = 2_000)
         }
         if (!gatheringComplete) {
             Log.w(TAG, "ICE gathering timed out; sending partial offer")
