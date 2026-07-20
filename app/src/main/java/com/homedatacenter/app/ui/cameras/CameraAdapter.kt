@@ -175,7 +175,25 @@ class CameraAdapter(
                         android.util.Log.w(TAG, "Frame HTTP ${response.code} for $url")
                         return@use null
                     }
-                    response.body?.byteStream()?.use(BitmapFactory::decodeStream)
+                    // v1.5.9: downsample the JPEG on decode so we
+                    // don't hold a 1920x1080 ARGB bitmap (~8 MB)
+                    // per camera in the LRU cache. The card renders
+                    // the thumbnail at 128x72dp (~ 256x144 px on
+                    // xhdpi), so a 480x270 bitmap is more than enough.
+                    // - inSampleSize=4 on a 1920x1080 source yields
+                    //   480x270, a 4x memory reduction.
+                    // - RGB_565 uses 2 bytes/pixel instead of 4 for
+                    //   ARGB_8888, halving memory again. The JPEG is
+                    //   already band-limited from go2rtc's encoder,
+                    //   so the color banding from 565 isn't visible
+                    //   at this thumbnail size.
+                    val opts = BitmapFactory.Options().apply {
+                        inSampleSize = 4
+                        inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
+                    }
+                    response.body?.byteStream()?.use {
+                        BitmapFactory.decodeStream(it, null, opts)
+                    }
                 }
             } catch (error: Exception) {
                 android.util.Log.w(TAG, "Frame fetch failed for $url: ${error.message}")

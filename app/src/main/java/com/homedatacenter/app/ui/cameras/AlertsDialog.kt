@@ -321,7 +321,18 @@ class AlertsDialog(
                 if (alert.thumbnail.isNotEmpty()) {
                     try {
                         val bytes = Base64.decode(alert.thumbnail, Base64.DEFAULT)
-                        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                        // v1.5.9: downsample base64 thumbnails the
+                        // same way as URL-fetched ones — alerts can
+                        // ship 1080p JPEGs in the base64 field, which
+                        // costs ~8 MB each in memory and stutters the
+                        // list scroll. inSampleSize=4 + RGB_565 gives
+                        // the same 8x memory reduction as the camera
+                        // list path.
+                        val opts = BitmapFactory.Options().apply {
+                            inSampleSize = 4
+                            inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
+                        }
+                        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
                         if (bitmap != null) {
                             binding.ivThumbnail.setImageBitmap(bitmap)
                             return
@@ -342,12 +353,21 @@ class AlertsDialog(
                         val req = Request.Builder().url(url).apply {
                             if (!token.isNullOrEmpty()) addHeader("Authorization", "Bearer $token")
                         }.build()
+                        // v1.5.9: same downsampling as the base64 path
+                        // and CameraAdapter — keeps the alert list
+                        // scroll smooth even with 50 alert thumbnails.
+                        val opts = BitmapFactory.Options().apply {
+                            inSampleSize = 4
+                            inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
+                        }
                         val bitmap = client.newCall(req).execute().use { resp ->
                             if (!resp.isSuccessful) {
                                 android.util.Log.w("AlertsDialog", "Thumbnail HTTP ${resp.code} for $url")
                                 return@use null
                             }
-                            resp.body?.byteStream()?.use { BitmapFactory.decodeStream(it) }
+                            resp.body?.byteStream()?.use {
+                                BitmapFactory.decodeStream(it, null, opts)
+                            }
                         }
                         withContext(Dispatchers.Main) {
                             binding.progressThumbnail.visibility = View.GONE

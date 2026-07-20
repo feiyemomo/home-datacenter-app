@@ -4,6 +4,7 @@
      clipped under the time/battery/icons. -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:fillViewport="true"
@@ -44,6 +45,29 @@
                 app:use_controller="true"
                 app:show_buffering="when_playing"
                 app:show_timeout="3000" />
+
+            <!-- v1.5.9: Stream strategy badge (top-left). Shows
+                 the active live transport so the user knows whether
+                 WebRTC, MP4 (fMP4 proxy), or HLS is feeding the
+                 player. Helps debug latency: a LAN session stuck on
+                 HLS means WebRTC signaling failed and the fallback
+                 kicked in. -->
+            <TextView
+                android:id="@+id/tvStreamStrategy"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="top|start"
+                android:layout_margin="6dp"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:paddingTop="3dp"
+                android:paddingBottom="3dp"
+                android:background="#80000000"
+                android:textColor="@android:color/white"
+                android:textSize="10sp"
+                android:textStyle="bold"
+                android:visibility="gone"
+                tools:ignore="HardcodedText" />
 
             <!-- WebRTC surface: shown when the live stream is delivered
                  via WebRtcClient (v1.5.3 primary path). Hidden when the

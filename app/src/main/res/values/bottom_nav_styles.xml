@@ -14,9 +14,13 @@
         <item name="android:paddingBottom">8dp</item>
     </style>
 
-    <!-- Pill shape: 16dp rounded corners on all sides. -->
+    <!-- v1.5.9: pill shape bumped from 16dp -> 50% cornerSize so the
+         active indicator is a full rounded capsule. Pairs with the
+         new rounded tab icons (ic_dashboard / ic_camera / ic_alerts
+         / ic_devices / ic_settings) which all use arc corners — the
+         capsule pill complements the softer silhouettes. -->
     <style name="BottomNavPillShape">
-        <item name="cornerSize">16dp</item>
+        <item name="cornerSize">50%</item>
         <item name="cornerFamily">rounded</item>
     </style>
 

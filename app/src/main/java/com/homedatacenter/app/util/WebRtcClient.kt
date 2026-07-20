@@ -249,7 +249,19 @@ class WebRtcClient(
                     MediaStreamTrack.AUDIO_TRACK_KIND -> {
                         // v1.5.8: capture the audio track so the
                         // control bar's mute button can toggle it.
-                        audioTrack = track as AudioTrack
+                        // v1.5.9: explicitly enable + max volume.
+                        // Some go2rtc SDP answers ship the audio
+                        // track in a "disabled" state — without
+                        // these calls the user sees video but no
+                        // audio. setEnabled(true) starts playout
+                        // through the AudioDeviceModule; setVolume
+                        // ensures the gain isn't zero (some
+                        // hardware defaults to 0 on recvonly
+                        // tracks until told otherwise).
+                        val at = track as AudioTrack
+                        audioTrack = at
+                        at.setEnabled(true)
+                        at.setVolume(1.0)
                     }
                 }
             }
