@@ -73,8 +73,14 @@ class PlayerFullscreenHelper(
 ) {
     private var isFullscreen: Boolean = false
     private var player: ExoPlayer? = null
-    private var savedPlayerHeightPx: Int = 0
-    private var savedSecondaryHeightPx: Int = 0
+    // v1.6.4: default to MATCH_PARENT so the first exit-fullscreen
+    // restores the player to fill its container (matches the typical
+    // XML layout_height="match_parent"). The previous default was 0,
+    // which caused applyHeight's `saved.takeIf { it > 0 }` fallback
+    // to kick in and force 200dp — the player appeared at the top of
+    // the container instead of filling it after exiting fullscreen.
+    private var savedPlayerHeightPx: Int = ViewGroup.LayoutParams.MATCH_PARENT
+    private var savedSecondaryHeightPx: Int = ViewGroup.LayoutParams.MATCH_PARENT
     // v1.5.9: remember each host view's fitsSystemWindows state so
     // we can restore it on exit. CameraDetailActivity's root ScrollView
     // sets fitsSystemWindows=true to push content below the status bar
@@ -326,9 +332,15 @@ class PlayerFullscreenHelper(
         if (view == null) return
         val params = view.layoutParams
         if (isFullscreen) {
-            if (params.height > 0) {
-                save(params.height)
-            }
+            // v1.6.4: save the original height regardless of value.
+            // The previous `if (params.height > 0) save(...)` skipped
+            // MATCH_PARENT (-1) and WRAP_CONTENT (-2), so on exit the
+            // restore path fell back to DEFAULT_PLAYER_HEIGHT_DP (200dp)
+            // — the playerView shrank to 200dp and sat at the top of
+            // the videoContainer, producing the "退出全屏后播放器在上面"
+            // effect the user reported. Now we save the raw value and
+            // restore it directly (could be -1, -2, or a positive px).
+            save(params.height)
             // v1.5.12: defer the actual height assignment to next
             // frame. We set MATCH_PARENT width now (works in any
             // orientation) but defer height — querying
@@ -342,13 +354,14 @@ class PlayerFullscreenHelper(
         } else {
             // Detach the layout listener (we're exiting fullscreen).
             view.removeOnLayoutChangeListener(layoutChangeListener)
+            // v1.6.4: restore the exact saved height. The saved value
+            // is whatever was stored at enter-fullscreen time — could
+            // be -1 (MATCH_PARENT, the typical XML default), -2
+            // (WRAP_CONTENT), or a positive pixel value. We no longer
+            // fall back to DEFAULT_PLAYER_HEIGHT_DP since that
+            // produced the wrong height for MATCH_PARENT layouts.
             val saved = restore()
-            params.height = saved.takeIf { it > 0 }
-                ?: TypedValue.applyDimension(
-                    TypedValue.COMPLEX_UNIT_DIP,
-                    DEFAULT_PLAYER_HEIGHT_DP.toFloat(),
-                    hostView.resources.displayMetrics,
-                ).toInt()
+            params.height = saved
             params.width = ViewGroup.LayoutParams.MATCH_PARENT
             view.layoutParams = params
         }
@@ -448,9 +461,13 @@ class PlayerFullscreenHelper(
         private const val DEFAULT_PLAYER_HEIGHT_DP = 200
 
         private fun formatSpeed(speed: Float): String {
-            return if (speed == 1.0f) "1x"
-            else if (speed < 1.0f) "${speed}x"
-            else "${speed.toInt()}x"
+            // v1.6.4 fix: the previous `else "${speed.toInt()}x"` branch
+            // truncated 1.5f to 1, so both 1.0x and 1.5x displayed as "1x"
+            // in the popup. Now we strip the trailing ".0" only for integer
+            // speeds (1.0 -> "1x", 2.0 -> "2x") and keep the fractional part
+            // for half-step speeds (0.5 -> "0.5x", 1.5 -> "1.5x").
+            return if (speed == speed.toInt().toFloat()) "${speed.toInt()}x"
+                   else "${speed}x"
         }
 
         /**

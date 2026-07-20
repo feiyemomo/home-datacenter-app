@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- v1.6.3: teal pill for low-motion-score chips (bottom 25%). -->
-<shape xmlns:android="http://schemas.android.com/apk/res/android"
-    android:shape="rectangle">
-    <solid android:color="#4DB6AC" />
-    <corners android:radius="14dp" />
-</shape>

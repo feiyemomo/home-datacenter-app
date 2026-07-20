@@ -3,7 +3,7 @@
 家庭数据中心 Android 客户端 — 一个用 **Kotlin + Jetpack Compose + ExoPlayer + WebRTC** 实现的家庭 NVR / IoT 控制台，配合 [home-datacenter](https://github.com/feiyemomo/home-datacenter) 后端使用，提供摄像头预览、WebRTC/MP4/HLS 直播（含音频）、录像回放、报警查看、设备状态、天气信息、局域网/远程自动切换和实时 WebSocket 推送。
 
 > 服务端项目：<https://github.com/feiyemomo/home-datacenter>
-> 当前版本：**v1.6.3**（versionCode 46）
+> 当前版本：**v1.6.4**（versionCode 47）
 
 ---
 
@@ -35,7 +35,7 @@
 | Compile SDK | 36 |
 | Java / Kotlin | 17 / 2.0 |
 | AGP | 9.2.1 |
-| 当前版本 | 1.6.3 (versionCode 46) |
+| 当前版本 | 1.6.4 (versionCode 47) |
 | 默认服务器 | `https://api.feiyemomo.top/`（远程） / `http://192.168.31.234:8088/`（局域网，自动探测） |
 
 App 通过 `(user_id, access_key)` 换取 JWT 后访问 `home-datacenter` 的 REST API 与 WebSocket。**BaseUrlResolver** 在启动时通过后台守护线程异步探测局域网 `http://192.168.31.234:8088/` 是否可达（TTFB ~10ms vs Cloudflare Tunnel 1.4s+），可达则切到局域网，否则走远程 Cloudflare Tunnel。启动调度采用指数退避重试（1.5s → 4s → 9s → 16s），覆盖真机「WiFi connected but not validated」窗口；同时附加 TCP socket 直连探测作为 OkHttp cleartext 拒绝时的兜底。NetworkChangeMonitor 注册 ConnectivityManager.NetworkCallback，在 WiFi/移动网络切换时立即触发 re-probe，无需等 5 分钟 TTL。摄像头直播走 go2rtc 暴露的 MP4（主）+ HLS（备），后端根据摄像头 `capabilities.audio` 在 go2rtc 流 URL 上自动追加 `#audio=aac` 启用音频转码，前端通过 ExoPlayer `volume` 控制静音/取消静音。
@@ -452,6 +452,7 @@ versionName = "1.4.3"
 - **默认进入整天模式（v1.6.1）**：`RecordingsDialog` 在 `loadRecordings` 完成后，如果没有 `initialTimestamp`，自动调用 `showDayPicker()` 弹出日期选择器——之前默认显示分条录像列表，整天播放是次要入口；按用户要求"以整天查看为先"调换位置，分条列表可通过取消日期选择器或点"返回列表"按钮进入。
 - **按天列表 UI（v1.6.2）**：`RecordingsDialog` 默认列表从 60s-bucket 分条视图改为按 LOCAL 日期分组的现代化卡片列表（`item_day_recording.xml` + `DayRecordingAdapter`）。每张卡片显示：大日期数字 + 月份/年 + 星期 + 录像段数 + 总时长 + 绿色"N 段"状态 chip。点击任意一张卡片直接进入当天的 24h ExoPlayer 播放列表。`groupRecordingsByDay` 函数把后端返回的 ~10k 条 60s buckets 按 LOCAL 日期分组聚合成 ~7 张卡片（最新在前）。删除了 v1.5.x 的 `RecordingAdapter`、`item_recording.xml` 的引用、`loadMoreRecordings` 分页逻辑、`showDayPicker` 日期选择器（不再需要——列表本身就是按天选）、`playRecording` 单段播放方法（整天播放是唯一入口）。报警跳转的 `pendingInitialTimestamp` 仍生效——点击报警后仍自动跳到对应日期的整天播放并 seek 到精确时刻。
 - **Motion chip 列表（v1.6.3）**：用户报告 v1.6.0-v1.6.2 的 SeekBar 红条方案"范围太大不精准"——根本问题是 24h/720px 时间轴上每像素 = 120s，红条永远只能显示成"宽 2-4px 的线段"，无法承载精确信息。v1.6.3 改用**报警事件 chip 列表**：在 SeekBar 上方新增 `HorizontalScrollView`，每个 motion range 渲染成一个 `item_motion_chip.xml` TextView，显示"HH:mm:ss · Ns"，点击即触发 `seekToMotionStart(chip)` 自动 seek ExoPlayer 到该 motion 起始时刻。chip 背景色编码 motion 强度：低（teal #4DB6AC）/ 中（amber #FFB300）/ 高（bright orange #FF7043）/ AI 检测（red #EF5350，`peak_objects > 0`）。chip 数量超过 200 时按 `motion_score` 排序保留 top 200，再按时间排序展示（避免繁忙日压垮 UI）。`AlertRangeOverlay` 同步优化：`minW` 从 2px 降到 1px（更精准），新增白色 tick dot 标记每个 range 起点，AI 检测段用更亮的 `#FF5252` 区分。后端 `MotionRange` 结构体返回预聚合字段 `start/end/duration/motion_score/segment_count/peak_objects`，客户端零现场计算；后端 60s TTL 缓存避免重复请求 Frigate 的 1-2s 慢查询。
+- **全天交互式时间轴（v1.6.4）**：v1.6.3 的 chip 滚动列表用户反馈"划 chip 还是很慢，且不直观，无法一屏内看完整天"。v1.6.4 把 `AlertRangeOverlay` 完全重写为**交互式全天时间轴**：每个 motion range 按时间比例（`startMs/maxMs * width`）渲染到屏幕宽度的对应 X 位置，**24 小时全部一屏可见，无需滚动**。自然 motion 密度（早晚活跃、午间安静）直接呈现为「两边密、中间疏」的形态，正是用户想要的视觉效果。4-tier 颜色编码（teal/amber/orange/red）按 `motion_score` 四分位 + `peak_objects > 0` 阈值判定，覆盖层从 2 色升级到 4 色。点击交互：触摸 slop 内的 tap 触发 `onSeekToRange` 回调，调到 `seekToMotionStartMs` 走与 SeekBar 同样的 `clipStartOffsets` 二分查找 seek 路径；sub-pixel range 的 hit-rect 扩展到 `touchSlop` 宽度（10s range 在 720px 屏幕上仅 ~0.7px 宽，扩展后保证可点）。Overlay 独立成行（28dp 高，在 SeekBar 之上），不再与 SeekBar 共享 FrameLayout，避免 tap/drag 手势冲突。配套修复：① 倍速按钮 `formatSpeed` 把 `1.5f` 截断为 `1` 显示成"1x"的 bug（同时与"1.0x"重复）—— 改为 `speed == speed.toInt().toFloat()` 判断整数速度；② 全屏退出后 `playerView` 高度从 `MATCH_PARENT` 被错误还原成 200dp（`savedPlayerHeightPx` 默认值 0 + `if (params.height > 0) save(...)` 跳过 -1 + fallback 到 `DEFAULT_PLAYER_HEIGHT_DP`）—— 改为始终保存原始 `height` 值，恢复时直接使用，默认值改为 `MATCH_PARENT`；③ `btnFullscreen` 从 `bottom|end` 移到 `top|end`（marginTop 54dp），`btnBack` 从 `bottom|center_horizontal` 移到 `center`（marginBottom 80dp），消除与底部 scrub bar 的重叠。
 - **报警推送精确跳转**：`AlertsFragment.onJumpCamera` / `DashboardFragment.jumpToCamerasWithAlert` 现在直接 `startActivity(CameraDetailActivity)`，Intent extra `EXTRA_INITIAL_TIMESTAMP = alert.startTime.toLong()`。`CameraDetailActivity.onCreate` 检测到该 extra 后 `post { showRecordings(initialTs) }`，`RecordingsDialog` 构造参数新增 `initialTimestamp: Long`，内部 `openDayForTimestamp` 锚定到报警所在日期并构建播放列表，`pendingAlertSeekMs` 标志在 ExoPlayer 首次 `STATE_READY` 时一次性 seek 到报警精确时刻（用 `clipStartOffsets.binarySearch` 计算目标 window 与位置）。失败回退到旧的「切换到 cameras tab」行为。DashboardFragment 的实时报警横幅也加了点击监听，复用同一 jump 逻辑。
 
 ### Surface 时序

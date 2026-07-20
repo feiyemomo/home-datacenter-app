@@ -633,6 +633,55 @@ AlertRangeOverlay 优化（辅助 chip 列表）：
 - 客户端：chip 解析 + 渲染 200 个 < 50ms，seek 命中 binarySearch O(log n)
 - 内存：每个 chip ~1KB（TextView），200 个 chip 总计 ~200KB
 
+#### v1.6.4：交互式全天时间轴（替换 chip 列表）+ 三处配套修复
+
+**问题诊断**：用户反馈 v1.6.3 chip 滚动列表"划 chip 还是太慢，且不直观，无法一屏内看完整天"。HorizontalScrollView 需要手动滑动才能看完，破坏了对一天整体活动分布的把握。同时用户还报告了三个 bug：① 倍速按钮"1x"重复显示（1.0x 和 1.5x 都显示成 1x）；② 全屏退出后 `playerView` 跑到顶部（应该填满容器）；③ 返回列表按钮与全屏按钮、chip 在底部重叠。
+
+**新方案**：把 `AlertRangeOverlay` 完全重写为**交互式全天时间轴**，删除 chip 滚动列表。每个 motion range 按时间比例（`startMs/maxMs * width`）渲染到屏幕宽度的对应 X 位置——**24 小时全部一屏可见，无需滚动**。自然 motion 密度（早晚活跃、午间安静）直接呈现为「两边密、中间疏」的形态，正是用户想要的视觉效果。
+
+新数据模型 `MotionRangeUi(startMs, endMs, tier)`：
+- `tier` 0..3 由 caller 在 `loadAlertRangesForDay` 里基于 `motion_score` 四分位 + `peak_objects > 0` 阈值判定，覆盖层从 v1.6.3 的 2 色（regular/AI）升级到 4 色（teal/amber/orange/red）。
+- 客户端不再维护平行 `aiIndices: Set<Int>`，每个 range 自带 tier。
+- API 改名：`setAlertRanges(ranges, aiIndices)` → `setRanges(ranges: List<MotionRangeUi>)`，`setMax(max: Long)` 仍负责时间→像素映射。
+
+UI 布局变更（`dialog_recordings.xml`）：
+- 删除 `motionChipScroller`（HorizontalScrollView）和 `motionChipContainer`（LinearLayout）
+- 删除 `FrameLayout`（SeekBar + overlay 共享容器），改用垂直 LinearLayout：`AlertRangeOverlay` 独立成行（28dp 高、6dp 下边距、`clickable=true` `focusable=true`），下方是 `SeekBar`
+- 这样 tap 不会与 SeekBar drag 手势冲突——overlay 行处理 tap，SeekBar 行处理 drag
+- `btnFullscreen` 从 `bottom|end` 移到 `top|end`（marginTop 54dp，与 `btnPlaybackSpeed` 同列向下堆叠）
+- `btnBack` 从 `bottom|center_horizontal` 移到 `center`（marginBottom 80dp）——利用用户指出的"中间空白"
+- 配套删除：`item_motion_chip.xml`、`bg_chip_motion_low.xml`、`bg_chip_motion_mid.xml`、`bg_chip_motion_high.xml`、`bg_chip_motion_alert.xml`、`MotionChip` data class、`populateMotionChips` 方法
+
+触摸处理：
+- `ACTION_DOWN` 记录 X/Y，返回 `true` 消费 DOWN 以接收 UP
+- `ACTION_UP` 检查位移 < `touchSlop`（约 8dp）才认定为 tap，调用 `findRangeAtX(x)` 找到被点击的 range
+- `findRangeAtX` 把每个 range 的 hit-rect 扩展：若 range 宽度 < `touchSlop`（10s range 在 720px 屏幕上仅 ~0.7px），以中点为中心扩展到 `touchSlop` 宽度，保证可点击
+- 命中后调 `onSeekToRange?.invoke(ranges[idx].startMs)`，由 `RecordingsDialog` 在 `playDayAsPlaylist` 末尾绑定到 `seekToMotionStartMs(startMs)`
+- `seekToMotionStartMs` 复用与 SeekBar `onStopTrackingTouch` 同样的 `clipStartOffsets.binarySearch(progress)` 路径
+
+绘制（`onDraw`）：
+- 先画 `trackPaint`（10% 白）背景轨道填满全宽，让用户看到完整 24h 范围
+- 每个 range 算 `left = startMs/maxMs * w`，`right = endMs/maxMs * w`，选 tierPaint 画 rect
+- 若 range 宽度 < `minW`（2dp），扩展到 `minW` 居中
+- 每个 range 右边画 1px separator（20% 黑），让相邻同色 range 不糊成一片
+
+Bug 修复 ① — 倍速按钮显示「1x」两次：
+- 原因：`formatSpeed` 的 `else "${speed.toInt()}x"` 分支把 1.5f 截断为 1，所以 1.0x 和 1.5x 都显示成"1x"
+- 修复：先判断 `speed == speed.toInt().toFloat()`，整数速度用 `"${speed.toInt()}x"`（1.0 → "1x"、2.0 → "2x"），非整数用 `"${speed}x"`（0.5 → "0.5x"、1.5 → "1.5x"）
+
+Bug 修复 ② — 全屏退出后 playerView 跑到顶部：
+- 原因三连环：
+  1. `savedPlayerHeightPx` 默认值是 0
+  2. 进入全屏时 `applyHeight` 守卫 `if (params.height > 0) save(params.height)` 跳过了 `MATCH_PARENT` (-1)，导致 `savedPlayerHeightPx` 永远保持 0
+  3. 退出全屏时 `restore()` 取 0，`saved.takeIf { it > 0 } ?: dp(DEFAULT_PLAYER_HEIGHT_DP=200)`，fallback 到 200dp——`playerView` 从 `MATCH_PARENT` 缩到 200dp，所以只显示在容器顶部
+- 修复三连环：
+  1. `savedPlayerHeightPx` / `savedSecondaryHeightPx` 默认值改为 `MATCH_PARENT`
+  2. `applyHeight` 移除 `if (params.height > 0)` 守卫，始终 `save(params.height)`（可能是 -1、-2 或正数）
+  3. `applyHeight` 的 exit 分支移除 `saved.takeIf { it > 0 } ?: ...` fallback，直接 `params.height = saved`
+
+Bug 修复 ③ — 按钮重叠：
+- 见上面"UI 布局变更"段——`btnFullscreen` 移到 `top|end`，`btnBack` 移到 `center`，远离底部的 `dayScrubBarContainer`（SeekBar + overlay）
+
 **报警推送精确跳转**：`AlertsFragment.onJumpCamera` / `DashboardFragment.jumpToCamerasWithAlert` 现在直接 `startActivity(CameraDetailActivity)`，Intent extra `EXTRA_INITIAL_TIMESTAMP = alert.startTime.toLong()`。流程：
 1. `CameraDetailActivity.onCreate` 检测到 `EXTRA_INITIAL_TIMESTAMP > 0`，`binding.root.post { showRecordings(initialTs) }`（post 是为了让 `startPlayback()` 的直播流先初始化完成，避免 surface 冲突）。
 2. `showRecordings(initialTs)` 构造 `RecordingsDialog(context, camera, container, initialTimestamp = initialTs)`。

@@ -136,69 +136,52 @@
                         android:fontFamily="monospace" />
                 </LinearLayout>
 
-                <!-- v1.6.3: horizontal motion-chip scroller. Each chip
-                     shows "HH:MM:SS · Ns" for one motion range; tapping
-                     seeks ExoPlayer to that range's start. Replaces the
-                     v1.6.0-v1.6.2 "drag SeekBar and hope to hit a red
-                     mark" UX — chips are big enough to tap reliably
-                     (~32dp tall) and labeled with the exact time so
-                     the user doesn't have to read the pixel-thin red
-                     bar. Populated by [RecordingsDialog.populateMotionChips]
-                     from the same motion-ranges response that feeds
-                     AlertRangeOverlay. Hidden when there are no
-                     motion ranges (e.g. empty day or fetch failed). -->
-                <HorizontalScrollView
-                    android:id="@+id/motionChipScroller"
+                <!-- v1.6.4: interactive motion timeline. Replaces the
+                     v1.6.3 HorizontalScrollView chip list (which was
+                     too slow to scroll and not intuitive). Each motion
+                     range is drawn at its time-proportional X position
+                     across the FULL screen width, so the entire 24h is
+                     visible at once — no scrolling. Natural motion
+                     density (mornings + evenings active, midday quiet)
+                     is immediately visible as "dense edges + sparse
+                     middle", which is exactly what the user asked for.
+
+                     Tapping a range seeks ExoPlayer to that range's
+                     start via the AlertRangeOverlay.onSeekToRange
+                     callback (wired in RecordingsDialog.kt).
+
+                     Laid out in its own row ABOVE the SeekBar (v1.6.3
+                     shared a FrameLayout with the SeekBar which caused
+                     touch conflicts — taps on a red range would either
+                     seek OR drag the SeekBar, never both). Now the
+                     overlay is its own 28dp-tall row, well within the
+                     recommended 48dp tap target when expanded by the
+                     touch-slop hit-rect logic in findRangeAtX.
+
+                     4-tier intensity coloring (teal/amber/orange/red)
+                     replaces the v1.6.3 "regular vs AI" two-color
+                     scheme — lets the user visually skim a busy day. -->
+                <com.homedatacenter.app.ui.cameras.AlertRangeOverlay
+                    android:id="@+id/alertOverlay"
+                    android:layout_width="match_parent"
+                    android:layout_height="28dp"
+                    android:layout_marginBottom="6dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:visibility="visible" />
+
+                <!-- v1.6.4: SeekBar in its own row (no longer sharing
+                     a FrameLayout with the overlay). Dragging the
+                     SeekBar no longer conflicts with tapping a motion
+                     range — the two gestures happen in separate rows. -->
+                <SeekBar
+                    android:id="@+id/daySeekBar"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:scrollbars="none"
-                    android:layout_marginBottom="4dp"
-                    android:visibility="gone">
-
-                    <LinearLayout
-                        android:id="@+id/motionChipContainer"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:orientation="horizontal"
-                        android:gravity="center_vertical"
-                        android:paddingStart="0dp"
-                        android:paddingEnd="0dp" />
-                </HorizontalScrollView>
-
-                <!-- v1.5.12: alert range overlay. Paints a red bar
-                     at the time positions where alerts occurred
-                     during the day being played. v1.5.14: wrapped
-                     SeekBar + overlay in a FrameLayout so the red
-                     segments sit ON TOP of the SeekBar's progress
-                     track (previously the overlay was a sibling
-                     below the SeekBar, making the red bar appear
-                     in a separate 6dp row that was easy to miss).
-                     The overlay does not intercept touches —
-                     dragging the SeekBar through an alert region
-                     still works. Populated by
-                     [RecordingsDialog.loadAlertRangesForDay]
-                     -> [AlertRangeOverlay.setAlertRanges]. -->
-                <FrameLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content">
-
-                    <SeekBar
-                        android:id="@+id/daySeekBar"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:maxHeight="4dp"
-                        android:progressTint="@android:color/white"
-                        android:progressBackgroundTint="#66FFFFFF"
-                        android:thumbTint="@android:color/white" />
-
-                    <com.homedatacenter.app.ui.cameras.AlertRangeOverlay
-                        android:id="@+id/alertOverlay"
-                        android:layout_width="match_parent"
-                        android:layout_height="12dp"
-                        android:layout_gravity="top"
-                        android:layout_marginTop="6dp"
-                        android:visibility="visible" />
-                </FrameLayout>
+                    android:maxHeight="4dp"
+                    android:progressTint="@android:color/white"
+                    android:progressBackgroundTint="#66FFFFFF"
+                    android:thumbTint="@android:color/white" />
             </LinearLayout>
 
             <!-- Standalone playback speed button. v1.5.3: moved out
@@ -229,14 +212,23 @@
                  by default; rather than override the controller layout
                  we provide our own overlay so the same button works in
                  all player hosts (RecordingsDialog, AlertsDialog, and
-                 CameraDetailActivity's WebRTC mode). -->
+                 CameraDetailActivity's WebRTC mode).
+
+                 v1.6.4: moved from bottom|end to top|end (stacked
+                 below btnPlaybackSpeed). The previous bottom|end
+                 placement overlapped with the dayScrubBarContainer
+                 (chips + SeekBar) at the bottom of the screen — the
+                 user reported "返回列表按钮，与全屏按钮、chip这些有
+                 重叠". Now both overlay buttons live in the top-right
+                 corner where they don't conflict with the scrub bar. -->
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnFullscreen"
                 style="@style/Widget.Material3.Button.IconButton"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_gravity="bottom|end"
-                android:layout_margin="6dp"
+                android:layout_gravity="top|end"
+                android:layout_marginTop="54dp"
+                android:layout_marginEnd="6dp"
                 android:background="#80000000"
                 android:minWidth="0dp"
                 android:minHeight="0dp"
@@ -253,13 +245,25 @@
                 android:visibility="gone"
                 android:indeterminateTint="@android:color/white" />
 
+            <!-- v1.6.4: "返回列表" moved from bottom|center_horizontal
+                 to center. The previous bottom placement overlapped
+                 with the dayScrubBarContainer's SeekBar + chips — the
+                 user reported "返回列表按钮，与全屏按钮、chip这些有
+                 重叠，而且非全屏时，中间有一大块空白可以利用".
+
+                 Now the button floats in the middle of the video area,
+                 using the empty space the user pointed out. We add a
+                 marginBottom to keep it above the dayScrubBarContainer
+                 (~80dp tall) so it stays visually clear of the scrub
+                 bar in portrait. In fullscreen the button is hidden
+                 by PlayerFullscreenHelper's hideOnFullscreen list. -->
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnBack"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="返回列表"
-                android:layout_gravity="bottom|center_horizontal"
-                android:layout_marginBottom="16dp"
+                android:layout_gravity="center"
+                android:layout_marginBottom="80dp"
                 app:cornerRadius="8dp" />
 
         </FrameLayout>
