@@ -110,6 +110,28 @@ class RecordingsDialog(
     // opens the dialog with initialTimestamp; cleared after the first
     // STATE_READY so subsequent state changes don't re-seek.
     private var pendingAlertSeekMs: Long = 0L
+    // v1.6.1: deferred initial action. The dialog can be opened in
+    // three modes:
+    //   1. With initialTimestamp > 0 (alert click) — auto-open the
+    //      day playlist for that timestamp and seek to the exact
+    //      moment after ExoPlayer reports STATE_READY.
+    //   2. With initialTimestamp == 0 (manual "查看录像" button) —
+    //      auto-open the day picker so the user picks a date and
+    //      starts the full-day playlist mode (v1.6.1: this is now
+    //      the default entry per user request "以整天查看为先").
+    //   3. Falls back to the per-clip recording list when the user
+    //      cancels the day picker or the recordings list is empty.
+    //
+    // Either action MUST run AFTER [loadRecordings] has populated
+    // [allRecordings] — otherwise [playDayAsPlaylist]'s filter step
+    // finds nothing and shows "该日期无录像" even though recordings
+    // exist for that day. v1.6.0 had this race: it posted the call
+    // via binding.root.post which executes on the next frame, but
+    // the network request typically takes 100-500ms — the post
+    // always lost the race. v1.6.1 defers the action to the
+    // loadRecordings completion callback on the main thread.
+    private var pendingInitialTimestamp: Long = 0L
+    private var pendingAutoOpenDayPicker: Boolean = false
     // v1.6.0: motion ranges in day-relative ms (0..dayTotalMs). Cached
     // from [loadAlertRangesForDay] so the SeekBar snap logic in
     // [onStopTrackingTouch] can find the nearest range edge without
@@ -122,7 +144,16 @@ class RecordingsDialog(
     // edge. 30s is roughly the smallest visible seek granularity on
     // a 24h timeline at 720px width (24h / 720px = 120s/px, so 30s is
     // well within a single pixel — the snap is felt, not seen).
-    private val motionSnapRadiusMs: Long = 30_000L
+    // v1.6.1: 30s -> 120s. The v1.6.0 30s radius was ~0.25px on a
+    // 720px-wide 24h timeline — the user reported "没感受到吸附效果"
+    // because their finger release position was almost never within
+    // 0.25px of a range edge. 120s = ~1px, which matches the user's
+    // practical release precision (the thumb is ~12px wide; releasing
+    // at a given screen position is good to ~2-3px = 240-360s).
+    // 120s is a good compromise: noticeable when the user wants to
+    // seek near a motion edge, but not so large that it yanks the
+    // thumb to a far-away range when the user just wanted to scrub.
+    private val motionSnapRadiusMs: Long = 120_000L
     private val daySeekUpdateRunnable = object : Runnable {
         override fun run() {
             val p = player ?: return
@@ -159,15 +190,21 @@ class RecordingsDialog(
         // asked for). Implementation lives in [playDayAsPlaylist].
         binding.btnPlayDay.setOnClickListener { showDayPicker() }
 
-        // v1.6.0: if opened with an initialTimestamp (alert click),
-        // auto-open the day picker for that date and seek to the
-        // matching clip+offset after the playlist loads. We post the
-        // call so loadRecordings() runs first (otherwise the recording
-        // list is empty when the picker fires).
+        // v1.6.1: defer the initial action to [loadRecordings]
+        // completion. v1.6.0 used binding.root.post which races with
+        // the network request — see [pendingInitialTimestamp] doc
+        // for the full story. Two modes:
+        //   - initialTimestamp > 0 (alert click): auto-open the day
+        //     playlist for that timestamp + seek to exact moment
+        //   - initialTimestamp == 0 (manual open): auto-open day
+        //     picker per user request "以整天查看为先" (v1.6.1 makes
+        //     full-day playback the default entry; the per-clip list
+        //     is reachable via the "返回列表" button or by canceling
+        //     the picker).
         if (initialTimestamp > 0L) {
-            binding.root.post {
-                openDayForTimestamp(initialTimestamp)
-            }
+            pendingInitialTimestamp = initialTimestamp
+        } else {
+            pendingAutoOpenDayPicker = true
         }
     }
 
@@ -240,6 +277,22 @@ class RecordingsDialog(
                     // when there's at least one recording to play.
                     binding.btnPlayDay.visibility =
                         if (recordings.isNotEmpty()) View.VISIBLE else View.GONE
+
+                    // v1.6.1: now that allRecordings is populated,
+                    // fire whichever deferred action was requested
+                    // in [init]. See [pendingInitialTimestamp] doc
+                    // for why this MUST happen here (after the network
+                    // call) rather than in a binding.root.post.
+                    if (recordings.isNotEmpty()) {
+                        if (pendingInitialTimestamp > 0L) {
+                            val ts = pendingInitialTimestamp
+                            pendingInitialTimestamp = 0L
+                            openDayForTimestamp(ts)
+                        } else if (pendingAutoOpenDayPicker) {
+                            pendingAutoOpenDayPicker = false
+                            showDayPicker()
+                        }
+                    }
                 }
             } catch (e: Exception) {
                 android.util.Log.e("RecordingsDialog", "Exception loading recordings: ${e.message}", e)

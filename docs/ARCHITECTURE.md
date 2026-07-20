@@ -547,20 +547,29 @@ private fun resolveHlsUrl(camera: Camera): String {
 - 拖动进度条用 `Player.Listener.onPositionDiscontinuity` 同步
 - 关闭对话框时 `player.release()`
 
-#### v1.6.0：报警标红 + 进度条吸附 + 报警精确跳转
+#### v1.6.0 / v1.6.1：报警标红 + 进度条吸附 + 报警精确跳转
 
-**报警时段标红（motion-ranges）**：`RecordingsDialog.loadAlertRangesForDay` 改用后端新增的 `GET /api/v1/cameras/{id}/motion-ranges?after&before` 端点替代旧的 `/api/v1/cameras/alerts`。**根本原因**：alerts 端点仅在 Frigate AI 检测到 person/car 等目标时生成事件；对于普通家庭摄像头，AI 阈值常常未被跨过，导致 alerts 列表为空，SeekBar 上无任何红标——即使录像中明显有大量 motion。motion-ranges 端点直接查询 Frigate 录制段的 `motion` 字段（每段 10s，含 motion>0 即视为「有动静」），合并相邻段（间隙 ≤10s 视为连续），返回所有像素级活动时间窗口。响应 JSON 为 `{"ranges": [[startUnix, endUnix], ...], "total": N}` 裸数组，客户端用 `kotlinx.serialization.json.JsonArray` 手动解析（`List<Pair<Long,Long>>` 无法用 `@Serializable` 自动解码裸数组）。红标渲染仍由 [AlertRangeOverlay.kt](../app/src/main/java/com/homedatacenter/app/ui/cameras/AlertRangeOverlay.kt) 完成，最小 4px 宽度保证短事件可见。
+**报警时段标红（motion-ranges）**：`RecordingsDialog.loadAlertRangesForDay` 改用后端新增的 `GET /api/v1/cameras/{id}/motion-ranges?after&before` 端点替代旧的 `/api/v1/cameras/alerts`。**根本原因**：alerts 端点仅在 Frigate AI 检测到 person/car 等目标时生成事件；对于普通家庭摄像头，AI 阈值常常未被跨过，导致 alerts 列表为空，SeekBar 上无任何红标——即使录像中明显有大量 motion。motion-ranges 端点直接查询 Frigate 录制段的 `motion` 字段（每段 10s，含 motion>0 即视为「有动静」），返回所有像素级活动时间窗口。响应 JSON 为 `{"ranges": [[startUnix, endUnix], ...], "total": N}` 裸数组，客户端用 `kotlinx.serialization.json.JsonArray` 手动解析（`List<Pair<Long,Long>>` 无法用 `@Serializable` 自动解码裸数组）。红标渲染仍由 [AlertRangeOverlay.kt](../app/src/main/java/com/homedatacenter/app/ui/cameras/AlertRangeOverlay.kt) 完成。
 
-**进度条吸附（snap-to-range）**：`RecordingsDialog.onStopTrackingTouch` 在用户释放 SeekBar 时调用 `snapProgressToRangeEdge(progress)`，检查 `motionRangesRelative` 缓存中最近的 motion range 边缘；若距离 < `motionSnapRadiusMs = 30_000ms`（30秒）则自动吸附到该边缘。24h 时间轴在 720px 屏幕上每像素约 120s，30s 远在一个像素内——用户感觉进度条「啪」一下吸到红标边缘，无需像素级微调即可跳到 motion 起始或结束点。吸附后的 `progress` 同步更新 SeekBar 视觉与位置标签，并作为 seek 目标传给 ExoPlayer。`motionRangesRelative` 在 `loadAlertRangesForDay` 完成时缓存，避免每次释放都重新拉取。
+**v1.6.1 修复 1：标红太宽**。v1.6.0 后端 `ListMotionRanges` 用 `mergeGapSeconds=10` 合并相邻 motion 段，导致一次持续几分钟的 motion 在 24h 时间线上显示成一条粗红条，用户报告"标红太宽了"。v1.6.1 把 `mergeGapSeconds` 改为 0（不合并），每个 10s Frigate 段独立显示——24h 内约 750 段独立细红线（v1.6.0 仅 77 段合并块），用户能看到 motion 的精确起止时刻。客户端同步把 `AlertRangeOverlay` 的 `minW` 从 4px 改为 2px，避免大量独立段挤在一起看起来仍像一片红墙。
+
+**v1.6.1 修复 2：吸附无感**。v1.6.0 的 `motionSnapRadiusMs = 30_000ms`（30秒）在 24h/720px 屏幕上仅 0.25 像素——用户拖动 SeekBar 释放时手指位置几乎不可能恰好在 0.25px 内，因此完全感受不到吸附效果。v1.6.1 把半径改为 `120_000ms`（120秒，约 1px），匹配用户实际的手指释放精度（thumb ~12px，释放精度 ~2-3px = 240-360s）。120s 让用户在拖动到 motion 附近时能明显感受到"咬住"边缘的效果，但不会过度吸附到远处的 range。
+
+**进度条吸附（snap-to-range）**：`RecordingsDialog.onStopTrackingTouch` 在用户释放 SeekBar 时调用 `snapProgressToRangeEdge(progress)`，检查 `motionRangesRelative` 缓存中最近的 motion range 边缘；若距离 < `motionSnapRadiusMs`（v1.6.1：120s）则自动吸附到该边缘。吸附后的 `progress` 同步更新 SeekBar 视觉与位置标签，并作为 seek 目标传给 ExoPlayer。`motionRangesRelative` 在 `loadAlertRangesForDay` 完成时缓存，避免每次释放都重新拉取。
+
+**v1.6.1 修复 3：报警跳转时序竞态**。v1.6.0 在 `RecordingsDialog.init` 中用 `binding.root.post { openDayForTimestamp(initialTimestamp) }` 试图让 `loadRecordings()` 先跑——但 `binding.root.post` 只在下一帧执行（~16ms 后），而 `loadRecordings()` 是网络请求（100-500ms）。post **总是**比网络请求先完成，此时 `allRecordings` 还是空，`playDayAsPlaylist` 过滤出空列表并显示"该日期无录像"。v1.6.1 引入 `pendingInitialTimestamp` 和 `pendingAutoOpenDayPicker` 两个 flag，在 `loadRecordings` 的 `withContext(Dispatchers.Main)` 完成回调里检查 flag 并触发对应动作，从根本上消除竞态。
+
+**v1.6.1 修复 4：默认进入整天模式**。按用户要求"以整天查看为先"，v1.6.1 在 `loadRecordings` 完成后，如果录像非空且没有 `initialTimestamp`，自动调用 `showDayPicker()` 弹出日期选择器。v1.6.0 默认显示分条录像列表、整天播放是 toolbar 右上的次要入口；v1.6.1 调换位置——默认进入整天模式，分条列表可通过取消日期选择器或点击"返回列表"按钮进入。
 
 **报警推送精确跳转**：`AlertsFragment.onJumpCamera` / `DashboardFragment.jumpToCamerasWithAlert` 现在直接 `startActivity(CameraDetailActivity)`，Intent extra `EXTRA_INITIAL_TIMESTAMP = alert.startTime.toLong()`。流程：
 1. `CameraDetailActivity.onCreate` 检测到 `EXTRA_INITIAL_TIMESTAMP > 0`，`binding.root.post { showRecordings(initialTs) }`（post 是为了让 `startPlayback()` 的直播流先初始化完成，避免 surface 冲突）。
 2. `showRecordings(initialTs)` 构造 `RecordingsDialog(context, camera, container, initialTimestamp = initialTs)`。
-3. `RecordingsDialog.init` 检测到 `initialTimestamp > 0`，`binding.root.post { openDayForTimestamp(initialTimestamp) }`（post 让 `loadRecordings()` 先跑，否则录像列表为空时 day picker 无法构建播放列表）。
-4. `openDayForTimestamp` 计算报警所在 LOCAL 日期（00:00），调用 `playDayAsPlaylist(dayCal, seekToMs = initialTimestamp * 1000)`。
-5. `playDayAsPlaylist` 构建 24h 播放列表，注册 `Player.Listener`，`if (seekToMs > 0L) pendingAlertSeekMs = seekToMs`。
-6. ExoPlayer 首次 `STATE_READY` 时 listener 触发：`progress = (seekMs - dayStartLocalMillis).coerceIn(0, dayTotalMs)`，用 `clipStartOffsets.binarySearch(progress)` 找到目标 window，`seekTo(window, position)`。
-7. 同步 SeekBar 视觉 + 位置标签到报警时刻。
+3. `RecordingsDialog.init` 设置 `pendingInitialTimestamp = initialTimestamp`（**v1.6.1：不再用 `binding.root.post`，改在 `loadRecordings` 完成回调中触发**）。
+4. `loadRecordings` 的主线程回调检查 `pendingInitialTimestamp > 0L`，调用 `openDayForTimestamp(initialTimestamp)` 并清零 flag。
+5. `openDayForTimestamp` 计算报警所在 LOCAL 日期（00:00），调用 `playDayAsPlaylist(dayCal, seekToMs = initialTimestamp * 1000)`。
+6. `playDayAsPlaylist` 构建 24h 播放列表，注册 `Player.Listener`，`if (seekToMs > 0L) pendingAlertSeekMs = seekToMs`。
+7. ExoPlayer 首次 `STATE_READY` 时 listener 触发：`progress = (seekMs - dayStartLocalMillis).coerceIn(0, dayTotalMs)`，用 `clipStartOffsets.binarySearch(progress)` 找到目标 window，`seekTo(window, position)`。
+8. 同步 SeekBar 视觉 + 位置标签到报警时刻。
 
 失败回退：找不到匹配 camera、网络异常时显示 toast 并回退到旧的「切换到 cameras tab」行为。DashboardFragment 的实时报警横幅也注册了点击监听，复用 `jumpToCamerasWithAlert` 跳转逻辑，并通过 `lastLiveAlert` 缓存最近一次报警以避免横幅自动消失后点击跳到过期时间戳。
 

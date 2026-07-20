@@ -83,7 +83,14 @@ class AlertRangeOverlay @JvmOverloads constructor(
         // though logcat showed "7 ranges for camera 1". Now each
         // range is drawn with at least minW pixels so even a 5s
         // alert shows up as a visible thin red line on the timeline.
-        val minW = 4f
+        // v1.6.1: minW 4 -> 2. v1.6.0 used 4px which combined with
+        // the backend's segment-merging produced thick red bars that
+        // the user reported as "标红太宽了". With mergeGapSeconds=0
+        // on the backend (v1.6.1), each 10s Frigate segment is its
+        // own range; 2px per range keeps them visible without making
+        // the timeline look like a solid red wall when motion is
+        // sustained (e.g. 60s of motion = 6 segments = 12px total).
+        val minW = 2f
         for ((startMs, endMs) in alertRanges) {
             val startRatio = (startMs.toFloat() / maxMs).coerceIn(0f, 1f)
             val endRatio = (endMs.toFloat() / maxMs).coerceIn(0f, 1f)
