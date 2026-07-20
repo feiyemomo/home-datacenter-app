@@ -633,54 +633,52 @@ AlertRangeOverlay 优化（辅助 chip 列表）：
 - 客户端：chip 解析 + 渲染 200 个 < 50ms，seek 命中 binarySearch O(log n)
 - 内存：每个 chip ~1KB（TextView），200 个 chip 总计 ~200KB
 
-#### v1.6.4：交互式全天时间轴（替换 chip 列表）+ 三处配套修复
+#### v1.6.4：Fisheye chip 滚动 + 全屏点击收起插件 + 倍速 bug 修复
 
-**问题诊断**：用户反馈 v1.6.3 chip 滚动列表"划 chip 还是太慢，且不直观，无法一屏内看完整天"。HorizontalScrollView 需要手动滑动才能看完，破坏了对一天整体活动分布的把握。同时用户还报告了三个 bug：① 倍速按钮"1x"重复显示（1.0x 和 1.5x 都显示成 1x）；② 全屏退出后 `playerView` 跑到顶部（应该填满容器）；③ 返回列表按钮与全屏按钮、chip 在底部重叠。
+**问题诊断**：用户反馈 v1.6.3 chip 滚动列表"划 chip 还是太慢，且不直观"，并提出新的设计方案——「在类似与原有 chip 的基础上，越靠近两边的 chip 越小，靠近中间的类似于原有的 chip，整个 chip 在滑动中不断变化」。同时要求：「正常未全屏时，播放器就放在顶部，然后中部放 chip，其他插件你合理布局即可」；「全屏时，点击播放器收起进度条等的插件，再次点击是在展现」。最后报告倍速按钮有两个「1x」（1.5x 被截断显示成 1x）。
 
-**新方案**：把 `AlertRangeOverlay` 完全重写为**交互式全天时间轴**，删除 chip 滚动列表。每个 motion range 按时间比例（`startMs/maxMs * width`）渲染到屏幕宽度的对应 X 位置——**24 小时全部一屏可见，无需滚动**。自然 motion 密度（早晚活跃、午间安静）直接呈现为「两边密、中间疏」的形态，正是用户想要的视觉效果。
+**方案**：保留 v1.6.3 的 chip + bg_chip_motion_* 资源结构（git checkout 8996ffa 恢复基线），新增 `FisheyeChipScroller` 自定义 HorizontalScrollView 在 `onScrollChanged` / `onLayout` 中给每个 chip 子 view 应用 `scaleX`/`scaleY`/`alpha` 变换。
 
-新数据模型 `MotionRangeUi(startMs, endMs, tier)`：
-- `tier` 0..3 由 caller 在 `loadAlertRangesForDay` 里基于 `motion_score` 四分位 + `peak_objects > 0` 阈值判定，覆盖层从 v1.6.3 的 2 色（regular/AI）升级到 4 色（teal/amber/orange/red）。
-- 客户端不再维护平行 `aiIndices: Set<Int>`，每个 range 自带 tier。
-- API 改名：`setAlertRanges(ranges, aiIndices)` → `setRanges(ranges: List<MotionRangeUi>)`，`setMax(max: Long)` 仍负责时间→像素映射。
+`FisheyeChipScroller` 关键实现：
+- `minScale = 0.55f`、`fullScaleBandPx = 96`（约 1 chip 宽）
+- `applyFisheyeScales()` 遍历 `motionChipContainer` 的子 view：
+  - `dx = |chipCenterX - viewportCenterX|`
+  - 若 `dx <= fullScaleBandPx`：`scale = 1.0f`、`alpha = 1.0f`（中心带，全大小）
+  - 否则：`scale = lerp(1.0, 0.55, (dx - band) / (viewportHalfWidth - band))`、`alpha = lerp(1.0, 0.5, t)`（线性衰减到边缘）
+- 仅当 `scaleX != scale` 时才 set（避免每帧触发无效 layout）
+- GPU 开销极低（仅 transform），200 chip 也能 60fps
 
-UI 布局变更（`dialog_recordings.xml`）：
-- 删除 `motionChipScroller`（HorizontalScrollView）和 `motionChipContainer`（LinearLayout）
-- 删除 `FrameLayout`（SeekBar + overlay 共享容器），改用垂直 LinearLayout：`AlertRangeOverlay` 独立成行（28dp 高、6dp 下边距、`clickable=true` `focusable=true`），下方是 `SeekBar`
-- 这样 tap 不会与 SeekBar drag 手势冲突——overlay 行处理 tap，SeekBar 行处理 drag
-- `btnFullscreen` 从 `bottom|end` 移到 `top|end`（marginTop 54dp，与 `btnPlaybackSpeed` 同列向下堆叠）
-- `btnBack` 从 `bottom|center_horizontal` 移到 `center`（marginBottom 80dp）——利用用户指出的"中间空白"
-- 配套删除：`item_motion_chip.xml`、`bg_chip_motion_low.xml`、`bg_chip_motion_mid.xml`、`bg_chip_motion_high.xml`、`bg_chip_motion_alert.xml`、`MotionChip` data class、`populateMotionChips` 方法
+UI 布局重构（`dialog_recordings.xml`）：
+- videoContainer 内改为垂直 LinearLayout
+- 顶部 `playerHostFrame`（FrameLayout，固定 200dp 高）：内含 `StyledPlayerView` + `btnPlaybackSpeed` (top|end margin 6dp) + `btnFullscreen` (top|end marginTop 54dp) + `btnBack` (bottom|center_horizontal marginBottom 6dp) + `progressPlayer` (center)
+- 中部 `FisheyeChipScroller`（layout_weight=1，占满剩余空间）
+- 底部 `dayScrubBarContainer`（vertical LinearLayout，含 position/duration TextView 行 + SeekBar + AlertRangeOverlay 的 FrameLayout）
+- 这样消除 v1.6.3 中 btnFullscreen/btnBack 与底部 scrub bar 的重叠
 
-触摸处理：
-- `ACTION_DOWN` 记录 X/Y，返回 `true` 消费 DOWN 以接收 UP
-- `ACTION_UP` 检查位移 < `touchSlop`（约 8dp）才认定为 tap，调用 `findRangeAtX(x)` 找到被点击的 range
-- `findRangeAtX` 把每个 range 的 hit-rect 扩展：若 range 宽度 < `touchSlop`（10s range 在 720px 屏幕上仅 ~0.7px），以中点为中心扩展到 `touchSlop` 宽度，保证可点击
-- 命中后调 `onSeekToRange?.invoke(ranges[idx].startMs)`，由 `RecordingsDialog` 在 `playDayAsPlaylist` 末尾绑定到 `seekToMotionStartMs(startMs)`
-- `seekToMotionStartMs` 复用与 SeekBar `onStopTrackingTouch` 同样的 `clipStartOffsets.binarySearch(progress)` 路径
+`PlayerFullscreenHelper` 新增 `controllerSyncViews: List<View>` 参数：
+- 典型成员：`dayScrubBarContainer` + `motionChipScroller` + `btnBack` + `btnPlaybackSpeed`
+- `attach()` 中如果 `controllerSyncViews.isNotEmpty()`，给 `playerView` 设 `OnClickListener`：
+  ```kotlin
+  playerView.setOnClickListener {
+      if (!isFullscreen) return@setOnClickListener
+      val target = if (controllerOverlayVisible) GONE else VISIBLE
+      controllerSyncViews.forEach { v -> if (v.visibility != target) v.visibility = target }
+      controllerOverlayVisible = !controllerOverlayVisible
+  }
+  ```
+- `applyFullscreenState()` 中：
+  - `hideOnFullscreen` views（toolbar）始终 GONE in fullscreen
+  - `controllerSyncViews` views 在进入全屏时按 `controllerOverlayVisible` 决定（默认 true → VISIBLE）；退出全屏时强制 VISIBLE
+- 不依赖 ExoPlayer controller visibility listener（因 host 用 `useController=false`，listener 不会触发）
+- 用 `controllerOverlayVisible` 布尔字段 latch 状态，让用户多次进入/退出全屏时记住偏好
 
-绘制（`onDraw`）：
-- 先画 `trackPaint`（10% 白）背景轨道填满全宽，让用户看到完整 24h 范围
-- 每个 range 算 `left = startMs/maxMs * w`，`right = endMs/maxMs * w`，选 tierPaint 画 rect
-- 若 range 宽度 < `minW`（2dp），扩展到 `minW` 居中
-- 每个 range 右边画 1px separator（20% 黑），让相邻同色 range 不糊成一片
+`playerHostFrame` 作为 `secondaryPlayerView` 传入 `PlayerFullscreenHelper`，全屏时 `applyHeight` 也把它设为 MATCH_PARENT（否则 playerView 即使 MATCH_PARENT 也会被 200dp 父容器裁剪）。
 
-Bug 修复 ① — 倍速按钮显示「1x」两次：
-- 原因：`formatSpeed` 的 `else "${speed.toInt()}x"` 分支把 1.5f 截断为 1，所以 1.0x 和 1.5x 都显示成"1x"
-- 修复：先判断 `speed == speed.toInt().toFloat()`，整数速度用 `"${speed.toInt()}x"`（1.0 → "1x"、2.0 → "2x"），非整数用 `"${speed}x"`（0.5 → "0.5x"、1.5 → "1.5x"）
+Bug 修复 — 倍速按钮显示「1x」两次：
+- 原因：`formatSpeed` 的 `else "${speed.toInt()}x"` 分支把 1.5f 截断为 1
+- 修复：先判断 `speed == speed.toInt().toFloat()`，整数速度用 `"${speed.toInt()}x"`，非整数用 `"${speed}x"`
 
-Bug 修复 ② — 全屏退出后 playerView 跑到顶部：
-- 原因三连环：
-  1. `savedPlayerHeightPx` 默认值是 0
-  2. 进入全屏时 `applyHeight` 守卫 `if (params.height > 0) save(params.height)` 跳过了 `MATCH_PARENT` (-1)，导致 `savedPlayerHeightPx` 永远保持 0
-  3. 退出全屏时 `restore()` 取 0，`saved.takeIf { it > 0 } ?: dp(DEFAULT_PLAYER_HEIGHT_DP=200)`，fallback 到 200dp——`playerView` 从 `MATCH_PARENT` 缩到 200dp，所以只显示在容器顶部
-- 修复三连环：
-  1. `savedPlayerHeightPx` / `savedSecondaryHeightPx` 默认值改为 `MATCH_PARENT`
-  2. `applyHeight` 移除 `if (params.height > 0)` 守卫，始终 `save(params.height)`（可能是 -1、-2 或正数）
-  3. `applyHeight` 的 exit 分支移除 `saved.takeIf { it > 0 } ?: ...` fallback，直接 `params.height = saved`
-
-Bug 修复 ③ — 按钮重叠：
-- 见上面"UI 布局变更"段——`btnFullscreen` 移到 `top|end`，`btnBack` 移到 `center`，远离底部的 `dayScrubBarContainer`（SeekBar + overlay）
+AlertsDialog 不传 `controllerSyncViews`（默认空列表），`attach()` 中不注册 OnClickListener，行为与 v1.6.3 一致。
 
 **报警推送精确跳转**：`AlertsFragment.onJumpCamera` / `DashboardFragment.jumpToCamerasWithAlert` 现在直接 `startActivity(CameraDetailActivity)`，Intent extra `EXTRA_INITIAL_TIMESTAMP = alert.startTime.toLong()`。流程：
 1. `CameraDetailActivity.onCreate` 检测到 `EXTRA_INITIAL_TIMESTAMP > 0`，`binding.root.post { showRecordings(initialTs) }`（post 是为了让 `startPlayback()` 的直播流先初始化完成，避免 surface 冲突）。

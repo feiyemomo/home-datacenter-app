@@ -122,11 +122,7 @@ class RecordingsDialog(
     // re-fetching from the backend on every user release. Empty list
     // means either no motion detected today or the fetch failed —
     // snapping is a no-op in that case.
-    // v1.6.4: changed from List<Pair<Long, Long>> to List<MotionRangeUi>
-    // so the tier info (low/mid/high/alert) is available alongside the
-    // start/end timestamps — the AlertRangeOverlay now uses this same
-    // list for both drawing and tap-to-seek (no separate chip list).
-    private var motionRangesRelative: List<AlertRangeOverlay.MotionRangeUi> = emptyList()
+    private var motionRangesRelative: List<Pair<Long, Long>> = emptyList()
     // v1.6.0: snap radius in ms. When the user releases the SeekBar
     // within this distance of a motion range edge, we snap to the
     // edge. 30s is roughly the smallest visible seek granularity on
@@ -686,9 +682,27 @@ class RecordingsDialog(
             val helper = PlayerFullscreenHelper(
                 playerView = binding.playerView,
                 hostView = binding.root,
-                hideOnFullscreen = listOf(binding.toolbar, binding.btnBack),
+                hideOnFullscreen = listOf(binding.toolbar),
                 speedButton = binding.btnPlaybackSpeed,
+                // v1.6.4: pass playerHostFrame as the secondary view
+                // so applyHeight expands it to MATCH_PARENT in
+                // fullscreen (covers the chip scroller + scrub bar
+                // area). Without this, the playerHostFrame stays at
+                // its XML 200dp and playerView (even when set to
+                // MATCH_PARENT) is still clipped to 200dp tall.
+                secondaryPlayerView = binding.playerHostFrame,
                 fullscreenButton = binding.btnFullscreen,
+                // v1.6.4: views that follow the ExoPlayer controller
+                // visibility while in fullscreen — the user asked:
+                // "全屏时，点击播放器收起进度条等的插件，再次点击
+                // 是在展现". These views show when the controller shows
+                // and hide when it hides (auto-timeout or tap).
+                controllerSyncViews = listOf(
+                    binding.dayScrubBarContainer,
+                    binding.motionChipScroller,
+                    binding.btnBack,
+                    binding.btnPlaybackSpeed,
+                ),
             )
             helper.attach()
             fullscreenHelper = helper
@@ -696,13 +710,6 @@ class RecordingsDialog(
         fullscreenHelper?.onPlayerChanged(player)
         binding.btnPlaybackSpeed.visibility = View.VISIBLE
         binding.btnFullscreen.visibility = View.VISIBLE
-        // v1.6.4: wire the overlay's tap-to-seek callback. The overlay
-        // is now the single source of truth for motion display (replaced
-        // the v1.6.3 HorizontalScrollView chip list). When the user
-        // taps a motion range, the overlay invokes this lambda with
-        // the range's day-relative startMs; we forward it to the same
-        // binary-search seek path used by the SeekBar's onStopTrackingTouch.
-        binding.alertOverlay.onSeekToRange = { startMs -> seekToMotionStartMs(startMs) }
     }
 
     /**
@@ -780,8 +787,11 @@ class RecordingsDialog(
         // Reset the overlay so a stale red segment doesn't persist
         // if the network call fails. Also clear the snap cache.
         binding.alertOverlay.setMax(dayEndLocalMillis - dayStartLocalMillis)
-        binding.alertOverlay.setRanges(emptyList())
+        binding.alertOverlay.setAlertRanges(emptyList())
         motionRangesRelative = emptyList()
+        // v1.6.3: clear any old chips.
+        binding.motionChipContainer.removeAllViews()
+        binding.motionChipScroller.visibility = View.GONE
 
         CoroutineScope(Dispatchers.IO).launch {
             try {
@@ -808,7 +818,7 @@ class RecordingsDialog(
                 // T directly under data).
                 // v1.6.3: parse the new enriched fields (duration,
                 // motion_score, segment_count, peak_objects) so we
-                // can compute per-range intensity tiers for coloring.
+                // can populate the chip list with intensity coloring.
                 val dataEl: JsonElement? = resp.data
                 if (dataEl == null) {
                     android.util.Log.w("RecordingsDialog", "motion-ranges data is null")
@@ -823,58 +833,46 @@ class RecordingsDialog(
                 }
 
                 val dayTotal = dayEndLocalMillis - dayStartLocalMillis
-                // v1.6.4: parse into a temp list of (start, end, score, peak)
-                // so we can compute maxScore before assigning tiers.
-                data class ParsedRange(
-                    val startMs: Long,
-                    val endMs: Long,
-                    val motionScore: Int,
-                    val peakObjects: Int,
-                )
-                val parsed = mutableListOf<ParsedRange>()
-                for (item in rangesArr) {
+                val dayRanges = mutableListOf<Pair<Long, Long>>()
+                // v1.6.3: per-range enriched metadata for the chip list.
+                val chipData = mutableListOf<MotionChip>()
+                val aiIndices = mutableSetOf<Int>()
+                for ((idx, item) in rangesArr.withIndex()) {
                     val obj = try { item.jsonObject } catch (_: Exception) { continue }
                     val startUnix = try { obj["start"]?.jsonPrimitive?.long ?: continue } catch (_: Exception) { continue }
                     val endUnix = try { obj["end"]?.jsonPrimitive?.long ?: continue } catch (_: Exception) { continue }
+                    val duration = try { obj["duration"]?.jsonPrimitive?.long ?: (endUnix - startUnix) } catch (_: Exception) { endUnix - startUnix }
                     val score = try { obj["motion_score"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0 } catch (_: Exception) { 0 }
+                    val segCount = try { obj["segment_count"]?.jsonPrimitive?.content?.toIntOrNull() ?: 1 } catch (_: Exception) { 1 }
                     val peak = try { obj["peak_objects"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0 } catch (_: Exception) { 0 }
                     val startMs = startUnix * 1000L - dayStartLocalMillis
                     val endMs = endUnix * 1000L - dayStartLocalMillis
                     val clampedStart = startMs.coerceAtLeast(0L)
                     val clampedEnd = endMs.coerceAtMost(dayTotal)
                     if (clampedEnd > clampedStart) {
-                        parsed.add(ParsedRange(clampedStart, clampedEnd, score, peak))
+                        dayRanges.add(clampedStart to clampedEnd)
+                        chipData.add(MotionChip(
+                            startUnixSec = startUnix,
+                            startRelativeMs = clampedStart,
+                            endRelativeMs = clampedEnd,
+                            durationSec = duration,
+                            motionScore = score,
+                            segmentCount = segCount,
+                            peakObjects = peak,
+                        ))
+                        if (peak > 0) aiIndices.add(idx)
                     }
                 }
 
-                // v1.6.4: compute tier per range based on motion_score
-                // quartiles. AI-detected (peak>0) overrides to tier 3.
-                // Same logic as the v1.6.3 populateMotionChips but
-                // applied here so the overlay (now the single source
-                // of truth for motion display) gets pre-computed tiers.
-                val maxScore = parsed.maxOfOrNull { it.motionScore } ?: 0
-                val motionRanges = parsed.map { r ->
-                    val tier = when {
-                        r.peakObjects > 0 -> 3  // ALERT — red
-                        r.motionScore >= maxScore * 3 / 4 -> 2  // HIGH — orange
-                        r.motionScore >= maxScore / 4 -> 1     // MID — amber
-                        else -> 0                              // LOW — teal
-                    }
-                    AlertRangeOverlay.MotionRangeUi(
-                        startMs = r.startMs,
-                        endMs = r.endMs,
-                        tier = tier,
-                    )
-                }
-
-                val aiCount = motionRanges.count { it.tier == 3 }
                 android.util.Log.d("RecordingsDialog",
-                    "Motion overlay: ${motionRanges.size} ranges for camera ${camera.id} " +
-                    "name='${camera.name}' ai=$aiCount maxScore=$maxScore")
+                    "Motion overlay: ${dayRanges.size} ranges for camera ${camera.id} " +
+                    "name='${camera.name}' ai=${aiIndices.size}")
 
                 withContext(Dispatchers.Main) {
-                    motionRangesRelative = motionRanges
-                    binding.alertOverlay.setRanges(motionRanges)
+                    motionRangesRelative = dayRanges
+                    binding.alertOverlay.setAlertRanges(dayRanges, aiIndices)
+                    // v1.6.3: populate the horizontal chip scroller.
+                    populateMotionChips(chipData, dayStartLocalMillis)
                 }
             } catch (e: Exception) {
                 android.util.Log.w("RecordingsDialog",
@@ -884,20 +882,82 @@ class RecordingsDialog(
     }
 
     /**
-     * v1.6.4: seeks ExoPlayer to a day-relative millisecond position.
-     * Reuses the same binary-search + seekTo(window, position) logic
-     * as the SeekBar onStopTrackingTouch handler. Called when the
-     * user taps a motion range in the [AlertRangeOverlay] (replacing
-     * the v1.6.3 chip-tap path that lived in [seekToMotionStart]).
+     * v1.6.3: populates the [motionChipScroller] with one chip per
+     * motion range. Each chip is an [item_motion_chip.xml] TextView
+     * with background color encoding the motion_score (see
+     * [bg_chip_motion_*] drawables). Tapping a chip seeks ExoPlayer
+     * to the range's start via [seekToMotionStart].
      *
-     * v1.6.3 had a separate MotionChip data class + chip click
-     * listener that called into this same seek path; v1.6.4 removed
-     * the chip scroller entirely and now the overlay's tap callback
-     * invokes this method directly with the range's startMs.
+     * Chips are sorted by start time (oldest first, left-to-right)
+     * so the user can scrub through the day chronologically. We cap
+     * the chip count at 200 to prevent pathological days from
+     * slowing the UI (a 24h Frigate recording with constant motion
+     * could produce ~360 chips at the v1.6.3 2s merge threshold).
+     * When capped, we keep the highest-motion_score chips — the
+     * quiet ones are less interesting anyway.
+     *
+     * [dayStartLocalMillis] is passed for formatting the time label
+     * on each chip (e.g. "14:32:05") — chip.startUnixSec is in UTC,
+     * we convert to LOCAL for display.
      */
-    private fun seekToMotionStartMs(startMs: Long) {
+    private fun populateMotionChips(
+        chips: List<MotionChip>,
+        dayStartLocalMillis: Long,
+    ) {
+        val container = binding.motionChipContainer
+        container.removeAllViews()
+        if (chips.isEmpty()) {
+            binding.motionChipScroller.visibility = View.GONE
+            return
+        }
+        // v1.6.3: cap chip count. Sort by motion_score desc, take top 200,
+        // then re-sort by start time asc for display. This keeps the
+        // most significant motion events while preventing pathological
+        // days from slowing the UI.
+        val sorted = if (chips.size > 200) {
+            chips.sortedByDescending { it.motionScore }.take(200).sortedBy { it.startRelativeMs }
+        } else {
+            chips.sortedBy { it.startRelativeMs }
+        }
+        // Find the max motion_score in the visible set so we can
+        // bucket chips into low/mid/high color tiers.
+        val maxScore = sorted.maxOf { it.motionScore }.coerceAtLeast(1)
+        // v1.6.3: time formatter — chip.startUnixSec is UTC unix seconds,
+        // convert to LOCAL for display using Asia/Shanghai tz. Reuses
+        // the same SimpleDateFormat pattern as formatDayTime().
+        val tz = TimeZone.getTimeZone("Asia/Shanghai")
+        val fmt = SimpleDateFormat("HH:mm:ss", Locale.US).apply { timeZone = tz }
+
+        val inflater = LayoutInflater.from(context)
+        for (chip in sorted) {
+            val tv = inflater.inflate(R.layout.item_motion_chip, container, false) as android.widget.TextView
+            val label = "${fmt.format(Date(chip.startUnixSec * 1000L))} · ${chip.durationSec}s"
+            tv.text = label
+            // Color by score (low/mid/high) — AI-detected (peak>0) overrides.
+            val bgRes = when {
+                chip.peakObjects > 0 -> R.drawable.bg_chip_motion_alert
+                chip.motionScore >= maxScore * 3 / 4 -> R.drawable.bg_chip_motion_high
+                chip.motionScore >= maxScore / 4 -> R.drawable.bg_chip_motion_mid
+                else -> R.drawable.bg_chip_motion_low
+            }
+            tv.setBackgroundResource(bgRes)
+            tv.setOnClickListener { seekToMotionStart(chip) }
+            container.addView(tv)
+        }
+        binding.motionChipScroller.visibility = View.VISIBLE
+    }
+
+    /**
+     * v1.6.3: seeks ExoPlayer to the start of the given motion range.
+     * Reuses the same binary-search + seekTo(window, position) logic
+     * as the SeekBar onStopTrackingTouch handler. After seeking we
+     * also scroll the chip scroller so the tapped chip becomes
+     * visible (helpful when the user taps a chip that's off-screen
+     * after a previous chip tap scrolled the list).
+     */
+    private fun seekToMotionStart(chip: MotionChip) {
         val p = player ?: return
-        val progress = startMs
+        val progress = chip.startRelativeMs
         // Binary-search clipStartOffsets for the target window.
         val raw = clipStartOffsets.binarySearch(progress)
         val idx = if (raw >= 0) raw else (-raw - 2).coerceAtLeast(0)
@@ -909,7 +969,7 @@ class RecordingsDialog(
         binding.daySeekBar.progress = progress.toInt()
         binding.tvDayPosition.text = formatDayTime(progress)
         android.util.Log.d("RecordingsDialog",
-            "Overlay tap: seek to window=$targetWindow pos=${targetPosition}ms " +
+            "Chip tap: seek to window=$targetWindow pos=${targetPosition}ms " +
             "(day-relative ${progress}ms = ${formatDayTime(progress)})")
     }
 
@@ -935,16 +995,16 @@ class RecordingsDialog(
         if (motionRangesRelative.isEmpty()) return null
         var bestDist = motionSnapRadiusMs
         var bestSnap: Long? = null
-        for (r in motionRangesRelative) {
-            val distToStart = Math.abs(progressMs - r.startMs)
+        for ((s, e) in motionRangesRelative) {
+            val distToStart = Math.abs(progressMs - s)
             if (distToStart < bestDist) {
                 bestDist = distToStart
-                bestSnap = r.startMs
+                bestSnap = s
             }
-            val distToEnd = Math.abs(progressMs - r.endMs)
+            val distToEnd = Math.abs(progressMs - e)
             if (distToEnd < bestDist) {
                 bestDist = distToEnd
-                bestSnap = r.endMs
+                bestSnap = e
             }
         }
         return bestSnap
@@ -978,6 +1038,26 @@ class RecordingsDialog(
         fullscreenHelper = null
         super.dismiss()
     }
+
+    /**
+     * v1.6.3: data class for a single motion chip in the horizontal
+     * scroller above the SeekBar. Mirrors the v1.6.3 backend
+     * [MotionRange] struct but holds both unix-seconds (for the seek
+     * call) and day-relative-millis (for SeekBar/overlay positioning).
+     *
+     * [startUnixSec] is needed for time formatting (UTC -> LOCAL),
+     * [startRelativeMs] / [endRelativeMs] are needed for the seek logic.
+     * [motionScore] / [peakObjects] drive the chip background color.
+     */
+    data class MotionChip(
+        val startUnixSec: Long,
+        val startRelativeMs: Long,
+        val endRelativeMs: Long,
+        val durationSec: Long,
+        val motionScore: Int,
+        val segmentCount: Int,
+        val peakObjects: Int,
+    )
 
     /**
      * v1.6.2: data class for the per-day list view. Each instance
