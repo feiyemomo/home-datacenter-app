@@ -222,7 +222,10 @@ class RecordingsDialog(
     private fun loadRecordings() {
         binding.progressBar.visibility = View.VISIBLE
         binding.recyclerView.visibility = View.GONE
-        binding.tvEmpty.visibility = View.GONE
+        // v1.6.8: toggle the whole empty-state container (icon +
+        // title + hint) instead of just tvEmpty — the container is
+        // the unit of visibility now.
+        binding.emptyStateContainer.visibility = View.GONE
 
         CoroutineScope(Dispatchers.IO).launch {
             try {
@@ -265,9 +268,15 @@ class RecordingsDialog(
                     dayAdapter.submitList(dayList)
                     binding.progressBar.visibility = View.GONE
                     binding.recyclerView.visibility = View.VISIBLE
-                    binding.tvEmpty.visibility = if (recordings.isEmpty()) View.VISIBLE else View.GONE
+                    // v1.6.8: empty-state container holds icon +
+                    // tvEmpty + tvEmptyHint — toggle as a unit.
+                    binding.emptyStateContainer.visibility =
+                        if (recordings.isEmpty()) View.VISIBLE else View.GONE
                     if (recordings.isEmpty()) {
-                        binding.tvEmpty.text = if (resp.isSuccess) "暂无录像" else "加载失败: ${resp.message}"
+                        binding.tvEmpty.text = if (resp.isSuccess) "暂无录像" else "加载失败"
+                        binding.tvEmptyHint.text = if (resp.isSuccess)
+                            "请稍后再试或检查摄像头状态"
+                        else "错误: ${resp.message}"
                     }
 
                     // v1.6.1: now that allRecordings is populated,
@@ -284,8 +293,9 @@ class RecordingsDialog(
                 android.util.Log.e("RecordingsDialog", "Exception loading recordings: ${e.message}", e)
                 withContext(Dispatchers.Main) {
                     binding.progressBar.visibility = View.GONE
-                    binding.tvEmpty.visibility = View.VISIBLE
-                    binding.tvEmpty.text = "加载失败: ${e.message}"
+                    binding.emptyStateContainer.visibility = View.VISIBLE
+                    binding.tvEmpty.text = "加载失败"
+                    binding.tvEmptyHint.text = e.message ?: "未知错误"
                 }
             }
         }
@@ -1400,9 +1410,28 @@ class RecordingsDialog(
                 val durStr = if (h > 0) String.format("%d时%02d分", h, m)
                              else String.format("%02d分%02d秒", m, s)
                 binding.tvStats.text = "${day.recordingCount} 段 · $durStr"
-                // Status chip — always green since the backend omits
-                // empty days. Tapping the row launches full-day playback.
-                binding.tvStatus.text = "${day.recordingCount} 段"
+                // v1.6.8: status chip now shows the total duration in
+                // compact form (e.g. "5h12m" or "42m") instead of
+                // duplicating the segment count already shown in
+                // tvStats. This gives the user two complementary
+                // pieces of info at a glance: row text = "N 段 · HH时MM分"
+                // (precise), chip = "5h12m" (compact). Compact form
+                // is built without locale-specific separators so it
+                // stays short inside the pill.
+                val compactDur = if (h > 0) "${h}h${m}m"
+                                 else "${m}m${s}s"
+                binding.tvStatus.text = compactDur
+                // v1.6.8: show "今天" badge when the card's LOCAL day
+                // matches the current LOCAL day. Compare by ERA + YEAR
+                // + DAY_OF_YEAR to avoid false matches across year
+                // boundaries. The badge is gone by default in the
+                // layout; we only flip to VISIBLE here.
+                val today = Calendar.getInstance()
+                val isToday = cal.get(Calendar.ERA) == today.get(Calendar.ERA) &&
+                              cal.get(Calendar.YEAR) == today.get(Calendar.YEAR) &&
+                              cal.get(Calendar.DAY_OF_YEAR) == today.get(Calendar.DAY_OF_YEAR)
+                binding.tvTodayBadge.visibility =
+                    if (isToday) View.VISIBLE else View.GONE
                 binding.root.setOnClickListener { onPlayDay(day) }
             }
         }

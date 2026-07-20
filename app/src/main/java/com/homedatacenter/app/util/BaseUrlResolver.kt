@@ -77,6 +77,14 @@ class BaseUrlResolver(
     }
 
     /**
+     * v1.6.10: returns true if the currently resolved URL is the LAN
+     * URL. Used by WebRTC code to decide whether to skip STUN/TURN
+     * servers (LAN only needs host candidates, avoids 1-2s STUN
+     * gathering delay) and to shorten ICE gathering timeout.
+     */
+    fun isLan(): Boolean = resolved == LAN_URL
+
+    /**
      * Force a re-probe asynchronously. Use this to react to network
      * change broadcasts (ConnectivityManager.NetworkCallback) so the
      * switch to LAN is immediate instead of waiting for the TTL.

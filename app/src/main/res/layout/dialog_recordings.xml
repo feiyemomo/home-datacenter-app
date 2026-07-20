@@ -46,7 +46,10 @@
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/recyclerView"
             android:layout_width="match_parent"
-            android:layout_height="match_parent" />
+            android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:paddingTop="4dp"
+            android:paddingBottom="16dp" />
 
         <ProgressBar
             android:id="@+id/progressBar"
@@ -55,15 +58,65 @@
             android:layout_gravity="center"
             android:visibility="gone" />
 
-        <TextView
-            android:id="@+id/tvEmpty"
+        <!-- v1.6.8: enhanced empty state — replaces the bare "暂无录像"
+             TextView with a centered icon + 2-line message stack so
+             the user gets visual feedback even when the list is empty.
+             The icon sits inside a soft peach-tinted circle (primary
+             color at 12% alpha) to add visual depth without
+             overpowering the warm gradient background. The secondary
+             line gives a hint about what to do next. -->
+        <LinearLayout
+            android:id="@+id/emptyStateContainer"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="暂无录像"
-            android:textSize="16sp"
-            android:textColor="@color/text_secondary"
             android:layout_gravity="center"
-            android:visibility="gone" />
+            android:orientation="vertical"
+            android:gravity="center"
+            android:padding="24dp"
+            android:visibility="gone">
+
+            <!-- Soft circular halo behind the icon — primary peach
+                 at 18% alpha over the warm gradient gives a "spotlight"
+                 feel that draws the eye to the icon. -->
+            <FrameLayout
+                android:layout_width="96dp"
+                android:layout_height="96dp">
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:background="@drawable/bg_icon_circle"
+                    android:alpha="0.18" />
+
+                <ImageView
+                    android:layout_width="44dp"
+                    android:layout_height="44dp"
+                    android:layout_gravity="center"
+                    android:src="@drawable/ic_video"
+                    android:alpha="0.85"
+                    android:contentDescription="no recordings"
+                    app:tint="@color/primary" />
+            </FrameLayout>
+
+            <TextView
+                android:id="@+id/tvEmpty"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="暂无录像"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_primary"
+                android:layout_marginTop="16dp" />
+
+            <TextView
+                android:id="@+id/tvEmptyHint"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="请稍后再试或检查摄像头状态"
+                android:textSize="12sp"
+                android:textColor="@color/text_hint"
+                android:layout_marginTop="4dp" />
+        </LinearLayout>
 
         <FrameLayout
             android:id="@+id/videoContainer"
@@ -145,61 +198,10 @@
                         app:iconTint="@android:color/white"
                         android:visibility="gone" />
 
-                    <!-- v1.6.5 rev7: playback speed is now a horizontal
-                         Slider instead of a dropdown button. User said
-                         "变速条改为可滑动的，最高切到5x吧". The slider
-                         sits at the top-center of the playerView so it
-                         doesn't overlap the bottom|end fullscreen button
-                         or the centered pause button.
-                         Discrete steps 0.5x..5.0x (10 steps); current
-                         value is displayed in a small label to the right
-                         of the slider. Slider track + thumb use white
-                         for high contrast on the dark video surface. -->
-                    <LinearLayout
-                        android:id="@+id/speedBarContainer"
-                        android:layout_width="220dp"
-                        android:layout_height="wrap_content"
-                        android:layout_gravity="top|center_horizontal"
-                        android:layout_marginTop="6dp"
-                        android:orientation="horizontal"
-                        android:gravity="center_vertical"
-                        android:background="@drawable/bg_glass_dark_panel"
-                        android:paddingStart="10dp"
-                        android:paddingEnd="10dp"
-                        android:paddingTop="2dp"
-                        android:paddingBottom="2dp"
-                        android:visibility="gone">
-
-                        <com.google.android.material.slider.Slider
-                            android:id="@+id/speedSlider"
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:valueFrom="0.5"
-                            android:valueTo="5.0"
-                            android:stepSize="0.5"
-                            android:value="1.0"
-                            app:thumbColor="@android:color/white"
-                            app:trackColorActive="@android:color/white"
-                            app:trackColorInactive="#80FFFFFF"
-                            app:haloColor="#40FFFFFF" />
-
-                        <TextView
-                            android:id="@+id/tvSpeedLabel"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="1x"
-                            android:textColor="@android:color/white"
-                            android:textSize="12sp"
-                            android:fontFamily="monospace"
-                            android:minWidth="34dp"
-                            android:gravity="end" />
-                    </LinearLayout>
-
                     <!-- Standalone playback speed button kept (hidden)
                          for backward-compat with PlayerFullscreenHelper's
-                         attachSpeedButton — but the slider is the new
-                         primary speed control. -->
+                         attachSpeedButton — the slider (now inside
+                         dayScrubBarContainer) is the primary speed control. -->
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnPlaybackSpeed"
                         style="@style/Widget.Material3.Button.IconButton"
@@ -306,18 +308,35 @@
                      sit immediately below the player surface — natural
                      thumb-reach when the player is at eye level.
 
+                     v1.6.9: panel now uses @drawable/bg_glass_dark_panel
+                     as its background. Previously it was transparent,
+                     which meant the white time labels (tvDayPosition /
+                     tvDayDuration) sat directly on the warm cream→soft
+                     blue gradient root background — the user reported
+                     "进度条的时间与背景的对比度很低，看不清". Wrapping
+                     the whole panel in dark glass gives the white text
+                     a high-contrast backdrop and visually groups the
+                     time labels + SeekBar + speed slider as one
+                     "control deck" under the player.
+
                      AlertRangeOverlay + SeekBar share a FrameLayout so
-                     the red marks sit on top of the SeekBar track. -->
+                     the red marks sit on top of the SeekBar track.
+                     The speed slider lives below the SeekBar so the
+                     user's thumb naturally travels from "position the
+                     playhead" to "tweak playback speed" — both are
+                     timeline-style controls and belong together. -->
                 <LinearLayout
                     android:id="@+id/dayScrubBarContainer"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
-                    android:background="@android:color/transparent"
+                    android:background="@drawable/bg_glass_dark_panel"
+                    android:layout_marginStart="8dp"
+                    android:layout_marginEnd="8dp"
                     android:paddingStart="12dp"
                     android:paddingEnd="12dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
+                    android:paddingTop="8dp"
+                    android:paddingBottom="8dp"
                     android:visibility="gone">
 
                     <LinearLayout
@@ -333,9 +352,13 @@
                             android:layout_height="wrap_content"
                             android:text="00:00:00"
                             android:textColor="@android:color/white"
-                            android:textSize="12sp"
+                            android:textSize="13sp"
                             android:textStyle="bold"
-                            android:fontFamily="monospace" />
+                            android:fontFamily="monospace"
+                            android:shadowColor="#000000"
+                            android:shadowRadius="2"
+                            android:shadowDx="0"
+                            android:shadowDy="1" />
 
                         <View
                             android:layout_width="0dp"
@@ -348,8 +371,13 @@
                             android:layout_height="wrap_content"
                             android:text="24:00:00"
                             android:textColor="@android:color/white"
-                            android:textSize="12sp"
-                            android:fontFamily="monospace" />
+                            android:textSize="13sp"
+                            android:textStyle="bold"
+                            android:fontFamily="monospace"
+                            android:shadowColor="#000000"
+                            android:shadowRadius="2"
+                            android:shadowDx="0"
+                            android:shadowDy="1" />
                     </LinearLayout>
 
                     <FrameLayout
@@ -360,10 +388,11 @@
                             android:id="@+id/daySeekBar"
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:maxHeight="4dp"
-                            android:progressTint="@android:color/white"
-                            android:progressBackgroundTint="#66FFFFFF"
-                            android:thumbTint="@android:color/white" />
+                            android:maxHeight="8dp"
+                            android:progressTint="#FF8A65"
+                            android:progressBackgroundTint="#992D3748"
+                            android:thumbTint="#FF8A65"
+                            android:splitTrack="false" />
 
                         <com.homedatacenter.app.ui.cameras.AlertRangeOverlay
                             android:id="@+id/alertOverlay"
@@ -373,6 +402,63 @@
                             android:layout_marginTop="4dp"
                             android:visibility="visible" />
                     </FrameLayout>
+
+                    <!-- v1.6.9: speed slider moved here from the top of
+                         the player surface. User said "倍速跳可以挪到
+                         下面合适的位置". Sitting directly under the
+                         SeekBar lets the user's thumb flow from
+                         "scrub position" to "tweak speed" — both are
+                         timeline-style horizontal controls. The slider
+                         spans the full panel width (was 220dp centered)
+                         for a more comfortable touch target, and the
+                         label sits at the end so the user sees the
+                         current value without obscuring the thumb.
+                         Label + track use white on the dark glass
+                         panel for high contrast. -->
+                    <LinearLayout
+                        android:id="@+id/speedBarContainer"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:visibility="gone">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="倍速"
+                            android:textColor="@android:color/white"
+                            android:textSize="12sp"
+                            android:layout_marginEnd="8dp"
+                            android:alpha="0.85" />
+
+                        <com.google.android.material.slider.Slider
+                            android:id="@+id/speedSlider"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:valueFrom="0.5"
+                            android:valueTo="5.0"
+                            android:stepSize="0.5"
+                            android:value="1.0"
+                            app:thumbColor="@android:color/white"
+                            app:trackColorActive="@android:color/white"
+                            app:trackColorInactive="#80FFFFFF"
+                            app:haloColor="#40FFFFFF" />
+
+                        <TextView
+                            android:id="@+id/tvSpeedLabel"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="1x"
+                            android:textColor="@android:color/white"
+                            android:textSize="13sp"
+                            android:textStyle="bold"
+                            android:fontFamily="monospace"
+                            android:minWidth="38dp"
+                            android:gravity="end" />
+                    </LinearLayout>
                 </LinearLayout>
 
                 <!-- Middle: fisheye chip container. v1.6.4 rev5: returned
@@ -390,6 +476,9 @@
                     android:layout_width="match_parent"
                     android:layout_height="0dp"
                     android:layout_weight="1"
+                    android:layout_marginStart="8dp"
+                    android:layout_marginEnd="8dp"
+                    android:layout_marginTop="6dp"
                     android:scrollbars="none"
                     android:overScrollMode="never"
                     android:background="@android:color/transparent"

@@ -164,18 +164,51 @@ class CameraDetailActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
-        // Release the MediaCodec when leaving the foreground so it
-        // can be reclaimed by other apps. Playback resumes on resume
-        // via setupVideo() — actually, we don't auto-resume here to
-        // keep the behavior predictable; the user taps "重新加载"
-        // to restart the stream. This avoids buffering loops when
-        // the activity is briefly paused (e.g. notification shade).
-        releasePlayer()
+        // v1.6.10: only release ExoPlayer here — NOT the WebRTC
+        // PeerConnection. Previously onPause released both, which
+        // meant every time the user pulled down the notification
+        // shade or switched to another app and came back, the
+        // PeerConnection was torn down and had to be rebuilt from
+        // scratch (HTTP signaling + ICE gathering = 1-3s on LAN,
+        // 3-5s on remote). Now we keep the PeerConnection alive
+        // across onPause so resume is instant — the video track
+        // is still attached to the SurfaceViewRenderer and will
+        // render the next keyframe as soon as the activity resumes.
+        // ExoPlayer is still released because MediaCodec is a
+        // scarce system resource that other apps may need.
+        releaseExoPlayerOnly()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // v1.6.10: if a WebRTC stream was active before onPause, the
+        // PeerConnection is still alive (we only released ExoPlayer).
+        // The SurfaceViewRenderer was released in onPause (EGL surface
+        // tied to window) so we need to re-init it and re-attach the
+        // existing video track. This is ~50ms vs ~1-3s for a full
+        // signaling round-trip.
+        try { binding.surfaceRenderer.release() } catch (_: Exception) {}
+        val client = webRtcClient
+        if (client != null && webRtcInProgress) {
+            try {
+                binding.surfaceRenderer.init(client.eglBase.eglBaseContext, null)
+                binding.surfaceRenderer.setMirror(false)
+                binding.surfaceRenderer.setScalingType(
+                    RendererCommon.ScalingType.SCALE_ASPECT_FILL
+                )
+                // Re-attach the existing video track if still available.
+                // The track lives on the WebRtcClient; if the connection
+                // died while paused, the user taps reload to rebuild.
+                client.reattachVideoTrack(binding.surfaceRenderer)
+            } catch (e: Exception) {
+                android.util.Log.w(TAG, "WebRTC resume re-attach failed: ${e.message}")
+            }
+        }
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        releasePlayer()
+        releaseExoPlayerOnly()
         fullscreenHelper?.release()
         recordingsDialog?.dismiss()
         alertsDialog?.dismiss()
@@ -186,8 +219,32 @@ class CameraDetailActivity : AppCompatActivity() {
         // EglBase context is released, otherwise eglReleaseSurface
         // can throw. The try/catch guards against double-release.
         try { binding.surfaceRenderer.release() } catch (_: Exception) {}
-        try { webRtcClient?.shutdown() } catch (_: Exception) {}
+        // v1.6.10: only release THIS activity's PeerConnection —
+        // NOT the shared PeerConnectionFactory / EGL context (those
+        // live in AppContainer.sharedWebRtcClient and serve the
+        // whole app). shutdown() would tear down the factory and
+        // break the next camera open. release() only disposes the
+        // PeerConnection.
+        try { webRtcClient?.release() } catch (_: Exception) {}
         webRtcClient = null
+    }
+
+    /**
+     * v1.6.10: releases only ExoPlayer + WebRTC control flags. Does
+     * NOT touch the WebRTC PeerConnection. Called from onPause so
+     * the PeerConnection can survive across activity lifecycle.
+     */
+    private fun releaseExoPlayerOnly() {
+        val old = player
+        player = null
+        binding.playerView.player = null
+        old?.release()
+        // Reset fallback ladder flags so reload retries WebRTC first.
+        triedMp4 = false
+        triedHls = false
+        // Hide WebRTC-only overlays so they don't linger during reload.
+        binding.btnWebRtcFullscreen.visibility = View.GONE
+        binding.webRtcControls.visibility = View.GONE
     }
 
     private fun setupHeader() {
@@ -696,18 +753,14 @@ class CameraDetailActivity : AppCompatActivity() {
      */
     private fun ensureWebRtcClient(): Boolean {
         if (webRtcClient != null) return true
-        val baseUrl = container.getApiBaseUrl().ifBlank { return false }
-        val token = container.prefsManager.token
+        // v1.6.10: use the shared WebRtcClient from AppContainer.
+        // The PeerConnectionFactory + EGL context are now shared
+        // across all CameraDetailActivity instances so opening a
+        // second camera doesn't pay the 300-500ms factory init
+        // cost again.
+        val client = container.getOrInitWebRtcClient() ?: return false
+        webRtcClient = client
         return try {
-            // Prefer the warmed-up client. takeWarmWebRtcClient
-            // atomically removes it from the warm cache (one-shot).
-            val client = container.takeWarmWebRtcClient() ?: WebRtcClient(
-                context = this,
-                okHttpClient = container.okHttpClient,
-                baseUrl = baseUrl,
-                token = token,
-            ).also { it.init() }
-            webRtcClient = client
             // Init the SurfaceViewRenderer with the WebRTC client's
             // EGL context. Must run on the main thread (EGL surface
             // creation requires it on most GPUs).
@@ -791,12 +844,23 @@ class CameraDetailActivity : AppCompatActivity() {
             // Convert to PeerConnection.IceServer list expected by
             // WebRtcClient. Empty list is OK — host candidates will
             // be gathered automatically.
-            val iceServers = iceConfig?.ice_servers?.map { srv ->
-                PeerConnection.IceServer.builder(srv.urls).apply {
-                    srv.username?.let { setUsername(it) }
-                    srv.credential?.let { setPassword(it) }
-                }.createIceServer()
-            } ?: emptyList()
+            // v1.6.10: on LAN, skip STUN/TURN servers entirely.
+            // The backend is on the same subnet so host candidates
+            // are sufficient — STUN/TURN gathering adds 1-2s delay
+            // for no benefit on LAN. The isLan() check comes from
+            // BaseUrlResolver which probes /api/v1/system/status.
+            val isLan = container.baseUrlResolver.isLan()
+            val iceServers = if (isLan) {
+                emptyList()
+            } else {
+                iceConfig?.ice_servers?.map { srv ->
+                    PeerConnection.IceServer.builder(srv.urls).apply {
+                        srv.username?.let { setUsername(it) }
+                        srv.credential?.let { setPassword(it) }
+                    }.createIceServer()
+                } ?: emptyList()
+            }
+            android.util.Log.d(TAG, "WebRTC ICE servers: ${iceServers.size} (LAN=$isLan)")
 
             client.startStream(
                 cameraId = cam.id,
@@ -1002,22 +1066,12 @@ class CameraDetailActivity : AppCompatActivity() {
     }
 
     private fun releasePlayer() {
-        // Release both ExoPlayer and the WebRTC PeerConnection so the
-        // next startPlayback() can re-establish either one cleanly.
-        try { webRtcClient?.release() } catch (_: Exception) {}
-        webRtcInProgress = false
-        val old = player
-        player = null
-        binding.playerView.player = null
-        old?.release()
-        triedWebRtc = false
-        triedMp4 = false
-        triedHls = false
-        // Hide the WebRTC-only overlay so it doesn't linger when the
-        // user taps reload (which switches back to playerView during
-        // the next WebRTC attempt's setup phase).
-        binding.btnWebRtcFullscreen.visibility = View.GONE
-        binding.webRtcControls.visibility = View.GONE
+        // v1.6.10: legacy entry point. Routes to releaseExoPlayerOnly
+        // so the WebRTC PeerConnection survives onPause (see comment
+        // in onPause). Kept because startWebRtcStream / fallback
+        // paths still call releasePlayer() to clear ExoPlayer before
+        // starting a new stream.
+        releaseExoPlayerOnly()
     }
 
     private fun resolveMp4Url(camera: Camera): String {

@@ -318,11 +318,20 @@ class DashboardFragment : Fragment() {
     private fun updateStats(status: SystemStatus) {
         latestSystemStatus = status
 
+        // v1.6.10: icon tint must use setImageTintList (NOT
+        // setColorFilter). setColorFilter tints the ENTIRE ImageView
+        // including the bg_icon_circle background — the icon and
+        // background become the same color so the icon "disappears".
+        // setImageTintList only tints the foreground drawable (the
+        // icon), leaving the peach background circle intact. This is
+        // what the user reported as "图标没加载出来".
         val devicesCard = ItemStatCardBinding.bind(binding.cardDevices.root)
         devicesCard.tvLabel.text = getString(R.string.stat_devices)
         devicesCard.tvValue.text = status.onlineDeviceCount.toString()
         devicesCard.ivIcon.setImageResource(R.drawable.ic_devices)
-        devicesCard.ivIcon.setColorFilter(resources.getColor(R.color.primary, null))
+        devicesCard.ivIcon.imageTintList =
+            android.content.res.ColorStateList.valueOf(
+                resources.getColor(R.color.primary, null))
         // Status dot: green if any devices online, gray otherwise.
         applyStatCardDot(devicesCard.statusDot, status.onlineDeviceCount > 0)
 
@@ -331,14 +340,18 @@ class DashboardFragment : Fragment() {
         mqttCard.tvValue.text = if (status.mqttConnected)
             getString(R.string.status_online) else getString(R.string.status_offline)
         mqttCard.ivIcon.setImageResource(R.drawable.ic_mqtt)
-        mqttCard.ivIcon.setColorFilter(resources.getColor(R.color.online, null))
+        mqttCard.ivIcon.imageTintList =
+            android.content.res.ColorStateList.valueOf(
+                resources.getColor(R.color.online, null))
         applyStatCardDot(mqttCard.statusDot, status.mqttConnected)
 
         val wsCard = ItemStatCardBinding.bind(binding.cardWs.root)
         wsCard.tvLabel.text = getString(R.string.stat_ws_clients)
         wsCard.tvValue.text = status.wsClients.toString()
         wsCard.ivIcon.setImageResource(R.drawable.ic_ws)
-        wsCard.ivIcon.setColorFilter(resources.getColor(R.color.secondary, null))
+        wsCard.ivIcon.imageTintList =
+            android.content.res.ColorStateList.valueOf(
+                resources.getColor(R.color.secondary, null))
         // WS clients dot: green if >0 clients, gray otherwise.
         applyStatCardDot(wsCard.statusDot, status.wsClients > 0)
 
@@ -346,7 +359,9 @@ class DashboardFragment : Fragment() {
         uptimeCard.tvLabel.text = getString(R.string.stat_uptime)
         uptimeCard.tvValue.text = formatUptime(status.uptimeSeconds)
         uptimeCard.ivIcon.setImageResource(R.drawable.ic_dashboard)
-        uptimeCard.ivIcon.setColorFilter(resources.getColor(R.color.accent, null))
+        uptimeCard.ivIcon.imageTintList =
+            android.content.res.ColorStateList.valueOf(
+                resources.getColor(R.color.accent, null))
         // Uptime dot: green if uptime > 1h, yellow otherwise (recently started).
         applyStatCardDot(uptimeCard.statusDot, on = status.uptimeSeconds >= 3_600,
             warning = status.uptimeSeconds in 1 until 3_600)

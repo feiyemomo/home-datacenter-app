@@ -236,12 +236,33 @@
                     android:visibility="gone" />
             </FrameLayout>
 
-            <!-- System status grid (4 cards: Devices, MQTT, WS Clients, Uptime) -->
+            <!-- System status grid (4 cards: Devices, MQTT, WS Clients, Uptime).
+                 v1.6.8: columnCount now reads from
+                 @integer/dashboard_stats_column_count so phones use 2
+                 columns (2x2 grid) and tablets/wide-landscape use 4
+                 columns (1x4 single row). The 4 includes below all
+                 have layout_columnWeight=1 + fill_horizontal so they
+                 reflow correctly when columnCount changes. -->
+            <!-- v1.6.10: stat grid — every card uses identical
+                 layout_height (120dp) + symmetric 4dp start/end
+                 margins so the 4 cards have uniform height AND
+                 uniform horizontal spacing. Previous layout had
+                 asymmetric margins (left column marginEnd=6, right
+                 column marginStart=6) which produced 12dp between
+                 columns but only 6dp at the outer edges — visually
+                 the grid looked off-center. The new 4dp symmetric
+                 margins give 8dp between columns + 4dp at edges,
+                 which reads as centered. Column weight = 1 on
+                 every card forces equal widths.
+                 v1.6.8: columnCount reads from
+                 @integer/dashboard_stats_column_count so phones
+                 use 2 columns (2x2 grid) and tablets/wide-landscape
+                 use 4 columns (1x4 single row). -->
             <androidx.gridlayout.widget.GridLayout
                 android:id="@+id/gridStats"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:columnCount="2"
+                android:columnCount="@integer/dashboard_stats_column_count"
                 android:rowCount="2"
                 app:orientation="horizontal"
                 android:layout_marginTop="10dp">
@@ -249,15 +270,20 @@
                 <!-- v1.5.4: include layout_height MUST be "120dp" (not
                  wrap_content) — otherwise it overrides item_stat_card.xml's
                  root FrameLayout height=120dp and the fixed-height
-                 grid alignment breaks (uptime string gets clipped). -->
+                 grid alignment breaks (uptime string gets clipped).
+                 v1.6.10: all 4 cards use IDENTICAL layout params so
+                 they render at exactly the same height + width.
+                 Symmetric 4dp margins on every side ensure consistent
+                 horizontal spacing across the grid. -->
             <include layout="@layout/item_stat_card"
                 android:id="@+id/cardDevices"
                 android:layout_width="0dp"
                 android:layout_height="120dp"
                 app:layout_columnWeight="1"
                 app:layout_gravity="fill_horizontal"
-                android:layout_marginEnd="6dp"
-                android:layout_marginBottom="6dp" />
+                android:layout_marginStart="4dp"
+                android:layout_marginEnd="4dp"
+                android:layout_marginBottom="8dp" />
 
             <include layout="@layout/item_stat_card"
                 android:id="@+id/cardMqtt"
@@ -265,8 +291,9 @@
                 android:layout_height="120dp"
                 app:layout_columnWeight="1"
                 app:layout_gravity="fill_horizontal"
-                android:layout_marginStart="6dp"
-                android:layout_marginBottom="6dp" />
+                android:layout_marginStart="4dp"
+                android:layout_marginEnd="4dp"
+                android:layout_marginBottom="8dp" />
 
             <include layout="@layout/item_stat_card"
                 android:id="@+id/cardWs"
@@ -274,8 +301,8 @@
                 android:layout_height="120dp"
                 app:layout_columnWeight="1"
                 app:layout_gravity="fill_horizontal"
-                android:layout_marginEnd="6dp"
-                android:layout_marginTop="6dp" />
+                android:layout_marginStart="4dp"
+                android:layout_marginEnd="4dp" />
 
             <include layout="@layout/item_stat_card"
                 android:id="@+id/cardUptime"
@@ -283,8 +310,8 @@
                 android:layout_height="120dp"
                 app:layout_columnWeight="1"
                 app:layout_gravity="fill_horizontal"
-                android:layout_marginStart="6dp"
-                android:layout_marginTop="6dp" />
+                android:layout_marginStart="4dp"
+                android:layout_marginEnd="4dp" />
 
             </androidx.gridlayout.widget.GridLayout>
 

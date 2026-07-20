@@ -1,0 +1,20 @@
+$askpass = [System.IO.Path]::GetTempFileName() + "-askpass.bat"
+"@echo @Fnos324" | Set-Content $askpass -Encoding ASCII
+$env:SSH_ASKPASS = $askpass
+$env:SSH_ASKPASS_REQUIRE = "force"
+$env:DISPLAY = "1"
+
+Write-Host "Verifying APK on NAS..."
+& ssh -p 22 `
+    -o StrictHostKeyChecking=no `
+    -o UserKnownHostsFile=NUL `
+    -o ConnectTimeout=10 `
+    -o PreferredAuthentications=password `
+    -o PubkeyAuthentication=no `
+    -o NumberOfPasswordPrompts=1 `
+    fnos-momo@192.168.31.234 `
+    "ls -la /vol1/docker/home-datacenter/app-debug-v1.6.10.apk /vol1/docker/home-datacenter/APP_VS_DASHBOARD_FEATURES.md 2>&1; echo '---'; docker compose -f /vol1/docker/home-datacenter/compose.yaml ps --format 'table {{.Name}}\t{{.Status}}'" 2>&1 | Out-Host
+
+$code = $LASTEXITCODE
+Remove-Item $askpass -ErrorAction SilentlyContinue
+exit $code

@@ -2,4 +2,27 @@
     <dimen name="fragment_horizontal_margin">48dp</dimen>
     <dimen name="fab_margin">48dp</dimen>
     <dimen name="item_transform_image_length">142dp</dimen>
+
+    <!-- v1.6.8: wide-screen overrides (600-935dp — 7" tablets, large
+         phones in landscape, foldable inner screens). -->
+    <!-- Bottom nav capped to 480dp so it stays a centered capsule
+         rather than stretching edge-to-edge on a 600-935dp screen. -->
+    <dimen name="bottom_nav_max_width">480dp</dimen>
+    <!-- Dashboard stats: 4 columns on wide screens (1x4 row reads
+         better than 2x2 when there's room for a single row). -->
+    <integer name="dashboard_stats_column_count">4</integer>
+    <!-- Camera list: 2 columns side-by-side so each card gets a
+         reasonable width on tablets (cards become too wide and
+         text-heavy when stretched across 600dp+). -->
+    <integer name="camera_list_column_count">2</integer>
+    <!-- Slightly larger thumbnails on tablets — the extra width
+         per card lets us show a bigger preview without crowding
+         the text column. -->
+    <dimen name="camera_card_thumb_width">224dp</dimen>
+    <dimen name="camera_card_thumb_height">126dp</dimen>
+    <dimen name="camera_card_height">150dp</dimen>
+    <!-- Dashboard / list content capped to 720dp so the dashboard
+         cards don't stretch into unreadable wide strips. -->
+    <dimen name="fragment_content_max_width">720dp</dimen>
+    <dimen name="fragment_title_size">26sp</dimen>
 </resources>

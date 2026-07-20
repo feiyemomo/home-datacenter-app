@@ -234,6 +234,50 @@ class AlertsDialog(
     }
 
     private fun playAlert(alert: Alert) {
+        // v1.6.10: switched from inline single-clip ExoPlayer
+        // playback to reusing RecordingsDialog with the alert's
+        // start timestamp. Previously the user only saw the 60s
+        // Frigate clip with no SeekBar, no motion chips, no
+        // surrounding context — felt like a dead-end. Now we open
+        // the full day-based recording UI at the alert's exact
+        // moment so the user can scrub backward/forward, see the
+        // motion timeline, jump to other alerts nearby, etc.
+        // RecordingsDialog's initialTimestamp mechanism handles:
+        //   1. compute the LOCAL day containing alert.startTime
+        //   2. build the 24h playlist of recordings for that day
+        //   3. seek ExoPlayer to the exact alert second on STATE_READY
+        // The user lands at the alert moment with full controls.
+        val ts = alert.startTime.toLong()
+        if (ts <= 0L) {
+            android.util.Log.w("AlertsDialog", "playAlert: invalid ts=$ts, falling back to clip")
+            playAlertClipInline(alert)
+            return
+        }
+        try {
+            // Dismiss this alerts dialog first so the recordings
+            // dialog doesn't stack on top (otherwise the user has
+            // to close TWO dialogs to get back to the camera detail
+            // page). The recordings dialog has its own back button.
+            dismiss()
+            RecordingsDialog(
+                context = context,
+                camera = camera,
+                container = container,
+                initialTimestamp = ts,
+            ).show()
+        } catch (e: Exception) {
+            android.util.Log.e("AlertsDialog",
+                "RecordingsDialog launch failed: ${e.message}", e)
+            // Fall back to the old inline single-clip playback path
+            // if the recordings dialog can't be opened (e.g. backend
+            // has no recordings for this day).
+            playAlertClipInline(alert)
+        }
+    }
+
+    /** Legacy single-clip inline playback — only used as a fallback
+     *  when RecordingsDialog can't be opened. */
+    private fun playAlertClipInline(alert: Alert) {
         // The :recId path param is a unix timestamp; backend buckets it to the
         // containing minute and concatenates 10s Frigate segments into one MP4.
         val recId = alert.startTime.toLong()

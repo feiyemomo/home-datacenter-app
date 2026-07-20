@@ -28,10 +28,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.homedatacenter.app.R
 import com.homedatacenter.app.data.model.Camera
 
 // v1.6.4 rev6: warm liquid glass palette. Replaced the cold dark
@@ -81,6 +83,16 @@ fun CameraCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // v1.6.8: card + thumbnail dimensions now read from
+    // @dimen/camera_card_* so phones, 7" tablets, and 10" tablets
+    // each get appropriately-sized cards without code duplication.
+    // Phones: 132dp card / 192x108dp thumbnail (default).
+    // 7" tablets: 150dp / 224x126dp (values-w600dp).
+    // 10" tablets: 159dp / 240x135dp (values-w936dp).
+    val cardHeight = dimensionResource(R.dimen.camera_card_height)
+    val thumbWidth = dimensionResource(R.dimen.camera_card_thumb_width)
+    val thumbHeight = dimensionResource(R.dimen.camera_card_thumb_height)
+
     Card(
         modifier = modifier
             .fillMaxWidth()
@@ -92,24 +104,24 @@ fun CameraCard(
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
     ) {
         // v1.6.4 rev6: horizontal layout — bigger thumbnail on the
-        // left, slim text column on the right. Height fixed at 132dp
-        // (108 thumbnail + 12 padding top + 12 padding bottom = 132),
-        // so the row is taller than the previous 84dp card but
-        // still compact enough to show 4-5 cards on a typical screen.
+        // left, slim text column on the right. Height comes from
+        // @dimen/camera_card_height so the card scales with the
+        // device's screen width.
         // The thumbnail is now 1.78× taller and 1.5× wider than the
         // previous 128×72 — easily big enough to read motion at a
         // glance without opening the detail page.
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(132.dp)
+                .height(cardHeight)
                 .padding(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Thumbnail (16:9, 192×108dp area — was 128×72).
+            // Thumbnail (16:9). Size from dimens so tablets get
+            // larger previews.
             Box(
                 modifier = Modifier
-                    .size(width = 192.dp, height = 108.dp)
+                    .size(width = thumbWidth, height = thumbHeight)
                     .clip(RoundedCornerShape(14.dp))
                     .background(Color.Black),
             ) {

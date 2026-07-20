@@ -23,7 +23,7 @@ import android.view.View
  * Tier colors (matching bg_chip_motion_*.xml):
  *   - LOW (teal):    #4DB6AC
  *   - MID (amber):   #FFB300
- *   - HIGH (orange): #FF7043
+ *   - HIGH (orange): #FFB300 (v1.6.8: merged with MID — visually one yellow tier)
  *   - ALERT (red):   #EF5350
  *
  * Usage:
@@ -70,7 +70,12 @@ class AlertRangeOverlay @JvmOverloads constructor(
         isDither = true
     }
     private val highTierPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#FF7043") // orange
+        // v1.6.8: merged with midTierPaint — both MID and HIGH render
+        // as amber/yellow per user request "黄，橙色chip统一合并为黄色".
+        // The HIGH tier is still tracked internally so backend merging
+        // logic (curTier upgrade rules) keeps working, but visually
+        // MID+HIGH are a single yellow tier.
+        color = Color.parseColor("#FFB300") // amber (same as midTierPaint)
         strokeWidth = 0f
         isDither = true
     }
