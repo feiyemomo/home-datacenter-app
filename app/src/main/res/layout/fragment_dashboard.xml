@@ -246,41 +246,45 @@
                 app:orientation="horizontal"
                 android:layout_marginTop="10dp">
 
-                <include layout="@layout/item_stat_card"
-                    android:id="@+id/cardDevices"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    app:layout_columnWeight="1"
-                    app:layout_gravity="fill_horizontal"
-                    android:layout_marginEnd="6dp"
-                    android:layout_marginBottom="6dp" />
+                <!-- v1.5.4: include layout_height MUST be "120dp" (not
+                 wrap_content) — otherwise it overrides item_stat_card.xml's
+                 root FrameLayout height=120dp and the fixed-height
+                 grid alignment breaks (uptime string gets clipped). -->
+            <include layout="@layout/item_stat_card"
+                android:id="@+id/cardDevices"
+                android:layout_width="0dp"
+                android:layout_height="120dp"
+                app:layout_columnWeight="1"
+                app:layout_gravity="fill_horizontal"
+                android:layout_marginEnd="6dp"
+                android:layout_marginBottom="6dp" />
 
-                <include layout="@layout/item_stat_card"
-                    android:id="@+id/cardMqtt"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    app:layout_columnWeight="1"
-                    app:layout_gravity="fill_horizontal"
-                    android:layout_marginStart="6dp"
-                    android:layout_marginBottom="6dp" />
+            <include layout="@layout/item_stat_card"
+                android:id="@+id/cardMqtt"
+                android:layout_width="0dp"
+                android:layout_height="120dp"
+                app:layout_columnWeight="1"
+                app:layout_gravity="fill_horizontal"
+                android:layout_marginStart="6dp"
+                android:layout_marginBottom="6dp" />
 
-                <include layout="@layout/item_stat_card"
-                    android:id="@+id/cardWs"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    app:layout_columnWeight="1"
-                    app:layout_gravity="fill_horizontal"
-                    android:layout_marginEnd="6dp"
-                    android:layout_marginTop="6dp" />
+            <include layout="@layout/item_stat_card"
+                android:id="@+id/cardWs"
+                android:layout_width="0dp"
+                android:layout_height="120dp"
+                app:layout_columnWeight="1"
+                app:layout_gravity="fill_horizontal"
+                android:layout_marginEnd="6dp"
+                android:layout_marginTop="6dp" />
 
-                <include layout="@layout/item_stat_card"
-                    android:id="@+id/cardUptime"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    app:layout_columnWeight="1"
-                    app:layout_gravity="fill_horizontal"
-                    android:layout_marginStart="6dp"
-                    android:layout_marginTop="6dp" />
+            <include layout="@layout/item_stat_card"
+                android:id="@+id/cardUptime"
+                android:layout_width="0dp"
+                android:layout_height="120dp"
+                app:layout_columnWeight="1"
+                app:layout_gravity="fill_horizontal"
+                android:layout_marginStart="6dp"
+                android:layout_marginTop="6dp" />
 
             </androidx.gridlayout.widget.GridLayout>
 

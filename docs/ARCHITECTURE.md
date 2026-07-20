@@ -844,6 +844,23 @@ binding.cardNetwork.setOnClickListener {
 - `Camera.isRecordingEnabled` 扩展属性：从 `camera.meta["recording"]` 解析 `{enabled, retention_days, segment_seconds}`，不再硬编码 `false`（Frigate 实际已开启持续录像）
 - `DashboardFragment.updateNetworkStatus()`：`tvNetworkStrategy` 改为读 `BaseUrlResolver.current()` 显示"局域网/远程"，与之前的 `status.strategy`（P2P/Relay）冲突；同时隐藏 `pathChip` 冗余显示
 
+### v1.5.4：状态栏间距全局修复 + 16KB page size 兼容性
+
+v1.5.3 只给 `CameraDetailActivity` 加了 `fitsSystemWindows`，但 `MainActivity` 的根 `ConstraintLayout` 没加，导致 DashboardFragment / CamerasFragment / AlertsFragment 等所有 Fragment 顶部仍贴着状态栏；同时 v1.5.3 升级 stream-webrtc-android 后真机启动时弹出 Android 15+ "16 KB page size not compatible" 警告。
+
+- `activity_main.xml` 根 `ConstraintLayout` 加 `android:fitsSystemWindows="true"`，所有 Fragment 自动从状态栏下方开始；`BottomNavContainer` 仍约束在底部不受影响
+- `fragment_dashboard.xml` 中 4 个 `<include>` 的 `layout_height` 从 `wrap_content` 改为 `120dp` — Android include 机制会用外部 `layout_height` 覆盖被 include 的根 View 的高度，v1.5.3 写的 `120dp` 在 include 处被 `wrap_content` 覆盖，固定高度失效，导致 4 卡片仍不等高、运行时间字符串被挤压显示不全
+- `io.getstream:stream-webrtc-android` 从 `1.1.0`（2024-06，PT_LOAD p_align=0x1000 即 4KB）升级到 `1.3.10`（2025-09，p_align=0x4000 即 16KB），消除 `libjingle_peerconnection_so.so` 的 LOAD segment 不对齐警告
+- Compose BOM 从 `2024.09.00` 升级到 `2025.06.00`，传递升级 `androidx.graphics.path` 到正式版（p_align=0x4000），消除 `libandroidx.graphics.path.so` 警告
+- `app/build.gradle.kts` 新增 `packaging { jniLibs { useLegacyPackaging = false } }`，让 AGP 在 APK 打包时将 `.so` 文件以未压缩 + 16KB 对齐方式存储（与上述 .so 内部 16KB LOAD 对齐配合，完全消除 Android 15+ 启动警告）
+- 版本号 `1.5.3 → 1.5.4`，`versionCode 23 → 24`
+
+**Android 16KB page size 兼容性原理**：
+
+- Android 15+ 设备的页面大小可配置为 16KB（之前固定 4KB），设备启动时若加载的 `.so` 文件 PT_LOAD segment `p_align < 16384`，OS 会以 "page size compatible mode" 运行该应用（功能正常但内存映射有性能损耗），并弹出兼容性警告
+- 修复需要 .so 文件本身用 `-Wl,-z,max-page-size=16384` 链接选项重新编译（这是 stream-webrtc-android 1.3.x 已做的事），APK 内的 zip 对齐由 AGP `useLegacyPackaging=false` 处理
+- 验证：用 Python `struct.unpack_from` 读取 APK 内 `.so` 文件的 ELF header，检查所有 PT_LOAD segment 的 `p_align` 是否等于 0x4000
+
 ### PTZ 控制图标统一
 
 5 个 PTZ 图标（`ic_ptz_up / down / left / right / stop`）替换为 Material chevron 系列（`expand_less / expand_more / chevron_left / chevron_right`）+ 环形 `cancel` 风格的 stop。之前的 up/down 是全宽 arrow_upward/downward 而 left/right 是小三角，视觉不一致；统一 chevron 后 D-pad 更现代、更符合 PTZ 控件惯例。

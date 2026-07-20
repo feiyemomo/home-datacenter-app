@@ -16,8 +16,8 @@ android {
         applicationId = "com.homedatacenter.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = 23
-        versionName = "1.5.3"
+        versionCode = 24
+        versionName = "1.5.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -62,6 +62,15 @@ android {
     buildFeatures {
         viewBinding = true
         compose = true
+    }
+    // v1.5.4: packaging block — keep useLegacyPackaging=false so AGP
+    // stores .so files uncompressed and page-aligned in the APK. This
+    // is required for 16 KB page size compatibility on Android 15+
+    // devices (along with .so files compiled with -Wl,-z,max-page-size=16384).
+    packaging {
+        jniLibs {
+            useLegacyPackaging = false
+        }
     }
 }
 
@@ -108,7 +117,12 @@ dependencies {
     // armeabi-v7a + x86_64 + x86 ABIs. Used as the primary live transport
     // in v1.5.3 (MP4 + HLS kept as fallback when WebRTC fails or when
     // the backend doesn't expose go2rtc's WebRTC route).
-    implementation("io.getstream:stream-webrtc-android:1.1.0")
+    // v1.5.4: upgraded 1.1.0 → 1.3.10 to fix Android 15+ "16 KB page size
+    // not compatible" warning. 1.1.0's libjingle_peerconnection_so.so
+    // was compiled with 4 KB LOAD segment alignment; 1.3.x ships .so
+    // files aligned to 16 KB. API surface stays compatible
+    // (PeerConnectionFactory + PeerConnection.Observer + SurfaceViewRenderer).
+    implementation("io.getstream:stream-webrtc-android:1.3.10")
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
