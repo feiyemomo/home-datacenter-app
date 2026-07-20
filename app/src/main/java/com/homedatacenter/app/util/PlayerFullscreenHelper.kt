@@ -289,37 +289,34 @@ class PlayerFullscreenHelper(
      * from v1.5.6:
      *   1. Player controls (pause / volume / scrubber) disappeared in
      *      fullscreen because elevation=16f lifted the playerView
-     *      above its own child controller layer — ExoPlayer's
-     *      StyledPlayerView controller is a child of the player view,
-     *      so elevating the parent doesn't push it behind the player
-     *      surface, but it did break the controller's touch handling
-     *      because bringToFront reordered it under the surface
-     *      renderer's sibling overlay (btnFullscreen / btnPlaybackSpeed).
+     *      above its own child controller layer.
      *   2. Fullscreen height didn't fill the screen because
      *      displayMetrics.heightPixels includes the status bar inset
      *      but not the navigation bar inset on devices with gesture
      *      nav — leaving a gap at the top or bottom.
      *
-     * Fix:
-     *   - Use the host Activity's window visible frame (via
-     *     windowManager.maximumWindowMetrics) for the fullscreen
-     *     height — this is the actual usable area in the current
-     *     orientation.
-     *   - Don't use bringToFront/elevation. Instead, hide all sibling
-     *     views in [hideOnFullscreen] (visibility=GONE) so the
-     *     playerView's parent has nothing else to render. The player
-     *     surface + controller remain in their normal z-order within
-     *     the playerView, so controls keep working.
-     *   - The parent FrameLayout's height is set to the fullscreen
-     *     height explicitly (this works for RecordingsDialog and
-     *     AlertsDialog where the player's parent is NOT inside a
-     *     ScrollView; for CameraDetailActivity the playerView's parent
-     *     IS inside a ScrollView, so we set the playerView's own
-     *     height to the fullscreen pixel value instead and rely on
-     *     ScrollView's child being measured at the exact requested
-     *     height when measured with AT_MOST spec — ScrollView uses
-     *     UNSPECIFIED for its single child, which honors an exact
-     *     pixel height just fine).
+     * v1.5.12 ROOT-CAUSE FIX: previously we queried
+     * `windowManager.maximumWindowMetrics.bounds.height()` SYNCHRONOUSLY
+     * right after calling `activity.requestedOrientation = LANDSCAPE`.
+     * But orientation change is ASYNC — the system doesn't actually
+     * rotate the display until the next frame. So maximumWindowMetrics
+     * still returned the PORTRAIT height (e.g. 2400px). We'd write
+     * playerView.layoutParams.height = 2400, then the rotation would
+     * complete and the screen would be in landscape (1080px wide), but
+     * the playerView would be 2400px tall — taller than the screen —
+     * and ScrollView would let the user "scroll" past the bottom of
+     * the player. That's the "全屏视频还是有问题" the user kept
+     * reporting through v1.5.10 and v1.5.11.
+     *
+     * Fix: schedule the height apply on the NEXT frame via
+     * `hostView.post { ... }`. By then the orientation change has
+     * been applied (the system processes orientation changes in the
+     * next Choreographer frame). We also register an
+     * OnLayoutChangeListener on hostView that RE-APPLIES the height
+     * whenever the layout changes while we're in fullscreen — this
+     * catches cases where the rotation takes 2 frames or where the
+     * user enters fullscreen before the orientation request was
+     * even processed.
      */
     private fun applyHeight(
         view: View?,
@@ -332,29 +329,19 @@ class PlayerFullscreenHelper(
             if (params.height > 0) {
                 save(params.height)
             }
-            // Use the actual window visible frame height in pixels.
-            // displayMetrics.heightPixels includes the status bar
-            // but not the gesture nav inset on some devices, leaving
-            // gaps. windowManager.maximumWindowMetrics gives the
-            // actual full window size for the current orientation.
-            val fullscreenHeight = runCatching {
-                val wm = hostView.context.getSystemService(Context.WINDOW_SERVICE)
-                    as WindowManager
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-                    wm.maximumWindowMetrics.bounds.height()
-                } else {
-                    @Suppress("DEPRECATION")
-                    hostView.resources.displayMetrics.heightPixels
-                }
-            }.getOrDefault(hostView.resources.displayMetrics.heightPixels)
-
-            params.height = fullscreenHeight
-            // v1.5.7: don't elevate or bringToFront — both break the
-            // controller's touch dispatch. Instead, hide siblings via
-            // [hideOnFullscreen] (visibility=GONE) so the playerView
-            // is the only visible child of its parent.
+            // v1.5.12: defer the actual height assignment to next
+            // frame. We set MATCH_PARENT width now (works in any
+            // orientation) but defer height — querying
+            // maximumWindowMetrics before rotation completes gives
+            // the wrong value (portrait height instead of landscape
+            // height).
             params.width = ViewGroup.LayoutParams.MATCH_PARENT
+            view.layoutParams = params
+            // Schedule height computation on next frame.
+            view.post { applyFullscreenHeightNow(view) }
         } else {
+            // Detach the layout listener (we're exiting fullscreen).
+            view.removeOnLayoutChangeListener(layoutChangeListener)
             val saved = restore()
             params.height = saved.takeIf { it > 0 }
                 ?: TypedValue.applyDimension(
@@ -363,8 +350,74 @@ class PlayerFullscreenHelper(
                     hostView.resources.displayMetrics,
                 ).toInt()
             params.width = ViewGroup.LayoutParams.MATCH_PARENT
+            view.layoutParams = params
         }
+    }
+
+    /**
+     * v1.5.12: the actual height assignment, called from
+     * `hostView.post { ... }` after the orientation change has
+     * propagated. We register an OnLayoutChangeListener afterwards
+     * so that any SUBSEQUENT layout passes (e.g. system bars
+     * animating in/out) re-trigger this method and keep the
+     * playerView filling the screen.
+     */
+    private fun applyFullscreenHeightNow(view: View) {
+        if (!isFullscreen) return  // user exited fullscreen before post fired
+        val fullscreenHeight = computeFullscreenHeight()
+        val params = view.layoutParams
+        params.height = fullscreenHeight
+        params.width = ViewGroup.LayoutParams.MATCH_PARENT
         view.layoutParams = params
+        // v1.5.12: re-apply on any future layout change (e.g.
+        // orientation finishing 2 frames later, keyboard opening,
+        // system bars showing). The listener re-checks isFullscreen
+        // and calls back into [applyFullscreenHeightNow].
+        view.addOnLayoutChangeListener(layoutChangeListener)
+    }
+
+    /**
+     * v1.5.12: shared layout change listener that re-applies the
+     * fullscreen height when the layout changes while we're in
+     * fullscreen. We use a single instance so we can remove it
+     * cleanly on exit via `removeOnLayoutChangeListener`.
+     */
+    private val layoutChangeListener = View.OnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+        if (isFullscreen) {
+            val expected = computeFullscreenHeight()
+            val cur = v.layoutParams.height
+            if (cur != expected) {
+                val params = v.layoutParams
+                params.height = expected
+                v.layoutParams = params
+            }
+        }
+    }
+
+    /**
+     * v1.5.12: computes the fullscreen height in pixels using the
+     * CURRENT window state. maximumWindowMetrics reflects the
+     * current orientation (after rotation completes), so calling
+     * this on the post-rotation frame gives the correct landscape
+     * height.
+     */
+    private fun computeFullscreenHeight(): Int {
+        return runCatching {
+            val wm = hostView.context.getSystemService(Context.WINDOW_SERVICE)
+                as WindowManager
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                // currentWindowMetrics reflects what the user
+                // actually sees right now (post-rotation). Using
+                // maximumWindowMetrics gives the max POSSIBLE size
+                // which on a foldable can differ — but on phones
+                // currentWindowMetrics is the right call after the
+                // rotation completes.
+                wm.currentWindowMetrics.bounds.height()
+            } else {
+                @Suppress("DEPRECATION")
+                hostView.resources.displayMetrics.heightPixels
+            }
+        }.getOrDefault(hostView.resources.displayMetrics.heightPixels)
     }
 
     private fun attachSpeedButton(button: View) {
