@@ -23,6 +23,7 @@ import com.homedatacenter.app.databinding.FragmentDashboardBinding
 import com.homedatacenter.app.databinding.ItemStatCardBinding
 import com.homedatacenter.app.ui.alerts.AlertListAdapter
 import com.homedatacenter.app.ui.alerts.AlertSnapshotDialogFragment
+import com.homedatacenter.app.ui.cameras.CameraDetailActivity
 import com.homedatacenter.app.ui.main.MainActivity
 import com.homedatacenter.app.ui.network.NetworkDetailActivity
 import com.homedatacenter.app.util.AnimationHelper
@@ -53,6 +54,10 @@ class DashboardFragment : Fragment() {
     private var liveAlertDismissJob: Job? = null
     private var dashboardWebSocket: HomeCenterWebSocket? = null
     private var latestSystemStatus: SystemStatus? = null
+    // v1.6.0: cache the last live alert so the banner's click handler
+    // can jump to its recording at the exact timestamp. Cleared when
+    // the banner auto-dismisses.
+    private var lastLiveAlert: Alert? = null
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -607,6 +612,15 @@ class DashboardFragment : Fragment() {
         binding.liveAlertBanner.visibility = View.VISIBLE
         AnimationHelper.fadeIn(binding.liveAlertBanner, 250)
 
+        // v1.6.0: cache the alert so the banner's click handler can
+        // jump to its recording at the exact timestamp. Also wire
+        // the click handler here (idempotent — setOnClickListener
+        // replaces any previous listener, so re-binding is safe).
+        lastLiveAlert = alert
+        binding.liveAlertBanner.setOnClickListener {
+            lastLiveAlert?.let { jumpToCamerasWithAlert(it) }
+        }
+
         // Prepend to the alerts list (deduplicated)
         val merged = listOf(alert) + alertAdapter.currentList.filterNot { it.id == alert.id }
         alertAdapter.submitList(merged.take(5))
@@ -617,7 +631,12 @@ class DashboardFragment : Fragment() {
         liveAlertDismissJob?.cancel()
         liveAlertDismissJob = viewLifecycleOwner.lifecycleScope.launch {
             delay(8_000L)
-            if (_binding != null) binding.liveAlertBanner.visibility = View.GONE
+            if (_binding != null) {
+                binding.liveAlertBanner.visibility = View.GONE
+                // v1.6.0: clear the cached alert so a stale click
+                // doesn't jump to an outdated timestamp.
+                lastLiveAlert = null
+            }
         }
     }
 
@@ -648,13 +667,58 @@ class DashboardFragment : Fragment() {
         dialog.show(parentFragmentManager, AlertSnapshotDialogFragment.TAG)
     }
 
-    /** Jump from a recent alert row to the cameras tab.
-     *  Currently just switches tabs — cameras fragment will display
-     *  the camera list; future enhancement could auto-scroll to the
-     *  specific camera identified by [alert.cameraId]. */
+    /**
+     * v1.6.0: jump from a recent alert row directly to the camera's
+     * recording page at the alert's exact timestamp. Fetches the
+     * camera list (uses cache), finds the matching camera by id or
+     * name, then launches CameraDetailActivity with the camera JSON +
+     * alert.startTime as EXTRA_INITIAL_TIMESTAMP so the user lands
+     * at the alert's exact moment without manual scrubbing.
+     *
+     * On failure (no matching camera, network error), shows a toast
+     * and falls back to the old behavior of just switching to the
+     * cameras tab.
+     */
     private fun jumpToCamerasWithAlert(alert: Alert) {
-        (activity as? MainActivity)?.let {
-            it.binding.bottomNav.selectedItemId = R.id.nav_cameras
+        val mainActivity = activity as? MainActivity ?: return
+        val token = mainActivity.container.prefsManager.token
+        if (token.isNullOrEmpty()) {
+            android.widget.Toast.makeText(requireContext(),
+                R.string.not_logged_in,
+                android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        val startTs = alert.startTime.toLong()
+
+        lifecycleScope.launch {
+            try {
+                val cameras = mainActivity.container.getRepository()
+                    .listCameras(token, useCache = true)
+                val cam = cameras.firstOrNull { it.id == alert.cameraId }
+                    ?: cameras.firstOrNull { alert.cameraName.isNotEmpty() && it.name == alert.cameraName }
+                    ?: cameras.firstOrNull { alert.cameraSlug.isNotEmpty() && it.stream?.streamName == alert.cameraSlug }
+                if (cam == null) {
+                    android.widget.Toast.makeText(requireContext(),
+                        R.string.alert_jump_camera_not_found,
+                        android.widget.Toast.LENGTH_SHORT).show()
+                    mainActivity.binding.bottomNav.selectedItemId = R.id.nav_cameras
+                    return@launch
+                }
+                val cameraJson = NetworkFactory.json.encodeToString(
+                    com.homedatacenter.app.data.model.Camera.serializer(), cam)
+                val intent = Intent(requireContext(), CameraDetailActivity::class.java).apply {
+                    putExtra(CameraDetailActivity.EXTRA_CAMERA_JSON, cameraJson)
+                    putExtra(CameraDetailActivity.EXTRA_INITIAL_TIMESTAMP, startTs)
+                }
+                startActivity(intent)
+            } catch (e: Exception) {
+                android.util.Log.w("DashboardFragment",
+                    "jumpToCamerasWithAlert failed: ${e.message}", e)
+                android.widget.Toast.makeText(requireContext(),
+                    R.string.alert_jump_failed,
+                    android.widget.Toast.LENGTH_SHORT).show()
+                mainActivity.binding.bottomNav.selectedItemId = R.id.nav_cameras
+            }
         }
     }
 

@@ -3,7 +3,7 @@
 家庭数据中心 Android 客户端 — 一个用 **Kotlin + Jetpack Compose + ExoPlayer + WebRTC** 实现的家庭 NVR / IoT 控制台，配合 [home-datacenter](https://github.com/feiyemomo/home-datacenter) 后端使用，提供摄像头预览、WebRTC/MP4/HLS 直播（含音频）、录像回放、报警查看、设备状态、天气信息、局域网/远程自动切换和实时 WebSocket 推送。
 
 > 服务端项目：<https://github.com/feiyemomo/home-datacenter>
-> 当前版本：**v1.5.4**（versionCode 24）
+> 当前版本：**v1.6.0**（versionCode 43）
 
 ---
 
@@ -35,7 +35,7 @@
 | Compile SDK | 36 |
 | Java / Kotlin | 17 / 2.0 |
 | AGP | 9.2.1 |
-| 当前版本 | 1.5.4 (versionCode 24) |
+| 当前版本 | 1.6.0 (versionCode 43) |
 | 默认服务器 | `https://api.feiyemomo.top/`（远程） / `http://192.168.31.234:8088/`（局域网，自动探测） |
 
 App 通过 `(user_id, access_key)` 换取 JWT 后访问 `home-datacenter` 的 REST API 与 WebSocket。**BaseUrlResolver** 在启动时通过后台守护线程异步探测局域网 `http://192.168.31.234:8088/` 是否可达（TTFB ~10ms vs Cloudflare Tunnel 1.4s+），可达则切到局域网，否则走远程 Cloudflare Tunnel。启动调度采用指数退避重试（1.5s → 4s → 9s → 16s），覆盖真机「WiFi connected but not validated」窗口；同时附加 TCP socket 直连探测作为 OkHttp cleartext 拒绝时的兜底。NetworkChangeMonitor 注册 ConnectivityManager.NetworkCallback，在 WiFi/移动网络切换时立即触发 re-probe，无需等 5 分钟 TTL。摄像头直播走 go2rtc 暴露的 MP4（主）+ HLS（备），后端根据摄像头 `capabilities.audio` 在 go2rtc 流 URL 上自动追加 `#audio=aac` 启用音频转码，前端通过 ExoPlayer `volume` 控制静音/取消静音。
@@ -46,7 +46,7 @@ App 通过 `(user_id, access_key)` 换取 JWT 后访问 `home-datacenter` 的 RE
 
 - **首页（Dashboard）**：天气卡片 + 系统状态网格（MQTT / 设备 / 摄像头 / 运行时长） + 网络质量卡片（含**当前路径标签**：局域网=绿点 / 远程=琥珀点，每 5s 刷新） + 最近报警列表 + 实时检测 WS 横幅。
 - **摄像头（Cameras）**（v1.5.2 重构，v1.5.3 加入 WebRTC 直播）：列表改为**紧凑缩略图卡片**（128×72 缩略图 + 名称 / 厂商 / codec 徽章），点击整卡进入 `CameraDetailActivity`；详情页顶部为 **WebRTC 优先直播区**（v1.5.3：`WebRtcClient` 通过 `POST /api/v1/cameras/{id}/webrtc` 走 WHEP 信令，sub-second 延迟；失败自动 fallback 到 MP4 → HLS），下方为三按钮动作区——`查看录像`、`报警记录`、`重新加载`——分别打开 `RecordingsDialog`、`AlertsDialog`、重启直播流。`CameraDetailActivity` 同时承载 PTZ / 预设位 / 音频开关 / **Frigate 持续录像开关（v1.5.3：从 `camera.meta["recording"]` 解析实际状态，不再硬编码 false）** / H264 切换 / 删除（管理员）。`CamerasFragment` 列表不再持有 ExoPlayer 实例，滚动只解码缩略图位图（LRU 16 条缓存），翻页/复用零 MediaCodec 开销。**注册 FAB 移到顶部右上**（mini size + `ic_add`），不再与底部导航冲突。**v1.5.3：状态栏间距由根 ScrollView `fitsSystemWindows=true` 推到状态栏下方；播放器全屏按钮强制横屏，独立 `btnFullscreen` overlay 兼容 WebRTC 与 ExoPlayer 模式**。
-- **报警（Alerts）**（v1.5.2 精简）：报警项布局重写——删除"截图"按钮、删除可展开详情、删除大图模态；保留缩略图 + 标签 + 摄像头名 + 时间 + **"查看录像"** Chip，点击跳转摄像头 tab。修复"前门"等长摄像头名截断、按钮文字溢出问题。
+- **报警（Alerts）**（v1.5.2 精简，v1.6.0 增强跳转）：报警项布局重写——删除"截图"按钮、删除可展开详情、删除大图模态；保留缩略图 + 标签 + 摄像头名 + 时间 + **"查看录像"** Chip。**v1.6.0：点击"查看录像"或首页实时报警横幅直接跳转到 `CameraDetailActivity` 并自动打开 `RecordingsDialog`，传入 `EXTRA_INITIAL_TIMESTAMP`（报警 `start_time`）——对话框按日期锚定到对应录像日、构建 24h 播放列表、ExoPlayer 在首次 `STATE_READY` 时通过 `pendingAlertSeekMs` 一次性 seek 到报警的精确时刻**（之前仅切换到 cameras tab，需用户手动查找）。失败回退到旧切换 tab 行为，并在 DashboardFragment 缓存 `lastLiveAlert` 供横幅点击使用。
 - **设备（Devices）**：所有已绑定设备的状态卡片，支持撤销设备。
 - **设置（Settings）**：**个人资料卡片**（用户名 / 角色 / JWT user_id / device_id / 签发与到期时间 / 剩余天数） + **管理员分区**（仅 `prefsManager.isAdmin=true` 时显示，入口跳转 `UsersActivity`） + 主题切换（明 / 暗 / 跟随系统） + 退出登录 + 版本号。
 - **管理员用户管理**（v1.5.0 新增）：`UsersActivity` 列出全部用户（含设备数 / 注册时间），FAB 创建用户并可选创建首台设备（一次性返回 64 位 AccessKey），点击列表项打开编辑对话框（改名 / 切换管理员 / 删除），自删与自降级在客户端先拦截、服务端再兜底。
@@ -385,6 +385,7 @@ versionName = "1.4.3"
 | GET | `/api/v1/cameras/{id}/stream.mp4` | fMP4 直播流（主，含音频） |
 | GET | `/api/v1/cameras/{id}/recordings` | 录像列表 |
 | GET | `/api/v1/cameras/alerts` | 全局报警列表 |
+| GET | `/api/v1/cameras/{id}/motion-ranges?after=UNIX&before=UNIX` | **v1.6.0**：指定时间窗口内的 motion 范围（用于录像 SeekBar 红标） |
 | POST | `/api/v1/cameras` | 注册摄像头（管理员） |
 | DELETE | `/api/v1/cameras/{id}` | 删除摄像头（管理员） |
 | PUT | `/api/v1/cameras/{id}/codec` | 更新编码（管理员） |
@@ -442,6 +443,11 @@ versionName = "1.4.3"
 - 独立 `btnPlaybackSpeed` overlay（0.5x / 1x / 1.5x / 2x，从设置菜单移出）
 - 独立 `btnFullscreen` overlay（强制横屏，与 `PlayerFullscreenHelper` 配合）
 - 错误处理：失败显示 `tvVideoError`，不自动 fallback（录像为单文件，无备选路径）
+
+**v1.6.0 整天播放增强**：
+- **报警时段标红（motion-ranges）**：`RecordingsDialog.loadAlertRangesForDay` 改用 `GET /api/v1/cameras/{id}/motion-ranges?after&before` 替代旧 `/api/v1/cameras/alerts`。alerts 端点仅在 AI 检测到 person/car 等目标时才生成事件；对于普通家庭摄像头，Frigate 配置常常未跨过 AI 阈值，导致 alerts 列表为空，SeekBar 上无红标。motion-ranges 直接查询 Frigate 录制段的 `motion` 字段并合并相邻段（间隙 ≤10s 视为连续），返回所有像素级活动时间窗口，是「这里有动静」的更真实信号。返回格式为 `{"ranges": [[startUnix, endUnix], ...], "total": N}`，客户端用 `kotlinx.serialization.json.JsonArray` 手动解析（裸数组无法用 `@Serializable List<Pair<Long,Long>>` 直接解码）。红标渲染仍由 `AlertRangeOverlay` 自定义 View 完成（最小 4px 宽度保证可见）。
+- **进度条吸附（snap-to-range）**：`onStopTrackingTouch` 释放 SeekBar 时调用 `snapProgressToRangeEdge(progress)` 检查最近的 motion range 边缘；若距离 < `motionSnapRadiusMs = 30_000ms`（30秒）则自动吸附到该边缘。24h 时间轴上每像素约 120s，30s 远在一个像素内——用户感觉进度条「啪」一下吸到红标边缘，无需像素级微调即可跳到 motion 起始或结束点。吸附后的 `progress` 更新 SeekBar 视觉与位置标签，并作为 seek 目标传给 ExoPlayer。
+- **报警推送精确跳转**：`AlertsFragment.onJumpCamera` / `DashboardFragment.jumpToCamerasWithAlert` 现在直接 `startActivity(CameraDetailActivity)`，Intent extra `EXTRA_INITIAL_TIMESTAMP = alert.startTime.toLong()`。`CameraDetailActivity.onCreate` 检测到该 extra 后 `post { showRecordings(initialTs) }`，`RecordingsDialog` 构造参数新增 `initialTimestamp: Long`，内部 `openDayForTimestamp` 锚定到报警所在日期并构建播放列表，`pendingAlertSeekMs` 标志在 ExoPlayer 首次 `STATE_READY` 时一次性 seek 到报警精确时刻（用 `clipStartOffsets.binarySearch` 计算目标 window 与位置）。失败回退到旧的「切换到 cameras tab」行为。DashboardFragment 的实时报警横幅也加了点击监听，复用同一 jump 逻辑。
 
 ### Surface 时序
 

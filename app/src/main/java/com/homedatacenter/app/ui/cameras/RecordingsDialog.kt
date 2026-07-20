@@ -33,6 +33,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -42,7 +48,14 @@ import java.util.TimeZone
 class RecordingsDialog(
     context: Context,
     private val camera: Camera,
-    private val container: AppContainer
+    private val container: AppContainer,
+    // v1.6.0: optional initial playback position as a unix timestamp
+    // (seconds). When set (e.g. via clicking an alert card in the
+    // alerts list), the dialog opens the day picker for that date,
+    // loads all recordings of that day into the playlist, and seeks
+    // ExoPlayer to the matching clip + offset immediately. The user
+    // thus lands at the alert's exact moment without manual scrubbing.
+    private val initialTimestamp: Long = 0L,
 ) : Dialog(context, R.style.FullScreenDialog) {
 
     private lateinit var binding: DialogRecordingsBinding
@@ -93,6 +106,23 @@ class RecordingsDialog(
     private var dayStartLocalMillis: Long = 0L
     private val daySeekHandler = Handler(Looper.getMainLooper())
     private var daySeekUserDragging = false
+    // v1.6.0: one-shot flag for alert-click seek. Set when an alert
+    // opens the dialog with initialTimestamp; cleared after the first
+    // STATE_READY so subsequent state changes don't re-seek.
+    private var pendingAlertSeekMs: Long = 0L
+    // v1.6.0: motion ranges in day-relative ms (0..dayTotalMs). Cached
+    // from [loadAlertRangesForDay] so the SeekBar snap logic in
+    // [onStopTrackingTouch] can find the nearest range edge without
+    // re-fetching from the backend on every user release. Empty list
+    // means either no motion detected today or the fetch failed —
+    // snapping is a no-op in that case.
+    private var motionRangesRelative: List<Pair<Long, Long>> = emptyList()
+    // v1.6.0: snap radius in ms. When the user releases the SeekBar
+    // within this distance of a motion range edge, we snap to the
+    // edge. 30s is roughly the smallest visible seek granularity on
+    // a 24h timeline at 720px width (24h / 720px = 120s/px, so 30s is
+    // well within a single pixel — the snap is felt, not seen).
+    private val motionSnapRadiusMs: Long = 30_000L
     private val daySeekUpdateRunnable = object : Runnable {
         override fun run() {
             val p = player ?: return
@@ -128,6 +158,17 @@ class RecordingsDialog(
         // as one continuous video (the challenge the user explicitly
         // asked for). Implementation lives in [playDayAsPlaylist].
         binding.btnPlayDay.setOnClickListener { showDayPicker() }
+
+        // v1.6.0: if opened with an initialTimestamp (alert click),
+        // auto-open the day picker for that date and seek to the
+        // matching clip+offset after the playlist loads. We post the
+        // call so loadRecordings() runs first (otherwise the recording
+        // list is empty when the picker fires).
+        if (initialTimestamp > 0L) {
+            binding.root.post {
+                openDayForTimestamp(initialTimestamp)
+            }
+        }
     }
 
     private fun setupRecyclerView() {
@@ -261,6 +302,37 @@ class RecordingsDialog(
     }
 
     /**
+     * v1.6.0: opens the day playlist for the date containing
+     * [unixSeconds] and seeks ExoPlayer to that exact moment after
+     * the playlist loads. Used by the alert-click "查看录像" jump —
+     * the user clicks an alert and lands at its exact time without
+     * manually opening the date picker + scrubbing.
+     *
+     * Implementation: compute the LOCAL date of [unixSeconds], call
+     * [playDayAsPlaylist] with that date (it builds the playlist),
+     * then post a seek once ExoPlayer reports STATE_READY. We can't
+     * seek immediately after [playDayAsPlaylist] returns because
+     * ExoPlayer's prepare() is async — the player reports
+     * STATE_BUFFERING until the first clip loads. We register a
+     * one-shot Player.Listener that fires on the first STATE_READY
+     * and seeks to the requested time.
+     */
+    private fun openDayForTimestamp(unixSeconds: Long) {
+        if (unixSeconds <= 0L) return
+        val cal = Calendar.getInstance().apply {
+            timeInMillis = unixSeconds * 1000L
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        // playDayAsPlaylist builds the playlist and posts a seek-to
+        // once ExoPlayer reports STATE_READY — see the one-shot
+        // listener we register inside it.
+        playDayAsPlaylist(cal, seekToMs = unixSeconds * 1000L)
+    }
+
+    /**
      * v1.5.10: plays a full 24h of recordings as a single ExoPlayer
      * playlist. The user explicitly asked for "integrate playback as
      * one big video with max duration 1 day". Implementation:
@@ -295,8 +367,13 @@ class RecordingsDialog(
      * @param dayFilterStart Calendar set to 00:00:00 LOCAL of the day
      *   to play. Used only to filter recordings on that date; the
      *   actual playback/SeekBar anchor is the first recording's time.
+     * @param seekToMs v1.6.0: optional unix-ms timestamp to seek to
+     *   after the playlist loads. When non-zero, a one-shot Player.Listener
+     *   is registered that fires on the first STATE_READY and seeks
+     *   ExoPlayer to the matching clip + offset. Used by alert-click
+     *   "查看录像" jump.
      */
-    private fun playDayAsPlaylist(dayFilterStart: Calendar) {
+    private fun playDayAsPlaylist(dayFilterStart: Calendar, seekToMs: Long = 0L) {
         // dayFilterStart is in the user's local timezone (Calendar
         // default). Convert it to UTC instant for comparison with
         // backend's UTC ISO strings.
@@ -407,6 +484,31 @@ class RecordingsDialog(
             addListener(object : Player.Listener {
                 override fun onPlaybackStateChanged(state: Int) {
                     binding.progressPlayer.visibility = if (state == Player.STATE_BUFFERING) View.VISIBLE else View.GONE
+                    // v1.6.0: one-shot seek-to when the user opened
+                    // the dialog via an alert click. We wait for
+                    // STATE_READY (the first clip has loaded) then
+                    // compute the matching window+position from the
+                    // alert's unix-ms timestamp and seek there.
+                    if (state == Player.STATE_READY && pendingAlertSeekMs > 0L) {
+                        val seekMs = pendingAlertSeekMs
+                        pendingAlertSeekMs = 0L // clear before seeking
+                        val progress = (seekMs - dayStartLocalMillis)
+                            .coerceIn(0L, dayTotalMs)
+                        val raw = clipStartOffsets.binarySearch(progress)
+                        val idx = if (raw >= 0) raw
+                                  else (-raw - 2).coerceAtLeast(0)
+                        val targetWindow = idx.coerceIn(0, clipStartOffsets.size - 1)
+                            .coerceAtMost(mediaItemCount - 1)
+                        val targetPosition = (progress - clipStartOffsets[targetWindow])
+                            .coerceIn(0L, dayClipDurationMs)
+                        android.util.Log.d("RecordingsDialog",
+                            "Alert-seek: ts=$seekMs progress=$progress " +
+                            "-> window=$targetWindow pos=$targetPosition")
+                        seekTo(targetWindow, targetPosition)
+                        // Update the SeekBar to match.
+                        binding.daySeekBar.progress = progress.toInt()
+                        binding.tvDayPosition.text = formatDayTime(progress)
+                    }
                 }
                 override fun onPlayerError(error: PlaybackException) {
                     android.util.Log.e("RecordingsDialog", "Player error: ${error.message}")
@@ -415,6 +517,11 @@ class RecordingsDialog(
             prepare()
         }
         binding.playerView.player = player
+        // v1.6.0: arm the one-shot alert-seek flag so the listener
+        // above can fire on the first STATE_READY.
+        if (seekToMs > 0L) {
+            pendingAlertSeekMs = seekToMs
+        }
 
         // v1.5.11: hide ExoPlayer's built-in controller scrubber in
         // playlist mode so the user doesn't see two competing
@@ -450,8 +557,25 @@ class RecordingsDialog(
             }
             override fun onStopTrackingTouch(seek: SeekBar?) {
                 daySeekUserDragging = false
-                val progress = seek?.progress?.toLong() ?: return
+                val rawProgress = seek?.progress?.toLong() ?: return
                 val p = player ?: return
+                // v1.6.0: snap to nearest motion-range edge. If the
+                // user released within [motionSnapRadiusMs] of a red
+                // segment's start or end, snap the SeekBar to that
+                // edge so the user lands precisely at the start of a
+                // motion event without having to pixel-hunt on a 24h
+                // timeline. Without this, the closest meaningful seek
+                // position would be lost in the 120s-per-pixel noise.
+                val progress = snapProgressToRangeEdge(rawProgress) ?: rawProgress
+                if (progress != rawProgress) {
+                    // Update SeekBar + label to reflect the snapped
+                    // position so the user sees the thumb jump to
+                    // the range edge.
+                    binding.daySeekBar.progress = progress.toInt()
+                    binding.tvDayPosition.text = formatDayTime(progress)
+                    android.util.Log.d("RecordingsDialog",
+                        "Snap: ${rawProgress}ms -> ${progress}ms (${formatDayTime(progress)})")
+                }
                 // v1.5.16: map absolute LOCAL time-of-day (progress) to
                 // the containing clip via binary search on
                 // clipStartOffsets. The previous math assumed contiguous
@@ -556,215 +680,150 @@ class RecordingsDialog(
     }
 
     /**
-     * v1.5.12: fetches alerts from the backend, filters them to this
-     * camera + the selected day, then converts each alert's
-     * (start_time, end_time) into a day-relative (startMs, endMs)
-     * pair that [AlertRangeOverlay] can render.
+     * v1.6.0: fetches motion ranges from the backend's
+     * /api/v1/cameras/:id/motion-ranges endpoint, converts each
+     * (startUnix, endUnix) pair into a day-relative (startMs, endMs)
+     * pair, and hands them to [AlertRangeOverlay] for rendering.
      *
-     * v1.5.13 FIX: previously we filtered by `alert.camera_id == camId`
-     * only. The backend's `alertEntry.CameraID` uses `omitempty` —
-     * when `LookupByFrigateSlug` fails (slug mismatch), the JSON
-     * response drops the field entirely and Android parses it as
-     * null. So matching by id alone missed all alerts whose Frigate
-     * slug doesn't match the current camera's streamName.
+     * Replaces the v1.5.12 implementation that used /api/v1/cameras/alerts
+     * as the overlay source. The alerts endpoint only fires on AI
+     * detection (person/car/etc) — for the user's home cameras the
+     * Frigate config doesn't reliably cross the AI threshold, so the
+     * alerts list was always empty and the SeekBar showed no red marks
+     * even though motion was recorded. The motion-ranges endpoint
+     * queries Frigate's recording segments directly and returns any
+     * segment with motion>0 as a red range — a much truer "activity
+     * happened here" signal.
      *
-     * New strategy: match by EITHER camera_id OR camera_slug (the
-     * slug derived from camera.streamName via the same slugifyName
-     * algorithm the backend uses). camera_slug is always present in
-     * the JSON (no omitempty) so this is the more reliable signal.
+     * The response JSON looks like:
+     * `{"code":0,"message":"ok","data":{"ranges":[[s1,e1],[s2,e2]],"total":2}}`
+     * where each sN/eN is a unix second timestamp. We parse the bare
+     * JSON array manually with kotlinx.serialization.json (the data
+     * class is non-@Serializable because List<Pair<Long,Long>> can't
+     * be auto-decoded from a bare 2-element array).
+     *
+     * Side effect: caches the resulting relative ranges in
+     * [motionRangesRelative] so the SeekBar snap logic in
+     * [onStopTrackingTouch] can find the nearest edge without a
+     * re-fetch on every user release.
      *
      * Threading:
      *  - Network call on Dispatchers.IO
      *  - UI update (setAlertRanges) on Dispatchers.Main
      *
-     * @param dayStartLocalMillis Day boundary in LOCAL time.
-     * @param dayEndLocalMillis Day boundary + 24h in LOCAL time.
+     * @param dayStartLocalMillis Day boundary in LOCAL time (ms).
+     * @param dayEndLocalMillis Day boundary + 24h in LOCAL time (ms).
      */
     private fun loadAlertRangesForDay(
         dayStartLocalMillis: Long,
         dayEndLocalMillis: Long,
     ) {
         // Reset the overlay so a stale red segment doesn't persist
-        // if the network call fails.
+        // if the network call fails. Also clear the snap cache.
         binding.alertOverlay.setMax(dayEndLocalMillis - dayStartLocalMillis)
         binding.alertOverlay.setAlertRanges(emptyList())
+        motionRangesRelative = emptyList()
 
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val authHeader = if (!token.isNullOrEmpty()) "Bearer $token" else ""
-                // v1.5.14: drop limit from 200 to 100 — the backend
-                // clamps to 100 anyway, and asking for 200 just means
-                // we wait for the same payload. 100 covers ~24h of
-                // motion events for a single camera at the default
-                // detection FPS (2 fps, ~5 events/hour).
-                val resp = container.getApi().listAlerts(authHeader, limit = 100)
+                val afterSec = (dayStartLocalMillis / 1000L)
+                val beforeSec = (dayEndLocalMillis / 1000L)
+                android.util.Log.d("RecordingsDialog",
+                    "Motion-ranges fetch: cam=${camera.id} after=$afterSec before=$beforeSec")
+                val resp = container.getApi()
+                    .listMotionRanges(authHeader, camera.id, afterSec, beforeSec)
                 if (!resp.isSuccess) {
                     android.util.Log.w("RecordingsDialog",
-                        "listAlerts for overlay returned code=${resp.code} msg=${resp.message}")
+                        "listMotionRanges returned code=${resp.code} msg=${resp.message}")
                     return@launch
                 }
-                val decoded = resp.decodeData<
-                    com.homedatacenter.app.data.model.AlertListData>()
-                val alerts = decoded?.alerts ?: emptyList()
 
-                val camId = camera.id
-                val expectedSlug = slugifyName(camera.name)
+                // Decode the data field as a raw JsonElement so we
+                // can manually walk the `ranges` array. We can't use
+                // a @Serializable data class for List<Pair<Long,Long>>
+                // because each pair is a bare JSON array [s, e], not
+                // an object — kotlinx.serialization can't auto-decode
+                // that without a custom KSerializer.
+                val dataEl: JsonElement? = resp.data
+                if (dataEl == null) {
+                    android.util.Log.w("RecordingsDialog", "motion-ranges data is null")
+                    return@launch
+                }
+                val rangesArr: JsonArray = try {
+                    dataEl.jsonObject["ranges"]?.jsonArray ?: JsonArray(emptyList())
+                } catch (e: Exception) {
+                    android.util.Log.w("RecordingsDialog",
+                        "motion-ranges parse failed: ${e.message}")
+                    return@launch
+                }
 
-                // v1.5.14: detailed diagnostic log. The user reported
-                // "标红依旧没有" even after v1.5.13's slug-matching fix,
-                // and v1.5.14's slugifyName lowercase+hash fallback
-                // doesn't change the slug for cameras in the hardcoded
-                // Chinese map (so "前门" still maps to "front_door").
-                // The real root cause must be elsewhere — empty alerts
-                // list, time filter, or view rendering. This log entry
-                // dumps enough info to pinpoint it without a second
-                // round-trip.
-                android.util.Log.d("RecordingsDialog",
-                    "Alert overlay diag: camId=$camId name='${camera.name}' " +
-                    "expectedSlug='$expectedSlug' " +
-                    "dayStart=${dayStartLocalMillis} dayEnd=${dayEndLocalMillis} " +
-                    "alertsTotal=${alerts.size}")
-                if (alerts.isNotEmpty()) {
-                    // Dump first 3 alerts for inspection (slug, camId, time)
-                    alerts.take(3).forEachIndexed { i, a ->
-                        val startMs = (a.startTime * 1000).toLong()
-                        val inDay = startMs in dayStartLocalMillis until dayEndLocalMillis
-                        android.util.Log.d("RecordingsDialog",
-                            "  alert[$i]: slug='${a.cameraSlug}' camId=${a.cameraId} " +
-                            "label='${a.label}' startUnix=${a.startTime} " +
-                            "startMs=$startMs inDay=$inDay")
+                val dayTotal = dayEndLocalMillis - dayStartLocalMillis
+                val dayRanges = mutableListOf<Pair<Long, Long>>()
+                for (item in rangesArr) {
+                    val pair = try { item.jsonArray } catch (_: Exception) { continue }
+                    if (pair.size < 2) continue
+                    val startUnix = try { pair[0].jsonPrimitive.long } catch (_: Exception) { continue }
+                    val endUnix = try { pair[1].jsonPrimitive.long } catch (_: Exception) { continue }
+                    val startMs = startUnix * 1000L - dayStartLocalMillis
+                    val endMs = endUnix * 1000L - dayStartLocalMillis
+                    val clampedStart = startMs.coerceAtLeast(0L)
+                    val clampedEnd = endMs.coerceAtMost(dayTotal)
+                    if (clampedEnd > clampedStart) {
+                        dayRanges.add(clampedStart to clampedEnd)
                     }
                 }
 
-                val dayRanges = alerts
-                    .filter { alert ->
-                        val camMatch = alert.cameraId == camId ||
-                            (alert.cameraSlug.isNotEmpty() &&
-                                alert.cameraSlug == expectedSlug)
-                        if (!camMatch) {
-                            // v1.5.14: log WHY the alert didn't match
-                            // so we can see if it's a slug mismatch
-                            // (Frigate config not pushed with new algo)
-                            // or a camera_id mismatch (LookupByFrigateSlug
-                            // failed).
-                            android.util.Log.d("RecordingsDialog",
-                                "  filter reject: slug='${alert.cameraSlug}' " +
-                                "vs expected='$expectedSlug'; " +
-                                "camId=${alert.cameraId} vs $camId")
-                            return@filter false
-                        }
-                        val startMs = (alert.startTime * 1000).toLong()
-                        val inDay = startMs in dayStartLocalMillis until dayEndLocalMillis
-                        if (!inDay) {
-                            android.util.Log.d("RecordingsDialog",
-                                "  filter reject (time): startMs=$startMs " +
-                                "not in [${dayStartLocalMillis}, ${dayEndLocalMillis})")
-                        }
-                        inDay
-                    }
-                    .map { alert ->
-                        val startMs = (alert.startTime * 1000).toLong() - dayStartLocalMillis
-                        val endMs = (alert.endTime * 1000).toLong() - dayStartLocalMillis
-                        val clampedStart = startMs.coerceAtLeast(0L)
-                        val clampedEnd = endMs.coerceAtMost(
-                            dayEndLocalMillis - dayStartLocalMillis
-                        )
-                        clampedStart to clampedEnd
-                    }
-                    .filter { (s, e) -> e > s }
-
                 android.util.Log.d("RecordingsDialog",
-                    "Alert overlay: ${dayRanges.size} ranges for camera ${camera.id} " +
-                    "(slug=$expectedSlug, name=${camera.name}) " +
-                    "ranges=${dayRanges.take(3)}")
+                    "Motion overlay: ${dayRanges.size} ranges for camera ${camera.id} " +
+                    "name='${camera.name}' ranges=${dayRanges.take(3)}")
+
                 withContext(Dispatchers.Main) {
+                    motionRangesRelative = dayRanges
                     binding.alertOverlay.setAlertRanges(dayRanges)
                 }
             } catch (e: Exception) {
                 android.util.Log.w("RecordingsDialog",
-                    "Failed to load alert ranges: ${e.message}", e)
+                    "Failed to load motion ranges: ${e.message}", e)
             }
         }
     }
 
     /**
-     * v1.5.13: replicates the backend's `slugifyName` algorithm
-     * (see home-datacenter/services/api/internal/camera/registry.go).
-     * Used to match alerts by camera_slug — the backend's
-     * `alertEntry.CameraID` uses `omitempty` and is missing when
-     * `LookupByFrigateSlug` fails, so we can't rely on camera_id
-     * alone.
+     * v1.6.0: finds the nearest motion-range edge to [progressMs].
+     * Used by the SeekBar snap-on-release logic — when the user
+     * releases within [motionSnapRadiusMs] of a range edge, we snap
+     * to that edge so the user lands precisely at the start of a
+     * motion event (or just past its end) without having to pixel-hunt.
      *
-     * Algorithm: keep [a-zA-Z0-9_-], replace any other character
-     * with underscore, no case conversion.
+     * Returns the snapped progress (in day-relative ms), or null
+     * when no range edge is within the snap radius — caller should
+     * just use the original progress in that case.
      *
-     * v1.5.14: match the backend's updated algorithm — lowercase
-     * ASCII letters (so "Front Door" -> "front_door"), and for pure
-     * non-ASCII names (which produce an empty slug) use a stable
-     * hash prefix "cam_<8hex>". Java's String.hashCode() is used
-     * instead of sha256 (simpler, no extra deps) — the backend uses
-     * sha256 but both produce stable per-input outputs that we
-     * then compare against each other, so the exact hash function
-     * doesn't matter as long as the client computes the SAME slug
-     * the backend would.
-     *
-     * NOTE: the backend's hash uses sha256(name)[:4] hex (8 chars).
-     * To stay byte-identical with the backend, the client uses
-     * Java's MessageDigest with SHA-256 and takes the first 4 bytes.
+     * Snap edges considered:
+     *  - range.start — snap to the start of the motion event
+     *  - range.end — snap to just past the motion event
+     * Both edges are equally useful: snapping to start lets the user
+     * watch the motion unfold, snapping to end lets them check what
+     * happened right after.
      */
-    private fun slugifyName(name: String): String {
-        if (name.isEmpty()) return ""
-        // v1.5.14: well-known Chinese names — same hardcoded map
-        // as the backend (registry.go). Sync if backend changes.
-        when (name) {
-            "前门" -> return "front_door"
-            "后门" -> return "back_door"
-            "客厅" -> return "living_room"
-            "卧室" -> return "bedroom"
-            "厨房" -> return "kitchen"
-            "院子" -> return "yard"
-            "车库" -> return "garage"
-        }
-        val sb = StringBuilder(name.length)
-        var prevUnderscore = false
-        for (c in name) {
-            when {
-                c in 'a'..'z' || c in '0'..'9' -> {
-                    sb.append(c); prevUnderscore = false
-                }
-                c in 'A'..'Z' -> {
-                    // v1.5.14: lowercase ASCII letters to match
-                    // the backend's updated slugifyName.
-                    sb.append(c + ('a' - 'A')); prevUnderscore = false
-                }
-                c == '_' || c == '-' -> {
-                    sb.append('_'); prevUnderscore = false
-                }
-                else -> {
-                    if (!prevUnderscore && sb.isNotEmpty()) {
-                        sb.append('_'); prevUnderscore = true
-                    }
-                }
+    private fun snapProgressToRangeEdge(progressMs: Long): Long? {
+        if (motionRangesRelative.isEmpty()) return null
+        var bestDist = motionSnapRadiusMs
+        var bestSnap: Long? = null
+        for ((s, e) in motionRangesRelative) {
+            val distToStart = Math.abs(progressMs - s)
+            if (distToStart < bestDist) {
+                bestDist = distToStart
+                bestSnap = s
+            }
+            val distToEnd = Math.abs(progressMs - e)
+            if (distToEnd < bestDist) {
+                bestDist = distToEnd
+                bestSnap = e
             }
         }
-        var out = sb.toString().trim('_')
-        if (out.isEmpty()) {
-            // v1.5.14: pure non-ASCII names — compute cam_<8hex>
-            // from SHA-256(name)[:4] to match the backend exactly.
-            try {
-                val md = java.security.MessageDigest.getInstance("SHA-256")
-                val h = md.digest(name.toByteArray(Charsets.UTF_8))
-                val hex = StringBuilder(8)
-                for (i in 0 until 4) {
-                    val v = h[i].toInt() and 0xFF
-                    hex.append(v.toString(16).padStart(2, '0'))
-                }
-                out = "cam_$hex"
-            } catch (_: Exception) {
-                out = "cam_${(name.hashCode().toLong() and 0xFFFFFFFFL).toString(16)}"
-            }
-        }
-        return out
+        return bestSnap
     }
 
     private fun playRecording(recording: Recording) {

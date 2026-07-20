@@ -69,6 +69,17 @@ interface HomeCenterApi {
         @Query("limit") limit: Int = 50,
     ): ApiResponse
 
+    // v1.6.0: motion ranges for the day-playback SeekBar overlay.
+    // Replaces alerts-as-overlay-source — motion fires on any
+    // pixel-diff activity, alerts only fire on AI detection (person/car).
+    @GET("api/v1/cameras/{id}/motion-ranges")
+    suspend fun listMotionRanges(
+        @Header("Authorization") auth: String,
+        @Path("id") id: Long,
+        @Query("after") after: Long,
+        @Query("before") before: Long,
+    ): ApiResponse
+
     @GET("api/v1/network/status")
     suspend fun getNetworkStatus(
         @Header("Authorization") auth: String,
