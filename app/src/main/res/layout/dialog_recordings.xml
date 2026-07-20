@@ -136,6 +136,35 @@
                         android:fontFamily="monospace" />
                 </LinearLayout>
 
+                <!-- v1.6.3: horizontal motion-chip scroller. Each chip
+                     shows "HH:MM:SS · Ns" for one motion range; tapping
+                     seeks ExoPlayer to that range's start. Replaces the
+                     v1.6.0-v1.6.2 "drag SeekBar and hope to hit a red
+                     mark" UX — chips are big enough to tap reliably
+                     (~32dp tall) and labeled with the exact time so
+                     the user doesn't have to read the pixel-thin red
+                     bar. Populated by [RecordingsDialog.populateMotionChips]
+                     from the same motion-ranges response that feeds
+                     AlertRangeOverlay. Hidden when there are no
+                     motion ranges (e.g. empty day or fetch failed). -->
+                <HorizontalScrollView
+                    android:id="@+id/motionChipScroller"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:scrollbars="none"
+                    android:layout_marginBottom="4dp"
+                    android:visibility="gone">
+
+                    <LinearLayout
+                        android:id="@+id/motionChipContainer"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:paddingStart="0dp"
+                        android:paddingEnd="0dp" />
+                </HorizontalScrollView>
+
                 <!-- v1.5.12: alert range overlay. Paints a red bar
                      at the time positions where alerts occurred
                      during the day being played. v1.5.14: wrapped

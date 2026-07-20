@@ -37,8 +37,28 @@ class AlertRangeOverlay @JvmOverloads constructor(
         strokeWidth = 0f  // filled rects, no stroke
         isDither = true
     }
+    // v1.6.3: brighter orange for AI-detected ranges (PeakObjects > 0).
+    // Drawn at a slightly higher opacity so the user can distinguish
+    // "pure motion" from "AI tracked something" at a glance.
+    private val aiAlertPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#FF5252") // Material Red A200 — brighter
+        strokeWidth = 0f
+        isDither = true
+    }
+    // v1.6.3: thin tick mark drawn ABOVE each range's start position.
+    // Helps the user see exactly where a motion event begins, since
+    // the bar itself may be only 1-2px wide and hard to read.
+    private val tickPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#FFFFFF")
+        strokeWidth = 1f  // 1px tick
+        isDither = true
+    }
 
     private val alertRanges = mutableListOf<Pair<Long, Long>>()
+    // v1.6.3: per-range "is AI detected" flag. Indices match alertRanges.
+    // When true the range is painted with [aiAlertPaint] (brighter red)
+    // instead of the regular [alertPaint]. Populated by setAlertRanges.
+    private val rangeIsAi = mutableListOf<Boolean>()
     private var maxMs: Long = 1L
 
     /**
@@ -55,10 +75,19 @@ class AlertRangeOverlay @JvmOverloads constructor(
      * Sets the alert time ranges to render. Each pair is
      * (startMs, endMs) in the same time scale as the SeekBar's
      * progress (0..max). Pass an empty list to clear the overlay.
+     *
+     * v1.6.3: the new [aiIndices] parameter is a set of indices
+     * (into the [ranges] list) that should be painted as AI-detected
+     * (brighter red). Used to distinguish "pure motion" from "AI
+     * tracked something" at a glance.
      */
-    fun setAlertRanges(ranges: List<Pair<Long, Long>>) {
+    fun setAlertRanges(ranges: List<Pair<Long, Long>>, aiIndices: Set<Int> = emptySet()) {
         alertRanges.clear()
         alertRanges.addAll(ranges)
+        rangeIsAi.clear()
+        for (i in ranges.indices) {
+            rangeIsAi.add(i in aiIndices)
+        }
         invalidate()
     }
 
@@ -66,44 +95,35 @@ class AlertRangeOverlay @JvmOverloads constructor(
         super.onDraw(canvas)
         if (alertRanges.isEmpty() || width <= 0 || height <= 0) return
         val h = height.toFloat()
-        // v1.5.14: draw the red bar at the FULL height of the overlay
-        // (was 4dp) so the alert segment is as tall as the SeekBar's
-        // progress track — much more visible against the white track.
-        // The overlay sits ON TOP of the SeekBar (FrameLayout stacking
-        // in dialog_recordings.xml) so it occludes the progress at
-        // alert time positions, which is exactly what the user wants:
-        // "alert happened here" stamped in red on the timeline.
         val barH = h
-        // v1.5.15: minimum visible width for short alerts. Motion
-        // detection events are often only 3-10 seconds long, which
-        // on a 24-hour timeline at 720px maps to <0.1 pixels —
-        // completely invisible. The previous code skipped anything
-        // < 1px (the `continue` check), which meant ALL short alerts
-        // were silently dropped, producing an empty overlay even
-        // though logcat showed "7 ranges for camera 1". Now each
-        // range is drawn with at least minW pixels so even a 5s
-        // alert shows up as a visible thin red line on the timeline.
-        // v1.6.1: minW 4 -> 2. v1.6.0 used 4px which combined with
-        // the backend's segment-merging produced thick red bars that
-        // the user reported as "标红太宽了". With mergeGapSeconds=0
-        // on the backend (v1.6.1), each 10s Frigate segment is its
-        // own range; 2px per range keeps them visible without making
-        // the timeline look like a solid red wall when motion is
-        // sustained (e.g. 60s of motion = 6 segments = 12px total).
-        val minW = 2f
-        for ((startMs, endMs) in alertRanges) {
+        // v1.6.3: minW 2 -> 1. v1.6.2 used 2px which on a busy day
+        // (~180 ranges) produced a "thick red wall". With the v1.6.3
+        // backend's 2s merge threshold the count is similar but now
+        // chips carry the readable info; the overlay is just a
+        // visual anchor showing "this is where motion happened on
+        // the 24h timeline". 1px is the thinnest visible line on
+        // Android — fits the new role.
+        val minW = 1f
+        for ((i, pair) in alertRanges.withIndex()) {
+            val (startMs, endMs) = pair
             val startRatio = (startMs.toFloat() / maxMs).coerceIn(0f, 1f)
             val endRatio = (endMs.toFloat() / maxMs).coerceIn(0f, 1f)
             val left = startRatio * width
             val right = endRatio * width
+            val paint = if (i < rangeIsAi.size && rangeIsAi[i]) aiAlertPaint else alertPaint
             // Expand sub-pixel ranges to minW so they're visible.
             // Center the expansion on the alert's midpoint.
             if (right - left < minW) {
                 val center = (left + right) / 2f
-                canvas.drawRect(center - minW / 2f, 0f, center + minW / 2f, barH, alertPaint)
+                canvas.drawRect(center - minW / 2f, 0f, center + minW / 2f, barH, paint)
             } else {
-                canvas.drawRect(left, 0f, right, barH, alertPaint)
+                canvas.drawRect(left, 0f, right, barH, paint)
             }
+            // v1.6.3: tick mark at the start of each range — a small
+            // white dot at the top of the overlay helps the user see
+            // "this is where the motion STARTED" even when the range
+            // itself is too thin to read.
+            canvas.drawCircle(left, barH / 2f, 0.8f, tickPaint)
         }
     }
 }
