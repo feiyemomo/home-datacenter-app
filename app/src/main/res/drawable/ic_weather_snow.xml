@@ -1,0 +1,15 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <!-- Snow: cloud + snowflakes -->
+    <path
+        android:fillColor="#FFE2E8F0"
+        android:pathData="M10,22 Q10,12 18,12 Q20,6 28,6 Q38,6 38,16 Q46,16 46,25 Q46,32 38,32 L14,32 Q10,32 10,22 Z" />
+    <path
+        android:strokeColor="#FF0EA5E9"
+        android:strokeWidth="1.5"
+        android:fillColor="#00000000"
+        android:pathData="M16,38 L20,38 M18,36 L18,40 M26,38 L30,38 M28,36 L28,40" />
+</vector>

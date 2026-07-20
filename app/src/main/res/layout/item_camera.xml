@@ -1,29 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    Camera list item.
+    Camera list item (v1.5.2 redesign).
 
-    The camera card UI (thumbnail, play button, status badges, action
-    buttons) is rendered through the embedded ComposeView via the
-    CameraCard composable.
+    The card is now compact: a small 16:9 thumbnail on the left, the
+    camera name + status on the right, and a chevron hinting that the
+    row is tappable. Tapping anywhere on the row opens
+    CameraDetailActivity, which is where the live video player,
+    recordings dialog, alerts dialog, and PTZ controls now live.
 
-    The StyledPlayerView is kept here in XML, NOT created inside the
-    Compose tree via AndroidView, so that it exists at ViewHolder
-    creation time. When the user taps play, CameraAdapter synchronously
-    sets binding.playerView.player = exoPlayer BEFORE calling
-    exoPlayer.prepare(). This guarantees ExoPlayer sees a valid surface
-    when it creates the MediaCodec, which avoids the no-surface codec
-    path that leaves subsequent frame transfers unfetched on software
-    decoders (c2.android.avc.decoder reports setOutputSurface failed
-    to set consumer usage BAD_INDEX when the surface is attached late,
-    after MediaCodec has already been initialized in no-surface mode).
-
-    Recording playback (RecordingsDialog) uses the same pattern:
-    StyledPlayerView declared in XML, player attached before prepare(),
-    and works correctly on the emulator. Live playback previously used
-    a Compose-created StyledPlayerView attached AFTER prepare(), which
-    is why recordings played but live streams showed only a spinner
-    (state reached READY but 98% of decoded buffers were unfetched
-    by the surface).
+    The previous design embedded a full-width StyledPlayerView +
+    inline playback controls directly in the list item, which made
+    each card ~210dp tall and forced the user to scroll a lot. The
+    new design fits 4-5 cameras in the same vertical space, and the
+    detail page handles playback with the same surface-before-prepare
+    ExoPlayer setup that the inline path used (so the no-surface
+    MediaCodec bug stays fixed — see the comment that was previously
+    in this file, now in CameraDetailActivity).
 -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
@@ -35,6 +27,17 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content" />
 
+    <!--
+        StyledPlayerView kept here (visibility=gone) for two reasons:
+        1. The view binding (ItemCameraBinding.playerView) still
+           references it; removing the field would require touching
+           every call site in CameraAdapter. Cheap to keep.
+        2. If a future iteration wants to restore inline playback
+           on a specific card (e.g. a long-press preview), the
+           surface-before-prepare pattern needs this view to exist
+           at ViewHolder creation time. Removing it would force a
+           rewrite of the playback path.
+    -->
     <com.google.android.exoplayer2.ui.StyledPlayerView
         android:id="@+id/playerView"
         android:layout_width="match_parent"

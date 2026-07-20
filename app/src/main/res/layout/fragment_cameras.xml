@@ -1,4 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    Cameras fragment.
+
+    The "register camera" affordance was previously a bottom-right
+    FAB, which overlapped with the bottom-nav settings tab. v1.5.2
+    moves it to the top-right next to the title as an icon button —
+    Material's standard placement for a "create" action that lives
+    on a list screen (Google's own apps follow this pattern).
+-->
 <androidx.constraintlayout.widget.ConstraintLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
@@ -18,6 +27,26 @@
         android:layout_marginStart="20dp"
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintStart_toStartOf="parent" />
+
+    <!-- Admin-only: register a new camera. Top-right placement so
+         it never overlaps the bottom nav. Visibility is toggled from
+         CamerasFragment.onViewCreated based on prefsManager.isAdmin.
+         The server still enforces admin-gating on POST /api/v1/cameras,
+         so this is a UX hint, not a security boundary. -->
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/fabRegisterCamera"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginEnd="16dp"
+        android:contentDescription="@string/camera_register_title"
+        android:src="@drawable/ic_add"
+        app:backgroundTint="@color/primary"
+        app:tint="@android:color/white"
+        app:fabSize="mini"
+        app:layout_constraintTop_toTopOf="@id/tvTitle"
+        app:layout_constraintBottom_toBottomOf="@id/tvTitle"
+        app:layout_constraintEnd_toEndOf="parent"
+        android:visibility="gone" />
 
     <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
         android:id="@+id/swipeRefresh"
@@ -59,24 +88,6 @@
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        android:visibility="gone" />
-
-    <!-- Admin-only: register a new camera. Visibility is toggled
-         from CamerasFragment.onViewCreated based on prefsManager.isAdmin.
-         The server still enforces admin-gating on POST /api/v1/cameras,
-         so this is a UX hint, not a security boundary. -->
-    <com.google.android.material.floatingactionbutton.FloatingActionButton
-        android:id="@+id/fabRegisterCamera"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginEnd="20dp"
-        android:layout_marginBottom="20dp"
-        android:contentDescription="@string/camera_register_title"
-        android:src="@drawable/ic_camera"
-        app:backgroundTint="@color/primary"
-        app:tint="@android:color/white"
-        app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         android:visibility="gone" />
 

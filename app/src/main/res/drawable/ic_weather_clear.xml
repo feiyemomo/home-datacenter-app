@@ -1,0 +1,15 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <!-- Sun: circle + 8 rays -->
+    <path
+        android:strokeColor="#FFF59E0B"
+        android:strokeWidth="2"
+        android:fillColor="#00000000"
+        android:pathData="M24,8 L24,4 M24,44 L24,40 M8,24 L4,24 M44,24 L40,24 M12.5,12.5 L9.7,9.7 M38.3,38.3 L35.5,35.5 M12.5,35.5 L9.7,38.3 M38.3,9.7 L35.5,12.5" />
+    <path
+        android:fillColor="#FFF59E0B"
+        android:pathData="M24,24 m-9,0 a9,9 0 1,0 18,0 a9,9 0 1,0 -18,0" />
+</vector>

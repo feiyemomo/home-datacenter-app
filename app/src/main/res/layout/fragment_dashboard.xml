@@ -334,6 +334,16 @@
                     android:gravity="center_vertical"
                     android:layout_marginTop="6dp">
 
+                    <!-- "当前路径" label makes the strategy explicit so
+                         the user understands what the chip below means. -->
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/network_current_path_label"
+                        android:textSize="11sp"
+                        android:textColor="@color/text_hint"
+                        android:layout_marginEnd="6dp" />
+
                     <TextView
                         android:id="@+id/tvNetworkStrategy"
                         android:layout_width="wrap_content"
@@ -347,7 +357,7 @@
                         android:id="@+id/tvNetworkUpgrade"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:textSize="12sp"
+                        android:textSize="11sp"
                         android:textColor="@color/accent"
                         android:layout_marginStart="8dp"
                         android:visibility="gone" />
