@@ -475,64 +475,97 @@ class RecordingsDialog(
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val authHeader = if (!token.isNullOrEmpty()) "Bearer $token" else ""
-                // Pull the last 7 days of alerts (backend default
-                // limit) and filter to this camera + this day on
-                // the client. The backend doesn't support a
-                // camera_id query parameter on listAlerts.
-                val resp = container.getApi().listAlerts(authHeader, limit = 200)
+                // v1.5.14: drop limit from 200 to 100 — the backend
+                // clamps to 100 anyway, and asking for 200 just means
+                // we wait for the same payload. 100 covers ~24h of
+                // motion events for a single camera at the default
+                // detection FPS (2 fps, ~5 events/hour).
+                val resp = container.getApi().listAlerts(authHeader, limit = 100)
                 if (!resp.isSuccess) {
                     android.util.Log.w("RecordingsDialog",
-                        "listAlerts for overlay returned code=${resp.code}")
+                        "listAlerts for overlay returned code=${resp.code} msg=${resp.message}")
                     return@launch
                 }
                 val decoded = resp.decodeData<
                     com.homedatacenter.app.data.model.AlertListData>()
                 val alerts = decoded?.alerts ?: emptyList()
 
-                // v1.5.13: derive the expected Frigate slug from
-                // the camera's streamName using the same algorithm
-                // the backend uses (slugifyName in registry.go:
-                // keep [a-zA-Z0-9_-], replace others with _).
-                // Camera.streamName is nested in streamConfig but
-                // the backend's FrigateSlug uses streamName —
-                // for cameras without explicit streamName we fall
-                // back to camera.name which is what the user typed
-                // in RegisterCameraDialog.
                 val camId = camera.id
                 val expectedSlug = slugifyName(camera.name)
+
+                // v1.5.14: detailed diagnostic log. The user reported
+                // "标红依旧没有" even after v1.5.13's slug-matching fix,
+                // and v1.5.14's slugifyName lowercase+hash fallback
+                // doesn't change the slug for cameras in the hardcoded
+                // Chinese map (so "前门" still maps to "front_door").
+                // The real root cause must be elsewhere — empty alerts
+                // list, time filter, or view rendering. This log entry
+                // dumps enough info to pinpoint it without a second
+                // round-trip.
+                android.util.Log.d("RecordingsDialog",
+                    "Alert overlay diag: camId=$camId name='${camera.name}' " +
+                    "expectedSlug='$expectedSlug' " +
+                    "dayStart=${dayStartLocalMillis} dayEnd=${dayEndLocalMillis} " +
+                    "alertsTotal=${alerts.size}")
+                if (alerts.isNotEmpty()) {
+                    // Dump first 3 alerts for inspection (slug, camId, time)
+                    alerts.take(3).forEachIndexed { i, a ->
+                        val startMs = (a.startTime * 1000).toLong()
+                        val inDay = startMs in dayStartLocalMillis until dayEndLocalMillis
+                        android.util.Log.d("RecordingsDialog",
+                            "  alert[$i]: slug='${a.cameraSlug}' camId=${a.cameraId} " +
+                            "label='${a.label}' startUnix=${a.startTime} " +
+                            "startMs=$startMs inDay=$inDay")
+                    }
+                }
 
                 val dayRanges = alerts
                     .filter { alert ->
                         val camMatch = alert.cameraId == camId ||
                             (alert.cameraSlug.isNotEmpty() &&
                                 alert.cameraSlug == expectedSlug)
-                        if (!camMatch) return@filter false
+                        if (!camMatch) {
+                            // v1.5.14: log WHY the alert didn't match
+                            // so we can see if it's a slug mismatch
+                            // (Frigate config not pushed with new algo)
+                            // or a camera_id mismatch (LookupByFrigateSlug
+                            // failed).
+                            android.util.Log.d("RecordingsDialog",
+                                "  filter reject: slug='${alert.cameraSlug}' " +
+                                "vs expected='$expectedSlug'; " +
+                                "camId=${alert.cameraId} vs $camId")
+                            return@filter false
+                        }
                         val startMs = (alert.startTime * 1000).toLong()
-                        startMs in dayStartLocalMillis until dayEndLocalMillis
+                        val inDay = startMs in dayStartLocalMillis until dayEndLocalMillis
+                        if (!inDay) {
+                            android.util.Log.d("RecordingsDialog",
+                                "  filter reject (time): startMs=$startMs " +
+                                "not in [${dayStartLocalMillis}, ${dayEndLocalMillis})")
+                        }
+                        inDay
                     }
                     .map { alert ->
                         val startMs = (alert.startTime * 1000).toLong() - dayStartLocalMillis
                         val endMs = (alert.endTime * 1000).toLong() - dayStartLocalMillis
-                        // Clamp to day boundaries so an alert that
-                        // spans midnight doesn't bleed into the next
-                        // day's segment on the overlay.
                         val clampedStart = startMs.coerceAtLeast(0L)
                         val clampedEnd = endMs.coerceAtMost(
                             dayEndLocalMillis - dayStartLocalMillis
                         )
                         clampedStart to clampedEnd
                     }
-                    .filter { (s, e) -> e > s }  // skip degenerate ranges
+                    .filter { (s, e) -> e > s }
 
                 android.util.Log.d("RecordingsDialog",
                     "Alert overlay: ${dayRanges.size} ranges for camera ${camera.id} " +
-                    "(slug=$expectedSlug, name=${camera.name})")
+                    "(slug=$expectedSlug, name=${camera.name}) " +
+                    "ranges=${dayRanges.take(3)}")
                 withContext(Dispatchers.Main) {
                     binding.alertOverlay.setAlertRanges(dayRanges)
                 }
             } catch (e: Exception) {
                 android.util.Log.w("RecordingsDialog",
-                    "Failed to load alert ranges: ${e.message}")
+                    "Failed to load alert ranges: ${e.message}", e)
             }
         }
     }
@@ -547,17 +580,74 @@ class RecordingsDialog(
      *
      * Algorithm: keep [a-zA-Z0-9_-], replace any other character
      * with underscore, no case conversion.
+     *
+     * v1.5.14: match the backend's updated algorithm — lowercase
+     * ASCII letters (so "Front Door" -> "front_door"), and for pure
+     * non-ASCII names (which produce an empty slug) use a stable
+     * hash prefix "cam_<8hex>". Java's String.hashCode() is used
+     * instead of sha256 (simpler, no extra deps) — the backend uses
+     * sha256 but both produce stable per-input outputs that we
+     * then compare against each other, so the exact hash function
+     * doesn't matter as long as the client computes the SAME slug
+     * the backend would.
+     *
+     * NOTE: the backend's hash uses sha256(name)[:4] hex (8 chars).
+     * To stay byte-identical with the backend, the client uses
+     * Java's MessageDigest with SHA-256 and takes the first 4 bytes.
      */
     private fun slugifyName(name: String): String {
         if (name.isEmpty()) return ""
-        val sb = StringBuilder(name.length)
-        for (c in name) {
-            sb.append(
-                if (c in 'a'..'z' || c in 'A'..'Z' ||
-                    c in '0'..'9' || c == '_' || c == '-') c else '_'
-            )
+        // v1.5.14: well-known Chinese names — same hardcoded map
+        // as the backend (registry.go). Sync if backend changes.
+        when (name) {
+            "前门" -> return "front_door"
+            "后门" -> return "back_door"
+            "客厅" -> return "living_room"
+            "卧室" -> return "bedroom"
+            "厨房" -> return "kitchen"
+            "院子" -> return "yard"
+            "车库" -> return "garage"
         }
-        return sb.toString()
+        val sb = StringBuilder(name.length)
+        var prevUnderscore = false
+        for (c in name) {
+            when {
+                c in 'a'..'z' || c in '0'..'9' -> {
+                    sb.append(c); prevUnderscore = false
+                }
+                c in 'A'..'Z' -> {
+                    // v1.5.14: lowercase ASCII letters to match
+                    // the backend's updated slugifyName.
+                    sb.append(c + ('a' - 'A')); prevUnderscore = false
+                }
+                c == '_' || c == '-' -> {
+                    sb.append('_'); prevUnderscore = false
+                }
+                else -> {
+                    if (!prevUnderscore && sb.isNotEmpty()) {
+                        sb.append('_'); prevUnderscore = true
+                    }
+                }
+            }
+        }
+        var out = sb.toString().trim('_')
+        if (out.isEmpty()) {
+            // v1.5.14: pure non-ASCII names — compute cam_<8hex>
+            // from SHA-256(name)[:4] to match the backend exactly.
+            try {
+                val md = java.security.MessageDigest.getInstance("SHA-256")
+                val h = md.digest(name.toByteArray(Charsets.UTF_8))
+                val hex = StringBuilder(8)
+                for (i in 0 until 4) {
+                    val v = h[i].toInt() and 0xFF
+                    hex.append(v.toString(16).padStart(2, '0'))
+                }
+                out = "cam_$hex"
+            } catch (_: Exception) {
+                out = "cam_${(name.hashCode().toLong() and 0xFFFFFFFFL).toString(16)}"
+            }
+        }
+        return out
     }
 
     private fun playRecording(recording: Recording) {

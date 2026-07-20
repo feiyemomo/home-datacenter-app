@@ -136,31 +136,40 @@
                         android:fontFamily="monospace" />
                 </LinearLayout>
 
-                <SeekBar
-                    android:id="@+id/daySeekBar"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:maxHeight="4dp"
-                    android:progressTint="@android:color/white"
-                    android:progressBackgroundTint="#66FFFFFF"
-                    android:thumbTint="@android:color/white" />
-
                 <!-- v1.5.12: alert range overlay. Paints a red bar
                      at the time positions where alerts occurred
-                     during the day being played. Sits ABOVE the
-                     SeekBar so the red segments are visible on top
-                     of the white progress track. The overlay does
-                     not intercept touches — dragging the SeekBar
-                     through an alert region still works.
-                     Populated by [RecordingsDialog.loadAlertsForDay]
+                     during the day being played. v1.5.14: wrapped
+                     SeekBar + overlay in a FrameLayout so the red
+                     segments sit ON TOP of the SeekBar's progress
+                     track (previously the overlay was a sibling
+                     below the SeekBar, making the red bar appear
+                     in a separate 6dp row that was easy to miss).
+                     The overlay does not intercept touches —
+                     dragging the SeekBar through an alert region
+                     still works. Populated by
+                     [RecordingsDialog.loadAlertRangesForDay]
                      -> [AlertRangeOverlay.setAlertRanges]. -->
-                <com.homedatacenter.app.ui.cameras.AlertRangeOverlay
-                    android:id="@+id/alertOverlay"
+                <FrameLayout
                     android:layout_width="match_parent"
-                    android:layout_height="6dp"
-                    android:layout_marginTop="2dp"
-                    android:layout_gravity="top"
-                    android:visibility="visible" />
+                    android:layout_height="wrap_content">
+
+                    <SeekBar
+                        android:id="@+id/daySeekBar"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:maxHeight="4dp"
+                        android:progressTint="@android:color/white"
+                        android:progressBackgroundTint="#66FFFFFF"
+                        android:thumbTint="@android:color/white" />
+
+                    <com.homedatacenter.app.ui.cameras.AlertRangeOverlay
+                        android:id="@+id/alertOverlay"
+                        android:layout_width="match_parent"
+                        android:layout_height="12dp"
+                        android:layout_gravity="top"
+                        android:layout_marginTop="6dp"
+                        android:visibility="visible" />
+                </FrameLayout>
             </LinearLayout>
 
             <!-- Standalone playback speed button. v1.5.3: moved out
