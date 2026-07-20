@@ -16,6 +16,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.google.android.exoplayer2.ExoPlayer
 import com.google.android.exoplayer2.MediaItem
 import com.google.android.exoplayer2.PlaybackException
+import com.google.android.exoplayer2.PlaybackParameters
 import com.google.android.exoplayer2.Player
 import com.google.android.exoplayer2.source.ProgressiveMediaSource
 import com.google.android.exoplayer2.upstream.DefaultHttpDataSource
@@ -682,6 +683,11 @@ class RecordingsDialog(
             gestureHelper = null
             binding.btnCenterPause.visibility = View.GONE
             binding.btnPlaybackSpeed.visibility = View.GONE
+            // v1.6.5 rev7: hide the new slider bar + seek-hint overlays
+            // so they don't linger between day-playback sessions.
+            binding.speedBarContainer.visibility = View.GONE
+            binding.tvSeekRewindHint.visibility = View.GONE
+            binding.tvSeekForwardHint.visibility = View.GONE
             binding.btnFullscreen.visibility = View.GONE
             binding.dayScrubBarContainer.visibility = View.GONE
             binding.playerView.useController = true
@@ -718,6 +724,10 @@ class RecordingsDialog(
                     // so it follows the same show/hide cycle as the
                     // rest of the chrome in fullscreen.
                     binding.btnCenterPause,
+                    // v1.6.5 rev7: include the new speed slider bar
+                    // + seek hint overlays so they follow the same
+                    // show/hide cycle in fullscreen.
+                    binding.speedBarContainer,
                 ),
             )
             helper.attach()
@@ -727,18 +737,54 @@ class RecordingsDialog(
         // v1.6.4 rev6: attach the gesture helper once. Subsequent
         // day-changes call onPlayerChanged to keep the helper's
         // player reference fresh without re-wiring touch listeners.
+        // v1.6.5 rev7: pass the seek hint TextViews so double-tap
+        // can blink the 《》 overlays.
         if (gestureHelper == null) {
             val gh = PlayerGestureHelper(
                 playerView = binding.playerView,
                 pauseButton = binding.btnCenterPause,
+                // v1.6.5 rev7: pass the seek hint TextViews so
+                // double-tap can blink the 《》 overlays twice.
+                seekRewindHint = binding.tvSeekRewindHint,
+                seekForwardHint = binding.tvSeekForwardHint,
             )
             gh.attach(player)
             gestureHelper = gh
+            // v1.6.5 rev7: wire the speed Slider. Replaces the
+            // dropdown ListPopupWindow as the primary speed control
+            // per user request "变速条改为可滑动的，最高切到5x吧".
+            binding.speedSlider.value = 1.0f
+            binding.tvSpeedLabel.text = "1x"
+            binding.speedSlider.addOnChangeListener { _, value, fromUser ->
+                if (!fromUser) return@addOnChangeListener
+                val p = player ?: return@addOnChangeListener
+                p.playbackParameters = PlaybackParameters(value)
+                binding.tvSpeedLabel.text = formatSpeedLabel(value)
+                // Sync gesture helper so a subsequent long-press
+                // release restores the slider's value (not a stale
+                // pre-slider snapshot).
+                gestureHelper?.onSpeedChangedBySlider(value)
+            }
         } else {
             gestureHelper?.onPlayerChanged(player)
         }
-        binding.btnPlaybackSpeed.visibility = View.VISIBLE
+        // v1.6.5 rev7: show the slider bar; keep btnPlaybackSpeed
+        // hidden (it's only kept for PlayerFullscreenHelper's
+        // attachSpeedButton backward compat — the slider is the
+        // primary control now).
+        binding.speedBarContainer.visibility = View.VISIBLE
         binding.btnFullscreen.visibility = View.VISIBLE
+    }
+
+    /**
+     * v1.6.5 rev7: formats a float speed as "1x" / "1.5x" / "5x" for
+     * the speed slider's label. Strips trailing ".0" for integer
+     * speeds so the label doesn't jump between "1.0x" and "1.5x"
+     * visually (matches the previous btnPlaybackSpeed text style).
+     */
+    private fun formatSpeedLabel(speed: Float): String {
+        return if (speed == speed.toInt().toFloat()) "${speed.toInt()}x"
+               else "${speed}x"
     }
 
     /**
@@ -866,6 +912,9 @@ class RecordingsDialog(
                 // v1.6.3: per-range enriched metadata for the chip list.
                 val chipData = mutableListOf<MotionChip>()
                 val aiIndices = mutableSetOf<Int>()
+                // v1.6.5 rev7: per-range tier info for the AlertRangeOverlay
+                // so the SeekBar markers match the chip tier colors.
+                val tieredOverlayRanges = mutableListOf<AlertRangeOverlay.TieredRange>()
                 for ((idx, item) in rangesArr.withIndex()) {
                     val obj = try { item.jsonObject } catch (_: Exception) { continue }
                     val startUnix = try { obj["start"]?.jsonPrimitive?.long ?: continue } catch (_: Exception) { continue }
@@ -890,6 +939,19 @@ class RecordingsDialog(
                             peakObjects = peak,
                         ))
                         if (peak > 0) aiIndices.add(idx)
+                        // v1.6.5 rev7: classify this range into a tier
+                        // matching the chip color buckets. The thresholds
+                        // mirror backend tierOf(): peak>0=ALERT, motion<=2=LOW,
+                        // motion<=5=MID, else HIGH.
+                        val tier = when {
+                            peak > 0 -> AlertRangeOverlay.TIER_ALERT
+                            score <= 2 -> AlertRangeOverlay.TIER_LOW
+                            score <= 5 -> AlertRangeOverlay.TIER_MID
+                            else -> AlertRangeOverlay.TIER_HIGH
+                        }
+                        tieredOverlayRanges.add(
+                            AlertRangeOverlay.TieredRange(clampedStart, clampedEnd, tier)
+                        )
                     }
                 }
 
@@ -899,7 +961,11 @@ class RecordingsDialog(
 
                 withContext(Dispatchers.Main) {
                     motionRangesRelative = dayRanges
-                    binding.alertOverlay.setAlertRanges(dayRanges, aiIndices)
+                    // v1.6.5 rev7: use setTieredRanges so the SeekBar
+                    // markers match the chip tier colors (teal/amber/
+                    // orange/red). User said "把展示出来的chip区间大概
+                    // 标注再进度条上面吧".
+                    binding.alertOverlay.setTieredRanges(tieredOverlayRanges)
                     // v1.6.3: populate the horizontal chip scroller.
                     populateMotionChips(chipData, dayStartLocalMillis)
                 }
