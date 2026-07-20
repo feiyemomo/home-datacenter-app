@@ -144,6 +144,23 @@
                     android:progressTint="@android:color/white"
                     android:progressBackgroundTint="#66FFFFFF"
                     android:thumbTint="@android:color/white" />
+
+                <!-- v1.5.12: alert range overlay. Paints a red bar
+                     at the time positions where alerts occurred
+                     during the day being played. Sits ABOVE the
+                     SeekBar so the red segments are visible on top
+                     of the white progress track. The overlay does
+                     not intercept touches — dragging the SeekBar
+                     through an alert region still works.
+                     Populated by [RecordingsDialog.loadAlertsForDay]
+                     -> [AlertRangeOverlay.setAlertRanges]. -->
+                <com.homedatacenter.app.ui.cameras.AlertRangeOverlay
+                    android:id="@+id/alertOverlay"
+                    android:layout_width="match_parent"
+                    android:layout_height="6dp"
+                    android:layout_marginTop="2dp"
+                    android:layout_gravity="top"
+                    android:visibility="visible" />
             </LinearLayout>
 
             <!-- Standalone playback speed button. v1.5.3: moved out

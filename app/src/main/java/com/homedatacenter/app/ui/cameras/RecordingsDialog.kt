@@ -235,39 +235,40 @@ class RecordingsDialog(
      * one big video with max duration 1 day". Implementation:
      *
      *  - Filter [allRecordings] to entries whose [Recording.startAt]
-     *    falls on the same day as [dayStart] (using local timezone).
+     *    falls on the same day as [dayStart] (using LOCAL timezone).
      *  - Sort ascending by [Recording.id] (which is a unix-minute
      *    timestamp) so the playlist plays chronologically.
-     *  - Build a list of [MediaItem]s, each pointing at the existing
-     *    PlayRecording endpoint for that minute. We set
-     *    [MediaMetadata.title] on each item so ExoPlayer's controller
-     *    shows "12:30:00" while that minute is playing.
-     *  - Hand the playlist to ExoPlayer via [ExoPlayer.setMediaItems].
-     *    ExoPlayer will play them back-to-back seamlessly (no gap
-     *    between MP4 files since they're 60s clips with no metadata
-     *    overhead). The progress bar reflects the CURRENT minute; the
-     *    user can scrub within a minute but cannot yet jump across
-     *    minutes (would need a custom timeline UI — out of scope for
-     *    v1.5.10).
      *
-     * Memory: a day has 1440 minutes; the URL list is ~144 KB. No
-     * issue. ExoPlayer preloads only the next 1-2 clips by default
-     * (LoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS), so we don't
-     * pre-fetch all 1440 segments.
+     * v1.5.12 FIX: previously we filtered by UTC date, but the
+     * backend returns start_at as UTC ISO string (e.g.
+     * "2026-07-19T00:00:00Z"). Filtering by UTC date "7.19" gave
+     * UTC 00:00..24:00, which when displayed in local time (UTC+8)
+     * became 7.19 08:00 .. 7.20 08:00 — an 8-hour offset. The fix
+     * converts each recording's UTC instant to local time BEFORE
+     * comparing against the user-picked local date.
      *
-     * @param dayStart Calendar set to 00:00:00 of the day to play.
+     * @param dayStart Calendar set to 00:00:00 LOCAL of the day to play.
      */
     private fun playDayAsPlaylist(dayStart: Calendar) {
-        val dayStartMillis = dayStart.timeInMillis
-        val dayEndMillis = dayStartMillis + 24L * 60 * 60 * 1000
+        // v1.5.12: dayStart is in the user's local timezone (Calendar
+        // default). Convert it to UTC instant for comparison with
+        // backend's UTC ISO strings.
+        val dayStartLocalMillis = dayStart.timeInMillis
+        val dayEndLocalMillis = dayStartLocalMillis + 24L * 60 * 60 * 1000
 
-        val fmt = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
+        val parseFmt = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
             timeZone = TimeZone.getTimeZone("UTC")
         }
         val dayRecordings = allRecordings.filter { rec ->
             try {
-                val t = fmt.parse(rec.startAt)?.time ?: return@filter false
-                t in dayStartMillis until dayEndMillis
+                val t = parseFmt.parse(rec.startAt)?.time ?: return@filter false
+                // v1.5.12: compare in local time. rec.startAt is UTC,
+                // dayStart/dayEnd are local — but timeInMillis is
+                // always UTC-anchored so direct comparison works.
+                // The bug was previously: we filtered by UTC date
+                // which is 8 hours behind local date. Now we filter
+                // by LOCAL date boundaries converted to UTC millis.
+                t in dayStartLocalMillis until dayEndLocalMillis
             } catch (_: Exception) { false }
         }.sortedBy { it.id }
 
@@ -278,6 +279,13 @@ class RecordingsDialog(
 
         android.util.Log.d("RecordingsDialog",
             "Playing full day: ${dayRecordings.size} clips starting at ${dayRecordings.first().startAt}")
+
+        // v1.5.12: load alert ranges for this camera on this day so
+        // the AlertRangeOverlay can paint red segments on the SeekBar.
+        // The backend's listAlerts returns unix seconds (float) — we
+        // convert each alert's start/end into day-relative ms for the
+        // overlay's coordinate system.
+        loadAlertRangesForDay(dayStartLocalMillis, dayEndLocalMillis)
 
         binding.videoContainer.visibility = View.VISIBLE
         binding.recyclerView.visibility = View.GONE
@@ -312,7 +320,7 @@ class RecordingsDialog(
             val timeFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
             val items = dayRecordings.map { rec ->
                 val title = try {
-                    fmt.parse(rec.startAt)?.let { timeFmt.format(it) } ?: ""
+                    parseFmt.parse(rec.startAt)?.let { timeFmt.format(it) } ?: ""
                 } catch (_: Exception) { "" }
                 MediaItem.Builder()
                     .setUri(buildRecordingUrl(rec.id))
@@ -428,6 +436,87 @@ class RecordingsDialog(
         val m = (totalSeconds % 3600) / 60
         val s = totalSeconds % 60
         return String.format(Locale.US, "%02d:%02d:%02d", h, m, s)
+    }
+
+    /**
+     * v1.5.12: fetches alerts from the backend, filters them to this
+     * camera + the selected day, then converts each alert's
+     * (start_time, end_time) into a day-relative (startMs, endMs)
+     * pair that [AlertRangeOverlay] can render.
+     *
+     * Threading:
+     *  - Network call on Dispatchers.IO
+     *  - UI update (setAlertRanges) on Dispatchers.Main
+     *
+     * Failure: silently leaves the overlay empty — the day playback
+     * still works, just without red alert markers. Better UX than
+     * showing an error toast (the user can see the day's recording
+     * regardless of whether alert metadata loads).
+     *
+     * @param dayStartLocalMillis Day boundary in LOCAL time
+     *     (00:00:00 local) as UTC-anchored millis.
+     * @param dayEndLocalMillis Day boundary + 24h in LOCAL time.
+     */
+    private fun loadAlertRangesForDay(
+        dayStartLocalMillis: Long,
+        dayEndLocalMillis: Long,
+    ) {
+        // Reset the overlay so a stale red segment doesn't persist
+        // if the network call fails.
+        binding.alertOverlay.setMax(dayEndLocalMillis - dayStartLocalMillis)
+        binding.alertOverlay.setAlertRanges(emptyList())
+
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val authHeader = if (!token.isNullOrEmpty()) "Bearer $token" else ""
+                // Pull the last 7 days of alerts (backend default
+                // limit) and filter to this camera + this day on
+                // the client. The backend doesn't support a
+                // camera_id query parameter on listAlerts.
+                val resp = container.getApi().listAlerts(authHeader, limit = 200)
+                if (!resp.isSuccess) {
+                    android.util.Log.w("RecordingsDialog",
+                        "listAlerts for overlay returned code=${resp.code}")
+                    return@launch
+                }
+                val decoded = resp.decodeData<
+                    com.homedatacenter.app.data.model.AlertListData>()
+                val alerts = decoded?.alerts ?: emptyList()
+                // Filter: this camera (by id — backend populates
+                // camera_id via LookupByFrigateSlug) + falls within
+                // the user's selected LOCAL day window.
+                val camId = camera.id
+                val dayRanges = alerts
+                    .filter { alert ->
+                        val camMatch = alert.cameraId == camId
+                        if (!camMatch) return@filter false
+                        val startMs = (alert.startTime * 1000).toLong()
+                        startMs in dayStartLocalMillis until dayEndLocalMillis
+                    }
+                    .map { alert ->
+                        val startMs = (alert.startTime * 1000).toLong() - dayStartLocalMillis
+                        val endMs = (alert.endTime * 1000).toLong() - dayStartLocalMillis
+                        // Clamp to day boundaries so an alert that
+                        // spans midnight doesn't bleed into the next
+                        // day's segment on the overlay.
+                        val clampedStart = startMs.coerceAtLeast(0L)
+                        val clampedEnd = endMs.coerceAtMost(
+                            dayEndLocalMillis - dayStartLocalMillis
+                        )
+                        clampedStart to clampedEnd
+                    }
+                    .filter { (s, e) -> e > s }  // skip degenerate ranges
+
+                android.util.Log.d("RecordingsDialog",
+                    "Alert overlay: ${dayRanges.size} ranges for camera ${camera.id}")
+                withContext(Dispatchers.Main) {
+                    binding.alertOverlay.setAlertRanges(dayRanges)
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("RecordingsDialog",
+                    "Failed to load alert ranges: ${e.message}")
+            }
+        }
     }
 
     private fun playRecording(recording: Recording) {

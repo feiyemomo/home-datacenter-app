@@ -1,6 +1,8 @@
 package com.homedatacenter.app.ui.cameras
 
+import android.Manifest
 import android.app.AlertDialog
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.view.LayoutInflater
@@ -11,7 +13,9 @@ import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -103,6 +107,25 @@ class CameraDetailActivity : AppCompatActivity() {
     // Cached ICE config from /api/v1/cameras/ice — fetched once
     // per activity instance (re-fetched on retry if null).
     private var cachedIceConfig: IceConfig? = null
+    // v1.5.12: RECORD_AUDIO runtime permission state. WebRTC's
+    // JavaAudioDeviceModule requires RECORD_AUDIO (a dangerous
+    // permission) to initialize its AudioRecord + AudioTrack
+    // pipeline — even for recvonly streams. Without it the
+    // audioTrack is captured but playout silently fails (no
+    // AudioFocus + no AudioTrack output device).
+    private var hasRecordAudioPermission = false
+    private val requestRecordAudioLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            hasRecordAudioPermission = granted
+            if (granted) {
+                android.util.Log.d(TAG, "RECORD_AUDIO granted — starting playback")
+                startPlayback()
+            } else {
+                android.util.Log.w(TAG, "RECORD_AUDIO denied — starting playback without audio")
+                Toast.makeText(this, "未授予录音权限，直播将无声音", Toast.LENGTH_LONG).show()
+                startPlayback()
+            }
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -138,6 +161,32 @@ class CameraDetailActivity : AppCompatActivity() {
         setupSettings()
 
         loadPresets()
+
+        // v1.5.12: ensure RECORD_AUDIO is granted before starting
+        // playback. WebRTC's JavaAudioDeviceModule needs it even
+        // for recvonly streams (audioTrack playout silently fails
+        // without it). Without permission we'd see onTrack fire +
+        // setEnabled(true) + setVolume(1.0) called but the user
+        // would still hear nothing.
+        ensureRecordAudioThenStart()
+    }
+
+    /**
+     * v1.5.12: checks RECORD_AUDIO permission; if granted, starts
+     * playback immediately. If not, requests it via the launcher
+     * — playback starts in the callback once the user responds
+     * (granted or denied). If denied, the user is warned but
+     * playback still proceeds (video without audio).
+     */
+    private fun ensureRecordAudioThenStart() {
+        hasRecordAudioPermission = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+        if (hasRecordAudioPermission) {
+            startPlayback()
+        } else {
+            requestRecordAudioLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
     }
 
     override fun onPause() {
@@ -707,6 +756,16 @@ class CameraDetailActivity : AppCompatActivity() {
         if (webRtcInProgress) return
         webRtcInProgress = true
         triedWebRtc = true
+
+        // v1.5.12: release any lingering ExoPlayer BEFORE starting
+        // WebRTC. ExoPlayer's setAudioAttributes(handleAudioFocus=true)
+        // registers an AudioFocusRequest on STREAM_MUSIC; if we
+        // don't release it before WebRTC starts, the system keeps
+        // ExoPlayer's AudioFocus active and WebRTC's AudioTrack
+        // output gets ducked or routed to the wrong stream — the
+        // user sees video but hears nothing. releasePlayer() calls
+        // ExoPlayer.release() which internally abandons AudioFocus.
+        releasePlayer()
 
         // v1.5.9: mark the active transport. WebRTC is the primary
         // path; if it fails the onError callback flips the badge to
