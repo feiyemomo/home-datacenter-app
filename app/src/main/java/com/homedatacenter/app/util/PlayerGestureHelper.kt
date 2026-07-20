@@ -1,24 +1,26 @@
 package com.homedatacenter.app.util
 
+import android.animation.Animator
+import android.animation.AnimatorListenerAdapter
+import android.animation.ObjectAnimator
 import android.os.Handler
 import android.os.Looper
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.View
-import android.widget.ImageView
+import android.widget.TextView
 import com.google.android.exoplayer2.ExoPlayer
 import com.google.android.exoplayer2.PlaybackParameters
 import com.google.android.exoplayer2.ui.StyledPlayerView
 
 /**
- * v1.6.4 rev6: gesture interactions for the video player.
+ * v1.6.5 rev7: gesture interactions for the video player.
  *
  * User asked: "为播放器多设计一些交互（暂停键，双击屏幕左右实现
- * 快退进，长按屏幕实现倍速播放)".
+ * 快退进，长按屏幕实现倍速播放)" + rev7 follow-up "双击快退进改为
+ * 两个单书名号样式闪烁两下的动画吧" and "长按倍速也改为5x".
  *
- * This helper wires three interactions to a [StyledPlayerView] without
- * touching ExoPlayer's built-in controller (we keep useController=false
- * for the day-playlist mode and only use this custom chrome):
+ * This helper wires these interactions to a [StyledPlayerView]:
  *
  *  1. Pause button overlay (centered).
  *     - Single tap on the player surface shows the pause button for
@@ -27,59 +29,54 @@ import com.google.android.exoplayer2.ui.StyledPlayerView
  *       swaps the icon (ic_pause ↔ ic_play_circle).
  *
  *  2. Double-tap left/right half of the player.
- *     - Double-tap on the LEFT 40% of the surface seeks -10 seconds.
- *     - Double-tap on the RIGHT 40% of the surface seeks +10 seconds.
- *     - The 20% middle band is reserved for the pause button so it
- *       doesn't fight the seek gesture.
+ *     - Double-tap on the LEFT 40% of the surface seeks -10 seconds
+ *       AND blinks the [seekRewindHint] TextView ("《") twice.
+ *     - Double-tap on the RIGHT 40% seeks +10 seconds AND blinks
+ *       [seekForwardHint] ("》") twice.
+ *     - Middle 20% reserved for the pause button.
+ *     - Animation: alpha 0 → 1 → 0 → 1 → 0 over ~500ms (two visible
+ *       flashes). User said "闪烁两下".
  *
  *  3. Long-press the player surface.
- *     - While held: playback speed jumps to 3.0x (fast-forward).
- *     - On release: restores the previously-saved playback speed
- *       (e.g. 1.0x or whatever the user picked via the speed menu).
+ *     - While held: playback speed jumps to [longPressSpeed] (5.0x
+ *       per rev7 — was 3.0x in rev6).
+ *     - On release: restores the previously-saved playback speed.
  *
- * Implementation note: we attach a [GestureDetector] to the playerView
- * via setOnTouchListener. The pause button itself uses its own
- * OnClickListener (single tap = toggle play/pause). The detector's
- * onSingleTapConfirmed, onDoubleTapEvent, and onLongPress callbacks
- * implement the three interactions.
- *
- * Lifecycle: call [attach] after the player is set on the playerView.
- * Call [onPlayerChanged] when the player instance is replaced (so the
- * helper points at the new player). Call [release] in the host's
- * dismiss / onDestroy to remove the auto-hide handler.
+ *  4. (rev7) Speed slider hook.
+ *     - [onSpeedChangedBySlider] is called by the host when the user
+ *       drags the speed Slider, so the helper's [savedSpeed] snapshot
+ *       stays in sync (otherwise the long-press-release would restore
+ *       a stale pre-slider value).
  */
 class PlayerGestureHelper(
     private val playerView: StyledPlayerView,
     private val pauseButton: View,
-    private val seekHintView: View? = null,
+    private val seekRewindHint: TextView? = null,
+    private val seekForwardHint: TextView? = null,
 ) {
     private var player: ExoPlayer? = null
     private val handler = Handler(Looper.getMainLooper())
     private var savedSpeed: Float = 1.0f
     private var isLongPressing = false
 
-    // Auto-hide the pause button after this many ms of inactivity.
-    // 2s matches the typical "tap to see controls" pattern (YouTube
-    // uses 3s, but our button is smaller and less intrusive so 2s
-    // keeps it visible just long enough to register a tap).
-    private val hideDelayMs = 2000L
+    // v1.6.5 rev7: long-press speed bumped to 5.0x per user request
+    // "长按倍速也改为5x".
+    private val longPressSpeed = 5.0f
 
-    // Seek delta for double-tap. 10s matches YouTube/Bilibili UX —
-    // fast enough that 5-6 double-taps skip a minute, slow enough
-    // that the user can re-target with a single tap without overshooting.
+    private val hideDelayMs = 2000L
     private val doubleTapSeekMs = 10_000L
 
     private val hideRunnable = Runnable {
         pauseButton.visibility = View.GONE
     }
 
+    // Currently-running seek hint animator (so a new double-tap can
+    // cancel the previous animation and start fresh).
+    private var seekHintAnimator: ObjectAnimator? = null
+
     private val gestureDetector = GestureDetector(playerView.context,
         object : GestureDetector.SimpleOnGestureListener() {
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-                // Single tap: toggle pause-button visibility.
-                // If currently visible, hide immediately (lets the
-                // user dismiss the chrome with one tap). If hidden,
-                // show for [hideDelayMs] then auto-hide.
                 if (pauseButton.visibility == View.VISIBLE) {
                     pauseButton.visibility = View.GONE
                     handler.removeCallbacks(hideRunnable)
@@ -90,67 +87,46 @@ class PlayerGestureHelper(
             }
 
             override fun onDoubleTap(e: MotionEvent): Boolean {
-                // Determine which side of the player the tap landed on.
-                // The middle 20% band is reserved (overlaps the centered
-                // pause button) so a double-tap there doesn't accidentally
-                // trigger a seek — the user gets a no-op, which is safer
-                // than an unintended skip.
                 val width = playerView.width.toFloat()
                 val x = e.x
                 val leftBandEnd = width * 0.40f
                 val rightBandStart = width * 0.60f
                 when {
-                    x < leftBandEnd -> seekBy(-doubleTapSeekMs)
-                    x > rightBandStart -> seekBy(doubleTapSeekMs)
+                    x < leftBandEnd -> {
+                        seekBy(-doubleTapSeekMs)
+                        playSeekHintAnimation(seekRewindHint)
+                    }
+                    x > rightBandStart -> {
+                        seekBy(doubleTapSeekMs)
+                        playSeekHintAnimation(seekForwardHint)
+                    }
                     else -> {
-                        // Middle band: hide the pause button (treat
-                        // as a "dismiss chrome" tap rather than a seek).
+                        // Middle band: no-op (avoid misfire).
                     }
                 }
                 return true
             }
 
             override fun onLongPress(e: MotionEvent) {
-                // Long-press: enter 3x fast-forward mode.
-                // We save the current speed so onLongPressEnd (touch-up)
-                // can restore it. If the user is already at >= 3x (e.g.
-                // they set 2x via the speed menu, then long-pressed),
-                // we still save 2x and restore it on release.
                 val p = player ?: return
                 if (isLongPressing) return
                 isLongPressing = true
                 savedSpeed = p.playbackParameters.speed
-                p.playbackParameters = PlaybackParameters(3.0f)
+                p.playbackParameters = PlaybackParameters(longPressSpeed)
                 showPauseButton()
             }
         })
 
-    /**
-     * Wires the gesture detector + pause button click listener to
-     * the views. Must be called AFTER [playerView]'s player is set
-     * (otherwise [onPlayerChanged] should be called separately).
-     */
     fun attach(player: ExoPlayer?) {
         this.player = player
-        // Make sure playerView can receive touch events. The
-        // StyledPlayerView's controller surface handles its own
-        // touches, but with useController=false the underlying
-        // FrameLayout is the touch target — we set it clickable.
         playerView.isClickable = true
         playerView.isFocusable = true
         playerView.setOnTouchListener { _, event ->
-            // Route to GestureDetector for tap/double-tap/long-press.
-            // We must return false on ACTION_UP/ACTION_CANCEL when a
-            // long-press was active so we can detect the release and
-            // restore the saved speed — GestureDetector.SimpleOnGesture-
-            // Listener doesn't expose touch-up events.
             if (event.actionMasked == MotionEvent.ACTION_UP ||
                 event.actionMasked == MotionEvent.ACTION_CANCEL) {
                 if (isLongPressing) {
                     isLongPressing = false
                     player?.playbackParameters = PlaybackParameters(savedSpeed)
-                    // Keep the button visible briefly so the user
-                    // sees the speed snap back.
                     showPauseButton()
                 }
             }
@@ -158,21 +134,13 @@ class PlayerGestureHelper(
         }
         pauseButton.setOnClickListener {
             val p = player ?: return@setOnClickListener
-            // Toggle play/pause.
             p.playWhenReady = !p.playWhenReady
             updatePauseIcon(p.playWhenReady)
-            // Re-show the button + schedule auto-hide so the user
-            // can see the icon swap.
             showPauseButton()
         }
         updatePauseIcon(player?.playWhenReady ?: true)
     }
 
-    /**
-     * Updates the player reference when the host replaces its ExoPlayer
-     * (e.g. on day-change in RecordingsDialog). Resets the saved
-     * speed snapshot.
-     */
     fun onPlayerChanged(player: ExoPlayer?) {
         this.player = player
         isLongPressing = false
@@ -181,11 +149,24 @@ class PlayerGestureHelper(
     }
 
     /**
-     * Releases the auto-hide handler. Call from the host's
-     * onPause / onDestroy / dismiss to avoid leaking callbacks.
+     * v1.6.5 rev7: called by the host when the user drags the speed
+     * Slider. Updates [savedSpeed] so a subsequent long-press release
+     * restores the slider's value (rather than a stale pre-slider
+     * value from before the user touched the slider).
      */
+    fun onSpeedChangedBySlider(newSpeed: Float) {
+        // Only update savedSpeed if we're not currently long-pressing
+        // — otherwise we'd overwrite the pre-long-press snapshot
+        // and the release would restore the wrong (5x) value.
+        if (!isLongPressing) {
+            savedSpeed = newSpeed
+        }
+    }
+
     fun release() {
         handler.removeCallbacks(hideRunnable)
+        seekHintAnimator?.cancel()
+        seekHintAnimator = null
         playerView.setOnTouchListener(null)
         pauseButton.setOnClickListener(null)
         player = null
@@ -198,8 +179,6 @@ class PlayerGestureHelper(
     }
 
     private fun updatePauseIcon(isPlaying: Boolean) {
-        // Swap the pause button's icon to match the player's state.
-        // The MaterialButton's setIconResource takes care of sizing.
         if (pauseButton is com.google.android.material.button.MaterialButton) {
             pauseButton.setIconResource(
                 if (isPlaying) com.homedatacenter.app.R.drawable.ic_pause
@@ -214,9 +193,43 @@ class PlayerGestureHelper(
         val target = (current + deltaMs).coerceAtLeast(0L)
             .coerceAtMost(p.duration.coerceAtLeast(0L).let { if (it > 0) it else Long.MAX_VALUE })
         p.seekTo(target)
-        // Briefly show the pause button as a "gesture received"
-        // affordance — gives the user feedback that their
-        // double-tap registered.
         showPauseButton()
+    }
+
+    /**
+     * v1.6.5 rev7: blinks [hintView] twice (alpha 0→1→0→1→0).
+     * User said "闪烁两下". We use a single ObjectAnimator with a
+     * multi-stop KeyFrame-like float array — AnimatorSet isn't
+     * needed since one property (alpha) is animated.
+     *
+     * Total duration: 500ms (each flash ~125ms on, ~125ms off).
+     * The hint view's visibility is set to VISIBLE at the start and
+     * back to GONE at the end (via animator listener) so it doesn't
+     * intercept future touches.
+     */
+    private fun playSeekHintAnimation(hintView: TextView?) {
+        if (hintView == null) return
+        seekHintAnimator?.cancel()
+        hintView.visibility = View.VISIBLE
+        // Float array = keyframe values at evenly-spaced fractions.
+        // 5 keyframes over 500ms = 0.0, 0.25, 0.5, 0.75, 1.0
+        // alpha pattern: 0 → 1 → 0 → 1 → 0 (two visible flashes)
+        val animator = ObjectAnimator.ofFloat(
+            hintView, "alpha",
+            0f, 1f, 0f, 1f, 0f,
+        ).apply {
+            duration = 500L
+            // Slightly ease the flash on/off — feels more "liquid
+            // glass" than a linear snap.
+            setAutoCancel(true)
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: Animator) {
+                    hintView.visibility = View.GONE
+                    hintView.alpha = 0f
+                }
+            })
+        }
+        seekHintAnimator = animator
+        animator.start()
     }
 }

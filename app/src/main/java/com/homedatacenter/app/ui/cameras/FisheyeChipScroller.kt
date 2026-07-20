@@ -9,45 +9,31 @@ import android.widget.TextView
 import kotlin.math.abs
 
 /**
- * v1.6.4 rev5: a HorizontalScrollView that applies a "fisheye" scale
- * transform to its children on scroll. Each chip is scaled along X
- * and Y based on its distance from the ScrollView's horizontal center:
- * chips at the center get scale = 1.0 (full size, with label),
- * chips at the edges get scale = minScale (compressed, no label).
+ * v1.6.5 rev7: simplified fisheye transform.
  *
- * This is the user's clarified request after rev4: "这个chip滑动不了，
- * 我想要滑动的时候，中间大的chip跟着替换" — the user wants scrollable
- * chips with a fisheye effect where the currently-centered chip is
- * large (showing the time label) and chips scroll INTO the center
- * (growing) and OUT to the edges (shrinking to thin colored bars).
+ * User reported "点击相应chip之后chip跳乱滚". Root cause: the rev6
+ * implementation toggled layoutParams.width between WRAP_CONTENT and
+ * thinBarWidthPx (3dp) based on the chip's scale. That triggered
+ * requestLayout() on every chip per scroll frame, and each layout
+ * pass re-fired onLayout → applyFisheyeScales → more requestLayout
+ * calls. The result was layout thrash that produced visible "jumping"
+ * whenever scroll position or chip visibility changed.
  *
- * rev4 was fit-to-screen (non-scrolling), which caused "中间部分的
- * chip 仍然太密集了" because all N chips were forced into the viewport
- * width. rev5 returns to HorizontalScrollView but keeps rev4's
- * "edge chips collapse to thin colored bars" feature via the
- * [textThreshold] mechanism.
+ * Fix: pure visual transform. Each chip's layoutParams.width stays
+ * at WRAP_CONTENT for its entire lifetime — no requestLayout() calls
+ * during scroll. Only scaleX / scaleY / text content change.
  *
- * Implementation:
- *  - Subclass HorizontalScrollView (rev4 was a ViewGroup; rev5 returns
- *    to scrolling).
- *  - Override [onScrollChanged] (fires on every scroll frame) and
- *    [onLayout] (fires after children are added/removed) to apply
- *    fisheye scales to each chip.
- *  - For each chip:
- *      dx = abs(chipCenterX - viewportCenterX)
- *      distNorm = (dx / viewportHalfWidth).coerceIn(0, 1)
- *      scale = lerp(1.0, minScale, distNorm)
- *  - If scale < [textThreshold]: clear text + force width to
- *    [thinBarWidthDp] (chip becomes a colored tick).
- *  - Else: restore text from tag + use measured width (chip shows
- *    "HH:mm" label at full scale).
- *  - alpha stays 1.0 (no dimming — user said "而不是隐藏").
+ * The "thin bar" effect at the edges is achieved by scaleX decaying
+ * to [minScale] (0.4); the chip's measured width stays the same but
+ * its visual width shrinks to 40%. Empty text + small scaleX gives
+ * the same "colored tick" look as before without the layout thrash.
  *
- * Initial scroll position: when [scrollToInitialCenter] is called
- * (typically from [RecordingsDialog.playDayAsPlaylist] after
- * populating chips), we scroll so that the chip nearest to the
- * current playback position is centered. This gives the user an
- * immediate "you are here" focal point.
+ * Edge padding (rev7 fix for "两头的chip不能完全拉出来"):
+ * the container's horizontal padding is set to half the scroller's
+ * width so that the first and last chips can be scrolled to the
+ * viewport center. Without this padding, scrollTo on the first chip
+ * only scrolls to scrollX=0 (left edge), leaving the chip in the
+ * top-left rather than the center.
  */
 class FisheyeChipScroller @JvmOverloads constructor(
     context: Context,
@@ -55,41 +41,21 @@ class FisheyeChipScroller @JvmOverloads constructor(
     defStyleAttr: Int = 0,
 ) : HorizontalScrollView(context, attrs, defStyleAttr) {
 
-    /**
-     * The minimum scale applied to chips at the edge of the viewport.
-     * 0.4 = edge chips are 40% of full size — small enough to clearly
-     * look "compressed" but large enough to remain visible as a
-     * colored marker (alpha stays 1.0).
-     */
+    /** Minimum scale at the viewport edge. 0.4 = 40% of full size. */
     private val minScale = 0.4f
 
     /**
-     * v1.6.4 rev5: scale threshold below which chip text is hidden
-     * and the chip collapses to a thin colored bar. When scale < 0.65:
-     *  - text is cleared (chip's tag retains the label for restoration)
-     *  - chip's layoutParams.width is forced to [thinBarWidthDp] px
-     *  - alpha stays 1.0 (still visible as a colored marker)
-     * This gives the "edge chips compress to thin lines" effect
-     * the user wanted.
+     * Scale threshold below which chip text is hidden (chip becomes
+     * a "colored tick"). 0.65 means chips near the edge (scale 0.4-0.65)
+     * lose their text — the user said "靠边的就不用带字了".
      */
     private val textThreshold = 0.65f
 
     /**
-     * v1.6.4 rev5: width (in dp) of a chip when collapsed to thin
-     * bar mode (scale < [textThreshold]).
-     */
-    private val thinBarWidthDp = 3f
-
-    /**
-     * v1.6.4 rev5: half-width (in px) of the "full scale" band
-     * around the viewport center. Chips within this band get
-     * scale=1.0 (full size, label visible). Beyond this band,
-     * scale decays linearly toward [minScale] at the viewport edge.
-     *
-     * 80px ≈ 1 chip-width (item_motion_chip.xml wrap_content with
-     * 9sp "HH:mm" + 4dp/2dp padding ≈ 60-80px). This means the
-     * chip currently in the center + its immediate neighbors stay
-     * full-size, then decay kicks in for the rest.
+     * Half-width (in px) of the "full scale" band around the viewport
+     * center. Chips within this band get scale=1.0 (full size, label
+     * visible). Beyond this band, scale decays linearly toward
+     * [minScale] at the viewport edge.
      */
     private val fullScaleBandPx = 80
 
@@ -104,38 +70,63 @@ class FisheyeChipScroller @JvmOverloads constructor(
     override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
         super.onLayout(changed, l, t, r, b)
         // After children are laid out (e.g. populateChips added new
-        // views), re-apply scales so the initial visible state is
-        // correct without requiring the user to scroll first.
+        // views, or the scroller was resized), re-apply scales + set
+        // container edge padding so the first/last chips can reach
+        // the viewport center.
+        updateContainerEdgePadding()
         applyFisheyeScales()
     }
 
     /**
+     * v1.6.5 rev7: sets the container's horizontal padding to half
+     * the scroller's width so the first and last chips can be
+     * scrolled to the viewport center. Without this, the first
+     * chip's left edge can only reach the scroller's left edge (not
+     * the center) — the user said "两头的chip不能完全拉出来".
+     *
+     * We use paddingLeft + paddingRight instead of a single
+     * paddingStart so RTL layouts also get the symmetric padding.
+     * clipToPadding is set to false so chips remain visible while
+     * scrolling through the padding zone.
+     */
+    private fun updateContainerEdgePadding() {
+        val container = container ?: return
+        val halfViewport = (width / 2).coerceAtLeast(0)
+        if (halfViewport == 0) return
+        // Only update if the value changed to avoid requestLayout()
+        // storms when this is called from onLayout.
+        if (container.paddingLeft != halfViewport ||
+            container.paddingRight != halfViewport) {
+            container.setPadding(halfViewport, 0, halfViewport, 0)
+            // clipToPadding=false lets chips render in the padding
+            // zone while the user scrolls past the first/last chip —
+            // important so the centered chip isn't clipped at the
+            // edges.
+            clipToPadding = false
+        }
+    }
+
+    /**
      * Walks each chip in the container and sets its scaleX/scaleY
-     * (and text/width) based on its distance from the viewport center.
+     * (and text) based on its distance from the viewport center.
+     * Pure visual transform — no requestLayout() calls (rev7 fix).
      */
     private fun applyFisheyeScales() {
         val container = container ?: return
-        val density = resources.displayMetrics.density
-        val thinBarWidthPx = (thinBarWidthDp * density).toInt()
         val viewportCenterX = scrollX + width / 2
         val viewportHalfWidth = (width / 2).coerceAtLeast(1)
-        // Decay range: from the edge of the full-scale band to the
-        // viewport edge. Within band: scale 1.0. Beyond band: linear
-        // decay to minScale.
         val decayRange = (viewportHalfWidth - fullScaleBandPx).coerceAtLeast(1)
         for (i in 0 until container.childCount) {
             val child = container.getChildAt(i) ?: continue
             val chipCenterX = (child.left + child.right) / 2
             val dx = abs(chipCenterX - viewportCenterX)
-            val scale: Float
-            if (dx <= fullScaleBandPx) {
-                scale = 1.0f
+            val scale: Float = if (dx <= fullScaleBandPx) {
+                1.0f
             } else {
                 val t = ((dx - fullScaleBandPx).toFloat() / decayRange).coerceIn(0f, 1f)
-                scale = lerp(1.0f, minScale, t)
+                lerp(1.0f, minScale, t)
             }
-            // Collapsed: hide text + force thin width.
-            // Expanded: restore text + let width be wrap_content.
+            // Collapsed: hide text. Expanded: restore text.
             val collapsed = scale < textThreshold
             if (child is TextView) {
                 val label = child.tag as? String ?: ""
@@ -146,28 +137,15 @@ class FisheyeChipScroller @JvmOverloads constructor(
                     child.text = label
                 }
             }
-            // Force the chip's layout width to thinBarWidthPx when
-            // collapsed, or WRAP_CONTENT when expanded. We use the
-            // LayoutParams.width setter + requestLayout() only when
-            // the value changes — avoids unnecessary layout passes.
-            val params = child.layoutParams
-            val targetWidth = if (collapsed) thinBarWidthPx else
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            if (params.width != targetWidth) {
-                params.width = targetWidth
-                child.layoutParams = params
+            // v1.6.5 rev7: pure visual transform. No width forcing,
+            // no requestLayout() — just scale + alpha. The chip's
+            // measured width stays WRAP_CONTENT for its entire life;
+            // the "thin tick" look at the edges comes from scaleX
+            // decaying to minScale.
+            if (child.scaleX != scale) {
+                child.scaleX = scale
+                child.scaleY = scale
             }
-            // Apply scale transform. For collapsed chips, we skip
-            // scaling (they're already narrow via targetWidth) so
-            // they don't disappear to sub-pixel. Expanded chips get
-            // the full fisheye scale.
-            val actualScale = if (collapsed) 1.0f else scale
-            if (child.scaleX != actualScale) {
-                child.scaleX = actualScale
-                child.scaleY = actualScale
-            }
-            // v1.6.4 rev5: alpha stays 1.0 (no dimming). User
-            // explicitly said "而不是隐藏".
             if (child.alpha != 1.0f) child.alpha = 1.0f
         }
     }
@@ -178,6 +156,11 @@ class FisheyeChipScroller @JvmOverloads constructor(
      * to give the user an "you are here" initial focal point —
      * the chip closest to the current ExoPlayer position is centered,
      * making it obvious which moment is currently playing.
+     *
+     * v1.6.5 rev7: uses smoothScrollTo (200ms) instead of scrollTo
+     * + post{} to avoid the "跳乱滚" the user reported. The smooth
+     * animation gives the user visual continuity — they see the
+     * chips sliding into focus rather than a hard jump.
      */
     fun scrollToCenterChip(centerChildIndex: Int) {
         val container = container ?: return
@@ -186,7 +169,8 @@ class FisheyeChipScroller @JvmOverloads constructor(
         post {
             val targetCenter = target.left + target.width / 2
             val viewportCenter = width / 2
-            scrollTo(targetCenter - viewportCenter, 0)
+            val targetScroll = (targetCenter - viewportCenter).coerceAtLeast(0)
+            smoothScrollTo(targetScroll, 0)
         }
     }
 

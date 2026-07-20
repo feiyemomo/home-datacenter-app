@@ -13,18 +13,26 @@ import android.view.View
  * the SeekBar's drawable area so the alert ranges visually overlap
  * the progress track.
  *
+ * v1.6.5 rev7: extended to support per-range tier coloring. The user
+ * asked: "把展示出来的chip区间大概标注再进度条上面吧". Previously
+ * the overlay only painted ALERT ranges (red) — now it accepts a
+ * tier per range (LOW/MID/HIGH/ALERT) and paints each in the chip's
+ * color so the SeekBar's range markers visually match the chips
+ * shown in the fisheye scroller below.
+ *
+ * Tier colors (matching bg_chip_motion_*.xml):
+ *   - LOW (teal):    #4DB6AC
+ *   - MID (amber):   #FFB300
+ *   - HIGH (orange): #FF7043
+ *   - ALERT (red):   #EF5350
+ *
  * Usage:
  *  1. Place [AlertRangeOverlay] ABOVE the [android.widget.SeekBar]
- *     in a FrameLayout (or as a sibling aligned to the SeekBar's
- *     top/bottom edges — they share the same horizontal extent).
- *  2. Call [setAlertRanges] with a list of (startMs, endMs) pairs,
- *     each representing an alert time interval within the 0..max
- *     range of the SeekBar.
- *  3. Call [setMax] with the same max as the SeekBar so the
- *     overlay can correctly map time ranges to pixels.
- *
- * The overlay is purely visual — it does NOT intercept touches,
- * so the user can drag the SeekBar through the alert regions.
+ *     in a FrameLayout.
+ *  2. Call [setMax] with the same max as the SeekBar.
+ *  3. Call [setAlertRanges] with the ranges + aiIndices (legacy) OR
+ *     [setTieredRanges] with explicit per-range tier to get the
+ *     tier-colored rendering.
  */
 class AlertRangeOverlay @JvmOverloads constructor(
     context: Context,
@@ -32,77 +40,115 @@ class AlertRangeOverlay @JvmOverloads constructor(
     defStyleAttr: Int = 0,
 ) : View(context, attrs, defStyleAttr) {
 
+    // Legacy paints — kept for backward compat with callers that
+    // use the original [setAlertRanges] (no tier info).
     private val alertPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#E53935") // Material Red 600
-        strokeWidth = 0f  // filled rects, no stroke
-        isDither = true
-    }
-    // v1.6.3: brighter orange for AI-detected ranges (PeakObjects > 0).
-    // Drawn at a slightly higher opacity so the user can distinguish
-    // "pure motion" from "AI tracked something" at a glance.
-    private val aiAlertPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.parseColor("#FF5252") // Material Red A200 — brighter
         strokeWidth = 0f
         isDither = true
     }
-    // v1.6.3: thin tick mark drawn ABOVE each range's start position.
-    // Helps the user see exactly where a motion event begins, since
-    // the bar itself may be only 1-2px wide and hard to read.
+    private val aiAlertPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#FF5252")
+        strokeWidth = 0f
+        isDither = true
+    }
     private val tickPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#FFFFFF")
-        strokeWidth = 1f  // 1px tick
+        strokeWidth = 1f
+        isDither = true
+    }
+
+    // v1.6.5 rev7: per-tier paints matching the chip backgrounds.
+    private val lowTierPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#4DB6AC") // teal
+        strokeWidth = 0f
+        isDither = true
+    }
+    private val midTierPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#FFB300") // amber
+        strokeWidth = 0f
+        isDither = true
+    }
+    private val highTierPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#FF7043") // orange
+        strokeWidth = 0f
+        isDither = true
+    }
+    private val alertTierPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.parseColor("#EF5350") // red
+        strokeWidth = 0f
         isDither = true
     }
 
     private val alertRanges = mutableListOf<Pair<Long, Long>>()
-    // v1.6.3: per-range "is AI detected" flag. Indices match alertRanges.
-    // When true the range is painted with [aiAlertPaint] (brighter red)
-    // instead of the regular [alertPaint]. Populated by setAlertRanges.
     private val rangeIsAi = mutableListOf<Boolean>()
+    // v1.6.5 rev7: per-range tier index, parallel to alertRanges.
+    // -1 = legacy (use alertPaint/aiAlertPaint based on rangeIsAi);
+    // 0/1/2/3 = LOW/MID/HIGH/ALERT.
+    private val rangeTiers = mutableListOf<Int>()
     private var maxMs: Long = 1L
 
-    /**
-     * Sets the maximum value of the corresponding SeekBar. Used to
-     * map time ranges to pixel positions. Must be called BEFORE
-     * [setAlertRanges] for the mapping to be correct.
-     */
+    /** Tier constants exposed for callers. */
+    companion object {
+        const val TIER_LEGACY = -1
+        const val TIER_LOW = 0
+        const val TIER_MID = 1
+        const val TIER_HIGH = 2
+        const val TIER_ALERT = 3
+    }
+
     fun setMax(max: Long) {
         maxMs = if (max <= 0) 1L else max
         invalidate()
     }
 
     /**
-     * Sets the alert time ranges to render. Each pair is
-     * (startMs, endMs) in the same time scale as the SeekBar's
-     * progress (0..max). Pass an empty list to clear the overlay.
-     *
-     * v1.6.3: the new [aiIndices] parameter is a set of indices
-     * (into the [ranges] list) that should be painted as AI-detected
-     * (brighter red). Used to distinguish "pure motion" from "AI
-     * tracked something" at a glance.
+     * Legacy setter — paints all ranges in red (or brighter red
+     * for AI-detected). Kept for backward compat; new callers
+     * should use [setTieredRanges].
      */
     fun setAlertRanges(ranges: List<Pair<Long, Long>>, aiIndices: Set<Int> = emptySet()) {
         alertRanges.clear()
         alertRanges.addAll(ranges)
         rangeIsAi.clear()
+        rangeTiers.clear()
         for (i in ranges.indices) {
             rangeIsAi.add(i in aiIndices)
+            rangeTiers.add(TIER_LEGACY)
         }
         invalidate()
     }
+
+    /**
+     * v1.6.5 rev7: sets the alert time ranges with explicit per-range
+     * tier. Each [TieredRange] carries (startMs, endMs, tier).
+     * The overlay paints each range in its tier color so the SeekBar
+     * matches the fisheye chip scroller visually.
+     */
+    fun setTieredRanges(ranges: List<TieredRange>) {
+        alertRanges.clear()
+        rangeIsAi.clear()
+        rangeTiers.clear()
+        for (r in ranges) {
+            alertRanges.add(r.startMs to r.endMs)
+            rangeIsAi.add(r.tier == TIER_ALERT)
+            rangeTiers.add(r.tier)
+        }
+        invalidate()
+    }
+
+    /** Convenience holder for tiered range data. */
+    data class TieredRange(
+        val startMs: Long,
+        val endMs: Long,
+        val tier: Int,
+    )
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         if (alertRanges.isEmpty() || width <= 0 || height <= 0) return
         val h = height.toFloat()
         val barH = h
-        // v1.6.3: minW 2 -> 1. v1.6.2 used 2px which on a busy day
-        // (~180 ranges) produced a "thick red wall". With the v1.6.3
-        // backend's 2s merge threshold the count is similar but now
-        // chips carry the readable info; the overlay is just a
-        // visual anchor showing "this is where motion happened on
-        // the 24h timeline". 1px is the thinnest visible line on
-        // Android — fits the new role.
         val minW = 1f
         for ((i, pair) in alertRanges.withIndex()) {
             val (startMs, endMs) = pair
@@ -110,19 +156,20 @@ class AlertRangeOverlay @JvmOverloads constructor(
             val endRatio = (endMs.toFloat() / maxMs).coerceIn(0f, 1f)
             val left = startRatio * width
             val right = endRatio * width
-            val paint = if (i < rangeIsAi.size && rangeIsAi[i]) aiAlertPaint else alertPaint
-            // Expand sub-pixel ranges to minW so they're visible.
-            // Center the expansion on the alert's midpoint.
+            val tier = if (i < rangeTiers.size) rangeTiers[i] else TIER_LEGACY
+            val paint = when (tier) {
+                TIER_LOW -> lowTierPaint
+                TIER_MID -> midTierPaint
+                TIER_HIGH -> highTierPaint
+                TIER_ALERT -> alertTierPaint
+                else -> if (i < rangeIsAi.size && rangeIsAi[i]) aiAlertPaint else alertPaint
+            }
             if (right - left < minW) {
                 val center = (left + right) / 2f
                 canvas.drawRect(center - minW / 2f, 0f, center + minW / 2f, barH, paint)
             } else {
                 canvas.drawRect(left, 0f, right, barH, paint)
             }
-            // v1.6.3: tick mark at the start of each range — a small
-            // white dot at the top of the overlay helps the user see
-            // "this is where the motion STARTED" even when the range
-            // itself is too thin to read.
             canvas.drawCircle(left, barH / 2f, 0.8f, tickPaint)
         }
     }

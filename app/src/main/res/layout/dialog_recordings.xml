@@ -10,6 +10,7 @@
      list cards are themselves warm glass tiles. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
@@ -68,7 +69,7 @@
             android:id="@+id/videoContainer"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:background="@android:color/black"
+            android:background="@android:color/transparent"
             android:visibility="gone">
 
             <!-- v1.6.4 rev2: vertical layout re-ordered per user request
@@ -144,11 +145,61 @@
                         app:iconTint="@android:color/white"
                         android:visibility="gone" />
 
-                    <!-- Standalone playback speed button. v1.6.4 rev2:
-                         menu now opens as a Material AlertDialog with
-                         single-choice items + rounded corners (was
-                         PopupMenu which felt "生硬"). Stays in top|end
-                         so it's reachable over the player surface. -->
+                    <!-- v1.6.5 rev7: playback speed is now a horizontal
+                         Slider instead of a dropdown button. User said
+                         "变速条改为可滑动的，最高切到5x吧". The slider
+                         sits at the top-center of the playerView so it
+                         doesn't overlap the bottom|end fullscreen button
+                         or the centered pause button.
+                         Discrete steps 0.5x..5.0x (10 steps); current
+                         value is displayed in a small label to the right
+                         of the slider. Slider track + thumb use white
+                         for high contrast on the dark video surface. -->
+                    <LinearLayout
+                        android:id="@+id/speedBarContainer"
+                        android:layout_width="220dp"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="top|center_horizontal"
+                        android:layout_marginTop="6dp"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:background="@drawable/bg_glass_dark_panel"
+                        android:paddingStart="10dp"
+                        android:paddingEnd="10dp"
+                        android:paddingTop="2dp"
+                        android:paddingBottom="2dp"
+                        android:visibility="gone">
+
+                        <com.google.android.material.slider.Slider
+                            android:id="@+id/speedSlider"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:valueFrom="0.5"
+                            android:valueTo="5.0"
+                            android:stepSize="0.5"
+                            android:value="1.0"
+                            app:thumbColor="@android:color/white"
+                            app:trackColorActive="@android:color/white"
+                            app:trackColorInactive="#80FFFFFF"
+                            app:haloColor="#40FFFFFF" />
+
+                        <TextView
+                            android:id="@+id/tvSpeedLabel"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="1x"
+                            android:textColor="@android:color/white"
+                            android:textSize="12sp"
+                            android:fontFamily="monospace"
+                            android:minWidth="34dp"
+                            android:gravity="end" />
+                    </LinearLayout>
+
+                    <!-- Standalone playback speed button kept (hidden)
+                         for backward-compat with PlayerFullscreenHelper's
+                         attachSpeedButton — but the slider is the new
+                         primary speed control. -->
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnPlaybackSpeed"
                         style="@style/Widget.Material3.Button.IconButton"
@@ -167,6 +218,52 @@
                         android:paddingBottom="4dp"
                         android:textSize="13sp"
                         android:visibility="gone" />
+
+                    <!-- v1.6.5 rev7: double-tap seek animation overlays.
+                         User said "双击快退进改为两个单书名号样式闪烁
+                         两下的动画吧". Two TextViews (left-aligned and
+                         right-aligned) hold "《" and "》" respectively,
+                         initially GONE. PlayerGestureHelper shows + blinks
+                         them twice (alpha 0→1→0→1→0 over ~500ms) when the
+                         user double-taps the corresponding side. The "《"
+                         overlay sits on the LEFT 25% of the player surface;
+                         "》" sits on the RIGHT 25%. Centered pause button
+                         isn't affected. -->
+                    <TextView
+                        android:id="@+id/tvSeekRewindHint"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="center_vertical|start"
+                        android:layout_marginStart="40dp"
+                        android:text="《"
+                        android:textColor="@android:color/white"
+                        android:textSize="56sp"
+                        android:textStyle="bold"
+                        android:shadowColor="#000000"
+                        android:shadowRadius="6"
+                        android:shadowDx="0"
+                        android:shadowDy="2"
+                        android:alpha="0.0"
+                        android:visibility="gone"
+                        tools:ignore="HardcodedText" />
+
+                    <TextView
+                        android:id="@+id/tvSeekForwardHint"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="center_vertical|end"
+                        android:layout_marginEnd="40dp"
+                        android:text="》"
+                        android:textColor="@android:color/white"
+                        android:textSize="56sp"
+                        android:textStyle="bold"
+                        android:shadowColor="#000000"
+                        android:shadowRadius="6"
+                        android:shadowDx="0"
+                        android:shadowDy="2"
+                        android:alpha="0.0"
+                        android:visibility="gone"
+                        tools:ignore="HardcodedText" />
 
                     <!-- Fullscreen button at bottom|end (player's
                          bottom-right corner). v1.6.4 rev3: moved from
@@ -271,9 +368,9 @@
                         <com.homedatacenter.app.ui.cameras.AlertRangeOverlay
                             android:id="@+id/alertOverlay"
                             android:layout_width="match_parent"
-                            android:layout_height="12dp"
+                            android:layout_height="14dp"
                             android:layout_gravity="top"
-                            android:layout_marginTop="6dp"
+                            android:layout_marginTop="4dp"
                             android:visibility="visible" />
                     </FrameLayout>
                 </LinearLayout>
