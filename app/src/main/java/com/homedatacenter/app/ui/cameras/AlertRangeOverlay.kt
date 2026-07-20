@@ -88,15 +88,6 @@ class AlertRangeOverlay @JvmOverloads constructor(
     private val rangeTiers = mutableListOf<Int>()
     private var maxMs: Long = 1L
 
-    /** Tier constants exposed for callers. */
-    companion object {
-        const val TIER_LEGACY = -1
-        const val TIER_LOW = 0
-        const val TIER_MID = 1
-        const val TIER_HIGH = 2
-        const val TIER_ALERT = 3
-    }
-
     fun setMax(max: Long) {
         maxMs = if (max <= 0) 1L else max
         invalidate()
@@ -124,17 +115,92 @@ class AlertRangeOverlay @JvmOverloads constructor(
      * tier. Each [TieredRange] carries (startMs, endMs, tier).
      * The overlay paints each range in its tier color so the SeekBar
      * matches the fisheye chip scroller visually.
+     *
+     * v1.6.6 rev8: client-side consolidation. User said "位于中间的
+     * 一些chip的时段并集大概标注在进度条上面". Previously every
+     * individual range was painted as a separate marker, so a long
+     * quiet stretch with 10+ LOW segments showed as 10+ small teal
+     * ticks that visually merged into a smear. Now consecutive ranges
+     * of the same tier within [consolidateGapMs] of each other are
+     * merged into a single marker spanning the union of their time
+     * ranges. The merge is purely visual — the underlying data isn't
+     * touched.
+     *
+     * The gap (default 30s) is intentionally larger than the backend's
+     * per-tier merge gap so that visually-adjacent ranges of the same
+     * color collapse into one fat marker rather than many tiny ones.
      */
     fun setTieredRanges(ranges: List<TieredRange>) {
         alertRanges.clear()
         rangeIsAi.clear()
         rangeTiers.clear()
-        for (r in ranges) {
+        // v1.6.6 rev8: client-side merge of same-tier consecutive ranges.
+        // Two ranges are merged if (a) same tier, (b) gap between
+        // prevEnd and curStart <= consolidateGapMs. Merged range takes
+        // the union (min start, max end).
+        val consolidated = consolidateRanges(ranges, consolidateGapMs)
+        for (r in consolidated) {
             alertRanges.add(r.startMs to r.endMs)
             rangeIsAi.add(r.tier == TIER_ALERT)
             rangeTiers.add(r.tier)
         }
         invalidate()
+    }
+
+    /**
+     * v1.6.6 rev8: merges consecutive same-tier ranges whose gap ≤
+     * [gapMs]. Returns a new list where each run of same-tier ranges
+     * within the gap threshold is collapsed into a single range
+     * spanning the union (min start, max end). Tier is preserved.
+     *
+     * Examples:
+     *   - Two LOW ranges 5s apart (gap 5s ≤ 30s): merge into one LOW
+     *     range from min(start) to max(end).
+     *   - A LOW then ALERT then LOW: not merged (different tiers).
+     *   - Two HIGH ranges 60s apart: not merged (gap 60s > 30s).
+     */
+    private fun consolidateRanges(
+        ranges: List<TieredRange>,
+        gapMs: Long,
+    ): List<TieredRange> {
+        if (ranges.isEmpty()) return emptyList()
+        val sorted = ranges.sortedBy { it.startMs }
+        val out = mutableListOf<TieredRange>()
+        var curStart = sorted[0].startMs
+        var curEnd = sorted[0].endMs
+        var curTier = sorted[0].tier
+        for (i in 1 until sorted.size) {
+            val r = sorted[i]
+            val gap = r.startMs - curEnd
+            if (r.tier == curTier && gap <= gapMs) {
+                // Extend current range.
+                if (r.endMs > curEnd) curEnd = r.endMs
+                if (r.startMs < curStart) curStart = r.startMs
+            } else {
+                out.add(TieredRange(curStart, curEnd, curTier))
+                curStart = r.startMs
+                curEnd = r.endMs
+                curTier = r.tier
+            }
+        }
+        out.add(TieredRange(curStart, curEnd, curTier))
+        return out
+    }
+
+    companion object {
+        const val TIER_LEGACY = -1
+        const val TIER_LOW = 0
+        const val TIER_MID = 1
+        const val TIER_HIGH = 2
+        const val TIER_ALERT = 3
+        // v1.6.6 rev8: client-side consolidation gap. Ranges of the
+        // same tier within this many ms of each other are merged into
+        // one marker. 30s is larger than the backend's per-tier gaps
+        // (LOW 180s, MID 15s) — but since the backend already merged
+        // within-tier ranges, this is mostly for visual cleanup of
+        // edge cases where two ranges of the same tier happen to be
+        // close but not adjacent in the backend's merge window.
+        private const val consolidateGapMs = 30_000L
     }
 
     /** Convenience holder for tiered range data. */

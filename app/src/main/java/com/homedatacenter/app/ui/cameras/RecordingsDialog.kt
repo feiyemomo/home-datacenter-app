@@ -104,6 +104,14 @@ class RecordingsDialog(
     // LOCAL 08:00 has offset 0 — i.e., the SeekBar's 0% actually
     // corresponds to the first recording of the day.
     private var clipStartOffsets: LongArray = LongArray(0)
+    // v1.6.6 rev8: maps container child index → MotionChip reference.
+    // Used by [seekToMotionStart] to find the container child that
+    // corresponds to a tapped chip (so we can scrollToCenterChip it).
+    // Previously we matched by formatted "HH:mm" label, but collapsed
+    // "⋯" chips share the same "⋯" label across multiple runs — a
+    // label match would find the wrong chip. This map gives us O(1)
+    // lookup by chip reference instead.
+    private val childIndexToMotionChip = mutableMapOf<Int, MotionChip>()
     private var dayStartLocalMillis: Long = 0L
     private val daySeekHandler = Handler(Looper.getMainLooper())
     private var daySeekUserDragging = false
@@ -1032,34 +1040,93 @@ class RecordingsDialog(
         val fmt = SimpleDateFormat("HH:mm", Locale.US).apply { timeZone = tz }
 
         val inflater = LayoutInflater.from(context)
-        for (chip in sorted) {
-            val tv = inflater.inflate(R.layout.item_motion_chip, container, false) as android.widget.TextView
-            // v1.6.4 rev3: chip label shortened from "HH:mm:ss · Ns"
-            // to just "HH:mm" — seconds + duration were noise when
-            // 100+ chips are fit-to-screen, and the long label made
-            // chips overlap into a solid color block. The user said
-            // "他们现在连成一片了". Tighter label + tighter padding
-            // (see item_motion_chip.xml) gives visible gaps between
-            // chips even on a busy day.
-            val label = fmt.format(Date(chip.startUnixSec * 1000L))
-            tv.text = label
-            // v1.6.4 rev4: stash the label as a tag so FisheyeChipScroller
-            // can hide/restore text based on scale (edge chips collapse
-            // to thin colored bars without text — "靠边的就不用带字了
-            // 吧，一直压缩为细线"). Without this tag, the scroller
-            // would have no way to restore the label when the chip
-            // scrolls back into the expanded zone.
-            tv.tag = label
-            // Color by score (low/mid/high) — AI-detected (peak>0) overrides.
-            val bgRes = when {
-                chip.peakObjects > 0 -> R.drawable.bg_chip_motion_alert
-                chip.motionScore >= maxScore * 3 / 4 -> R.drawable.bg_chip_motion_high
-                chip.motionScore >= maxScore / 4 -> R.drawable.bg_chip_motion_mid
-                else -> R.drawable.bg_chip_motion_low
+
+        // v1.6.6 rev8: clear the chip-ref map before re-populating.
+        childIndexToMotionChip.clear()
+
+        // v1.6.6 rev8: collapse runs of consecutive LOW-tier chips into
+        // a single "⋯" chip. User said: "一系列连续绿色的之间就用省
+        // 略号或其他形式代替，你觉咋好看咋来，就算翻到中间也不用展
+        // 开". Previously 100+ green chips filled the scroller with low-
+        // value "quiet period" markers; now each run of >= 3 consecutive
+        // LOW-tier chips collapses into a single ellipsis chip (teal
+        // background, "⋯" label, non-time formatted). Clicking the
+        // ellipsis chip seeks to the middle of the run's time range so
+        // the user can still jump there if they want.
+        //
+        // The ellipsis chip's label is "⋯" (U+22EF HORIZONTAL ELLIPSIS)
+        // — a single character that renders as three centered dots.
+        // FisheyeChipScroller's textThreshold logic treats it as text
+        // (visible when centered, hidden when collapsed to edge) so
+        // it visually behaves like other chips.
+        //
+        // Run-length threshold: 3. Two consecutive LOW chips stay as
+        // individual chips (they might be brief quiet moments between
+        // events); 3+ in a row is clearly a "quiet stretch" worth
+        // collapsing.
+        val minRunLen = 3
+        data class ChipRun(val startIdx: Int, val endIdx: Int, val isLow: Boolean)
+        val runs = mutableListOf<ChipRun>()
+        var runStart = 0
+        var runIsLow = isLowMotionTier(sorted[0], maxScore)
+        for (i in 1 until sorted.size) {
+            val curIsLow = isLowMotionTier(sorted[i], maxScore)
+            if (curIsLow != runIsLow) {
+                runs.add(ChipRun(runStart, i - 1, runIsLow))
+                runStart = i
+                runIsLow = curIsLow
             }
-            tv.setBackgroundResource(bgRes)
-            tv.setOnClickListener { seekToMotionStart(chip) }
-            container.addView(tv)
+        }
+        runs.add(ChipRun(runStart, sorted.size - 1, runIsLow))
+
+        // Container's child index → MotionChip lookup, used by
+        // scrollToCenterChip after population to find the chip closest
+        // to current playback. We track an "logical chip index" so the
+        // ellipsis chips still count toward the "find nearest" pass —
+        // the user's current position might be inside a quiet stretch.
+        val containerToSortedIdx = mutableListOf<Int>()
+
+        for (run in runs) {
+            val runLen = run.endIdx - run.startIdx + 1
+            if (run.isLow && runLen >= minRunLen) {
+                // v1.6.6 rev8: collapse this LOW run into a single
+                // "⋯" chip. Click → seek to the middle chip of the
+                // run (visually meaningful — lands in the middle of
+                // the quiet stretch).
+                val tv = inflater.inflate(R.layout.item_motion_chip, container, false) as android.widget.TextView
+                tv.text = "⋯"
+                tv.tag = "⋯" // tag used by FisheyeChipScroller for text hide/restore
+                tv.setBackgroundResource(R.drawable.bg_chip_motion_low)
+                val midChip = sorted[(run.startIdx + run.endIdx) / 2]
+                tv.setOnClickListener { seekToMotionStart(midChip) }
+                container.addView(tv)
+                // v1.6.6 rev8: track chip ref so seekToMotionStart can
+                // find this ellipsis chip by midChip reference.
+                childIndexToMotionChip[container.childCount - 1] = midChip
+                containerToSortedIdx.add((run.startIdx + run.endIdx) / 2)
+            } else {
+                // Non-collapsed run: emit each chip individually.
+                for (i in run.startIdx..run.endIdx) {
+                    val chip = sorted[i]
+                    val tv = inflater.inflate(R.layout.item_motion_chip, container, false) as android.widget.TextView
+                    val label = fmt.format(Date(chip.startUnixSec * 1000L))
+                    tv.text = label
+                    tv.tag = label
+                    val bgRes = when {
+                        chip.peakObjects > 0 -> R.drawable.bg_chip_motion_alert
+                        chip.motionScore >= maxScore * 3 / 4 -> R.drawable.bg_chip_motion_high
+                        chip.motionScore >= maxScore / 4 -> R.drawable.bg_chip_motion_mid
+                        else -> R.drawable.bg_chip_motion_low
+                    }
+                    tv.setBackgroundResource(bgRes)
+                    tv.setOnClickListener { seekToMotionStart(chip) }
+                    container.addView(tv)
+                    // v1.6.6 rev8: track chip ref so seekToMotionStart
+                    // can find this chip by reference.
+                    childIndexToMotionChip[container.childCount - 1] = chip
+                    containerToSortedIdx.add(i)
+                }
+            }
         }
         binding.motionChipScroller.visibility = View.VISIBLE
         // v1.6.4 rev5: scroll the fisheye scroller so the chip nearest
@@ -1073,20 +1140,45 @@ class RecordingsDialog(
         if (p != null && clipStartOffsets.isNotEmpty() &&
             p.currentWindowIndex in clipStartOffsets.indices) {
             val currentMs = clipStartOffsets[p.currentWindowIndex] + p.currentPosition
-            // Find the chip whose startMs is closest to (but not after)
-            // the current playback position. Falls back to index 0 if
-            // playback is before the first chip.
-            var bestIdx = 0
+            // Find the LOGICAL chip (in [sorted]) whose startMs is
+            // closest to current playback, then translate to the
+            // CONTAINER child index via containerToSortedIdx.
+            var bestSortedIdx = 0
             var bestDelta = Long.MAX_VALUE
             for (i in sorted.indices) {
                 val delta = abs(sorted[i].startRelativeMs - currentMs)
                 if (delta < bestDelta) {
                     bestDelta = delta
-                    bestIdx = i
+                    bestSortedIdx = i
                 }
             }
-            binding.motionChipScroller.scrollToCenterChip(bestIdx)
+            // Find the container child whose sorted-idx is closest
+            // to bestSortedIdx. For collapsed runs, the ellipsis chip
+            // represents the middle of the run, so we pick the ellipsis
+            // chip whose midIdx is closest to bestSortedIdx.
+            var bestContainerIdx = 0
+            var bestContainerDelta = Int.MAX_VALUE
+            for (cIdx in containerToSortedIdx.indices) {
+                val sortedIdx = containerToSortedIdx[cIdx]
+                val delta = abs(sortedIdx - bestSortedIdx)
+                if (delta < bestContainerDelta) {
+                    bestContainerDelta = delta
+                    bestContainerIdx = cIdx
+                }
+            }
+            binding.motionChipScroller.scrollToCenterChip(bestContainerIdx)
         }
+    }
+
+    /**
+     * v1.6.6 rev8: returns true if [chip] falls into the LOW color
+     * tier (the teal/green bucket) — peakObjects==0 AND motionScore
+     * is in the bottom quartile of the visible chip set. Mirrors the
+     * tier assignment in populateMotionChips's `bgRes` when block.
+     */
+    private fun isLowMotionTier(chip: MotionChip, maxScore: Int): Boolean {
+        if (chip.peakObjects > 0) return false
+        return chip.motionScore < maxScore / 4
     }
 
     /**
@@ -1117,19 +1209,37 @@ class RecordingsDialog(
         // v1.6.4 rev5: center the tapped chip in the viewport so it
         // becomes the focal point (full-size, label visible). The
         // user said "我想要滑动的时候，中间大的chip跟着替换".
-        // We find the chip's index in the container by matching its
-        // label (stashed as tv.tag in populateMotionChips) against
-        // the chip's formatted "HH:mm" start time.
-        val container = binding.motionChipContainer
-        val tz = TimeZone.getTimeZone("Asia/Shanghai")
-        val fmt = SimpleDateFormat("HH:mm", Locale.US).apply { timeZone = tz }
-        val targetLabel = fmt.format(Date(chip.startUnixSec * 1000L))
-        for (i in 0 until container.childCount) {
-            val tv = container.getChildAt(i)
-            if ((tv.tag as? String) == targetLabel) {
-                binding.motionChipScroller.scrollToCenterChip(i)
+        // v1.6.6 rev8: previously we matched by formatted "HH:mm" label,
+        // but collapsed "⋯" chips share the same label across multiple
+        // runs — a label match would find the wrong chip. Now we look
+        // up by chip reference via [childIndexToMotionChip] (populated
+        // in [populateMotionChips]). Falls back to label matching for
+        // backward-compat if the map isn't populated (e.g. legacy
+        // chips emitted before the map was added).
+        var foundIdx = -1
+        for ((idx, ref) in childIndexToMotionChip) {
+            if (ref === chip) {
+                foundIdx = idx
                 break
             }
+        }
+        if (foundIdx < 0) {
+            // Fallback: match by formatted label (only works for
+            // non-ellipsis chips).
+            val tz2 = TimeZone.getTimeZone("Asia/Shanghai")
+            val fmt2 = SimpleDateFormat("HH:mm", Locale.US).apply { timeZone = tz2 }
+            val targetLabel = fmt2.format(Date(chip.startUnixSec * 1000L))
+            val container = binding.motionChipContainer
+            for (i in 0 until container.childCount) {
+                val tv = container.getChildAt(i)
+                if ((tv.tag as? String) == targetLabel) {
+                    foundIdx = i
+                    break
+                }
+            }
+        }
+        if (foundIdx >= 0) {
+            binding.motionChipScroller.scrollToCenterChip(foundIdx)
         }
         android.util.Log.d("RecordingsDialog",
             "Chip tap: seek to window=$targetWindow pos=${targetPosition}ms " +
