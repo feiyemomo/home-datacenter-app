@@ -633,52 +633,46 @@ AlertRangeOverlay 优化（辅助 chip 列表）：
 - 客户端：chip 解析 + 渲染 200 个 < 50ms，seek 命中 binarySearch O(log n)
 - 内存：每个 chip ~1KB（TextView），200 个 chip 总计 ~200KB
 
-#### v1.6.4：Fisheye chip 滚动 + 全屏点击收起插件 + 倍速 bug 修复
+#### v1.6.4 rev2：Fisheye chip fit-to-screen + 进度条上移 + 倍速菜单优化
 
-**问题诊断**：用户反馈 v1.6.3 chip 滚动列表"划 chip 还是太慢，且不直观"，并提出新的设计方案——「在类似与原有 chip 的基础上，越靠近两边的 chip 越小，靠近中间的类似于原有的 chip，整个 chip 在滑动中不断变化」。同时要求：「正常未全屏时，播放器就放在顶部，然后中部放 chip，其他插件你合理布局即可」；「全屏时，点击播放器收起进度条等的插件，再次点击是在展现」。最后报告倍速按钮有两个「1x」（1.5x 被截断显示成 1x）。
+**问题诊断**：用户对 v1.6.4 rev1 反馈三点新需求：
+1. chip 边缘要"挤压效果"而非"隐藏"——rev1 的 alpha 0.5 让边缘 chip 看着像被淡出，不符合用户原话"而不是隐藏"。
+2. 要"能够看到一整天的 chip"——rev1 仍可滚动，需要主动滑才能看完。
+3. 进度条上移到播放器下方，"返回列表"按钮下移。
+4. 倍速菜单太生硬——rev1 的 PopupMenu 无圆角无动画。
 
-**方案**：保留 v1.6.3 的 chip + bg_chip_motion_* 资源结构（git checkout 8996ffa 恢复基线），新增 `FisheyeChipScroller` 自定义 HorizontalScrollView 在 `onScrollChanged` / `onLayout` 中给每个 chip 子 view 应用 `scaleX`/`scaleY`/`alpha` 变换。
+**方案 1：FisheyeChipScroller 改为不滚动 ViewGroup**
+- 从 `HorizontalScrollView` 子类改成 `ViewGroup` 直接子类——完全不响应滚动手势
+- `onLayout` 把每个 chip 放到等宽 slot（`slotWidth = viewportWidth / N`）的中心
+- 计算 fisheye 缩放：`distNorm = abs((i+0.5)/N - 0.5) * 2`（0=中心，1=边缘）→ `scale = lerp(1.0, 0.45, distNorm)`
+- 应用 `scaleX`/`scaleY` 但**不修改 alpha**（保持 1.0）——边缘 chip 横向被压缩但仍清晰可见
+- `pivotX = cw/2, pivotY = ch/2` 让 chip 朝自己中心缩小（不是朝 viewport 中心）
+- 所有 N 个 chip 强制 fit 到屏幕宽度内，无论多少个
 
-`FisheyeChipScroller` 关键实现：
-- `minScale = 0.55f`、`fullScaleBandPx = 96`（约 1 chip 宽）
-- `applyFisheyeScales()` 遍历 `motionChipContainer` 的子 view：
-  - `dx = |chipCenterX - viewportCenterX|`
-  - 若 `dx <= fullScaleBandPx`：`scale = 1.0f`、`alpha = 1.0f`（中心带，全大小）
-  - 否则：`scale = lerp(1.0, 0.55, (dx - band) / (viewportHalfWidth - band))`、`alpha = lerp(1.0, 0.5, t)`（线性衰减到边缘）
-- 仅当 `scaleX != scale` 时才 set（避免每帧触发无效 layout）
-- GPU 开销极低（仅 transform），200 chip 也能 60fps
+**方案 2：布局 4 段垂直 LinearLayout**
+```
+videoContainer (FrameLayout)
+└─ LinearLayout (vertical)
+   ├─ playerHostFrame (200dp, top) — playerView + btnPlaybackSpeed + btnFullscreen + progressPlayer
+   ├─ dayScrubBarContainer (wrap_content, 紧贴 playerHostFrame 下方) — SeekBar + AlertRangeOverlay
+   ├─ motionChipScroller (layout_weight=1, 中部剩余空间)
+   └─ btnBack (wrap, 底部 center_horizontal, marginBottom 16dp)
+```
+进度条从 v1.6.3 的"底部"上移到"播放器下方"，btnBack 从 v1.6.3 的"播放器内底部"下移到"整个布局的底部"。
 
-UI 布局重构（`dialog_recordings.xml`）：
-- videoContainer 内改为垂直 LinearLayout
-- 顶部 `playerHostFrame`（FrameLayout，固定 200dp 高）：内含 `StyledPlayerView` + `btnPlaybackSpeed` (top|end margin 6dp) + `btnFullscreen` (top|end marginTop 54dp) + `btnBack` (bottom|center_horizontal marginBottom 6dp) + `progressPlayer` (center)
-- 中部 `FisheyeChipScroller`（layout_weight=1，占满剩余空间）
-- 底部 `dayScrubBarContainer`（vertical LinearLayout，含 position/duration TextView 行 + SeekBar + AlertRangeOverlay 的 FrameLayout）
-- 这样消除 v1.6.3 中 btnFullscreen/btnBack 与底部 scrub bar 的重叠
+**方案 3：倍速菜单 MaterialAlertDialogBuilder**
+- `attachSpeedButton` 从 `PopupMenu` 改为 `MaterialAlertDialogBuilder`
+- `setTitle("播放速度")` + `setSingleChoiceItems(labels, checkedIdx) { dialog, which -> ... }`
+- Material 3 默认圆角 28dp、淡入+缩放动画、主题感知颜色
+- 点击即应用 `PlaybackParameters(speed)` 并 dismiss，无需 OK 按钮
+- 保留 `formatSpeed` 修复（1.5f → "1.5x" 而非 "1x"）
 
-`PlayerFullscreenHelper` 新增 `controllerSyncViews: List<View>` 参数：
-- 典型成员：`dayScrubBarContainer` + `motionChipScroller` + `btnBack` + `btnPlaybackSpeed`
-- `attach()` 中如果 `controllerSyncViews.isNotEmpty()`，给 `playerView` 设 `OnClickListener`：
-  ```kotlin
-  playerView.setOnClickListener {
-      if (!isFullscreen) return@setOnClickListener
-      val target = if (controllerOverlayVisible) GONE else VISIBLE
-      controllerSyncViews.forEach { v -> if (v.visibility != target) v.visibility = target }
-      controllerOverlayVisible = !controllerOverlayVisible
-  }
-  ```
-- `applyFullscreenState()` 中：
-  - `hideOnFullscreen` views（toolbar）始终 GONE in fullscreen
-  - `controllerSyncViews` views 在进入全屏时按 `controllerOverlayVisible` 决定（默认 true → VISIBLE）；退出全屏时强制 VISIBLE
-- 不依赖 ExoPlayer controller visibility listener（因 host 用 `useController=false`，listener 不会触发）
-- 用 `controllerOverlayVisible` 布尔字段 latch 状态，让用户多次进入/退出全屏时记住偏好
-
-`playerHostFrame` 作为 `secondaryPlayerView` 传入 `PlayerFullscreenHelper`，全屏时 `applyHeight` 也把它设为 MATCH_PARENT（否则 playerView 即使 MATCH_PARENT 也会被 200dp 父容器裁剪）。
-
-Bug 修复 — 倍速按钮显示「1x」两次：
-- 原因：`formatSpeed` 的 `else "${speed.toInt()}x"` 分支把 1.5f 截断为 1
-- 修复：先判断 `speed == speed.toInt().toFloat()`，整数速度用 `"${speed.toInt()}x"`，非整数用 `"${speed}x"`
-
-AlertsDialog 不传 `controllerSyncViews`（默认空列表），`attach()` 中不注册 OnClickListener，行为与 v1.6.3 一致。
+**保留 v1.6.4 rev1 的功能**：
+- `PlayerFullscreenHelper.controllerSyncViews: List<View>` 参数
+- `controllerOverlayVisible` 布尔 latch 字段
+- `playerView.setOnClickListener` 全屏 toggle
+- `playerHostFrame` 作为 `secondaryPlayerView`
+- AlertsDialog 不传 `controllerSyncViews`，行为不变
 
 **报警推送精确跳转**：`AlertsFragment.onJumpCamera` / `DashboardFragment.jumpToCamerasWithAlert` 现在直接 `startActivity(CameraDetailActivity)`，Intent extra `EXTRA_INITIAL_TIMESTAMP = alert.startTime.toLong()`。流程：
 1. `CameraDetailActivity.onCreate` 检测到 `EXTRA_INITIAL_TIMESTAMP > 0`，`binding.root.post { showRecordings(initialTs) }`（post 是为了让 `startPlayback()` 的直播流先初始化完成，避免 surface 冲突）。
