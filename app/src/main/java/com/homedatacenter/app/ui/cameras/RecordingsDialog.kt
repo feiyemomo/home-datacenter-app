@@ -425,11 +425,12 @@ class RecordingsDialog(
         binding.dayScrubBarContainer.visibility = View.VISIBLE
         binding.daySeekBar.max = dayTotalMs.toInt()
         binding.daySeekBar.progress = 0
-        // v1.5.17: initial position label = LOCAL wall-clock time at
-        // dayStart (08:00 of picked day). Duration label stays
-        // "24:00:00" since the window is still 24h wide.
+        // v1.5.22: position label = LOCAL wall-clock time at SeekBar
+        // 0% (= first recording's start time, e.g. "08:00:00").
+        // Duration label = wall-clock time at SeekBar 100% (= first
+        // recording + 24h, may wrap past 24:00 to next-day hours).
         binding.tvDayPosition.text = formatDayTime(0L)
-        binding.tvDayDuration.text = "24:00:00"
+        binding.tvDayDuration.text = formatDayTime(dayTotalMs)
         // Start the periodic update — it re-posts itself every 500ms
         // until [stopDaySeekUpdates] is called (in dismiss / back).
         daySeekHandler.post(daySeekUpdateRunnable)
@@ -527,19 +528,33 @@ class RecordingsDialog(
      * loop and the user-drag listener to render the current playback
      * position in the full-day playlist.
      *
-     * v1.5.21: returns elapsed time since [dayStartLocalMillis]
-     * (which is the first recording's start time as of v1.5.21 —
-     * not LOCAL 00:00 or 08:00). So 0 → "00:00:00" (first clip),
-     * 12h → "12:00:00", 24h → "24:00:00". The user explicitly asked
-     * for "进度条和实际都是从00:00:00开始的" — both SeekBar label
-     * and actual playback content start at 0.
+     * v1.5.22: returns the LOCAL wall-clock time-of-day at the given
+     * offset from [dayStartLocalMillis] (which is the first recording's
+     * start time as of v1.5.21). So if the first recording is at LOCAL
+     * 08:00, formatDayTime(0) = "08:00:00" — the label matches what
+     * the user actually sees in the video. Previous v1.5.21 returned
+     * elapsed time (0 → "00:00:00") which desync'd label from content:
+     * the user complained "进度条从00:00:00开始，但实际视频从08:00开始".
+     *
+     * v1.5.17 attempted wall-clock but anchored dayStart at fixed
+     * LOCAL 08:00, which broke when actual recordings started at 16:00.
+     * v1.5.22 keeps v1.5.21's first-recording anchor (so SeekBar 0% =
+     * first clip) but formats the label as wall-clock time — best of
+     * both: 0% = first clip AND label = real-world time.
+     *
+     * Edge case: if ms is large enough to push past 24:00:00, the
+     * label wraps via modular arithmetic (e.g., 25h -> "01:00:00").
+     * The user infers "next day" from the SeekBar position.
      */
     private fun formatDayTime(ms: Long): String {
-        val totalSeconds = ms / 1000
-        val h = totalSeconds / 3600
-        val m = (totalSeconds % 3600) / 60
-        val s = totalSeconds % 60
-        return String.format(Locale.US, "%02d:%02d:%02d", h, m, s)
+        val instant = dayStartLocalMillis + ms
+        val cal = Calendar.getInstance().apply {
+            timeInMillis = instant
+        }
+        return String.format(Locale.US, "%02d:%02d:%02d",
+            cal.get(Calendar.HOUR_OF_DAY),
+            cal.get(Calendar.MINUTE),
+            cal.get(Calendar.SECOND))
     }
 
     /**
