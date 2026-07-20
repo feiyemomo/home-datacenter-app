@@ -25,6 +25,7 @@ import com.homedatacenter.app.di.AppContainer
 import com.homedatacenter.app.databinding.DialogAlertsBinding
 import com.homedatacenter.app.databinding.ItemAlertBinding
 import com.homedatacenter.app.util.ExoPlayerRendererFactory
+import com.homedatacenter.app.util.PlayerFullscreenHelper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -48,6 +49,7 @@ class AlertsDialog(
     private val token = container.prefsManager.token
     private val okHttpClient = container.okHttpClient
     private var player: ExoPlayer? = null
+    private var fullscreenHelper: PlayerFullscreenHelper? = null
 
     init {
         binding = DialogAlertsBinding.inflate(LayoutInflater.from(context))
@@ -231,9 +233,32 @@ class AlertsDialog(
         binding.btnBack.setOnClickListener {
             player?.release()
             player = null
+            fullscreenHelper?.release()
+            fullscreenHelper = null
+            binding.btnPlaybackSpeed.visibility = View.GONE
+            binding.btnFullscreen.visibility = View.GONE
             binding.videoContainer.visibility = View.GONE
             binding.recyclerView.visibility = View.VISIBLE
         }
+
+        // Attach fullscreen + speed button handlers. Same pattern as
+        // RecordingsDialog: fullscreen rotates the host Activity to
+        // landscape + hides toolbar/back button; speed button opens
+        // a popup with 0.5x / 1x / 1.5x / 2x options.
+        if (fullscreenHelper == null) {
+            val helper = PlayerFullscreenHelper(
+                playerView = binding.playerView,
+                hostView = binding.root,
+                hideOnFullscreen = listOf(binding.toolbar, binding.btnBack),
+                speedButton = binding.btnPlaybackSpeed,
+                fullscreenButton = binding.btnFullscreen,
+            )
+            helper.attach()
+            fullscreenHelper = helper
+        }
+        fullscreenHelper?.onPlayerChanged(player)
+        binding.btnPlaybackSpeed.visibility = View.VISIBLE
+        binding.btnFullscreen.visibility = View.VISIBLE
     }
 
     private fun buildAlertPlayUrl(recId: Long): String {
@@ -245,6 +270,8 @@ class AlertsDialog(
     override fun dismiss() {
         player?.release()
         player = null
+        fullscreenHelper?.release()
+        fullscreenHelper = null
         super.dismiss()
     }
 

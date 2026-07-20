@@ -54,8 +54,52 @@
                 android:layout_height="match_parent"
                 app:use_controller="true"
                 app:show_buffering="when_playing"
-                app:resize_mode="zoom"
+                app:resize_mode="fit"
                 app:show_timeout="0" />
+
+            <!-- Standalone playback speed button. v1.5.3: moved out
+                 of the player's settings (gear) menu — the user wanted
+                 speed control exposed directly. Tapping opens a popup
+                 with 0.5x / 1x / 1.5x / 2x options. -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnPlaybackSpeed"
+                style="@style/Widget.Material3.Button.IconButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="top|end"
+                android:layout_margin="6dp"
+                android:text="1x"
+                android:textColor="@android:color/white"
+                android:background="#80000000"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp"
+                android:textSize="13sp"
+                android:visibility="gone" />
+
+            <!-- Standalone fullscreen overlay button. ExoPlayer 2.x's
+                 built-in controller fullscreen button exists but is hidden
+                 by default; rather than override the controller layout
+                 we provide our own overlay so the same button works in
+                 all player hosts (RecordingsDialog, AlertsDialog, and
+                 CameraDetailActivity's WebRTC mode). -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnFullscreen"
+                style="@style/Widget.Material3.Button.IconButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom|end"
+                android:layout_margin="6dp"
+                android:background="#80000000"
+                android:minWidth="0dp"
+                android:minHeight="0dp"
+                android:padding="8dp"
+                android:visibility="gone"
+                app:icon="@drawable/ic_fullscreen"
+                app:iconTint="@android:color/white" />
 
             <ProgressBar
                 android:id="@+id/progressPlayer"

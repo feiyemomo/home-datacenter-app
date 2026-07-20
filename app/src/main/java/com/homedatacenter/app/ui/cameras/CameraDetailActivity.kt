@@ -28,10 +28,16 @@ import com.homedatacenter.app.R
 import com.homedatacenter.app.data.api.NetworkFactory
 import com.homedatacenter.app.data.model.Camera
 import com.homedatacenter.app.data.model.CameraPreset
+import com.homedatacenter.app.data.model.IceConfig
 import com.homedatacenter.app.databinding.ActivityCameraDetailBinding
 import com.homedatacenter.app.di.AppContainer
 import com.homedatacenter.app.util.ExoPlayerRendererFactory
+import com.homedatacenter.app.util.PlayerFullscreenHelper
+import com.homedatacenter.app.util.WebRtcClient
 import kotlinx.coroutines.launch
+import org.webrtc.PeerConnection
+import org.webrtc.RendererCommon
+import org.webrtc.SurfaceViewRenderer
 
 /**
  * Camera control screen: live video, PTZ, presets, codec, recording
@@ -73,11 +79,24 @@ class CameraDetailActivity : AppCompatActivity() {
     // Live stream playback state. The player is created on demand
     // and released in onPause/onDestroy to free the MediaCodec.
     private var player: ExoPlayer? = null
+    private var triedWebRtc = false
     private var triedMp4 = false
     private var triedHls = false
     private var audioEnabled = true
     private var recordingsDialog: RecordingsDialog? = null
     private var alertsDialog: AlertsDialog? = null
+    private var fullscreenHelper: PlayerFullscreenHelper? = null
+
+    // WebRTC live stream client (v1.5.3 primary path). Lazily
+    // initialized in onCreate after the camera is known; shutdown
+    // in onDestroy releases the PeerConnectionFactory + EGL context.
+    private var webRtcClient: WebRtcClient? = null
+    // True while a WebRTC attempt is in-flight — prevents the
+    // reload button from triggering overlapping offers.
+    private var webRtcInProgress = false
+    // Cached ICE config from /api/v1/cameras/ice — fetched once
+    // per activity instance (re-fetched on retry if null).
+    private var cachedIceConfig: IceConfig? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -129,10 +148,18 @@ class CameraDetailActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         releasePlayer()
+        fullscreenHelper?.release()
         recordingsDialog?.dismiss()
         alertsDialog?.dismiss()
         recordingsDialog = null
         alertsDialog = null
+        // Release order matters: SurfaceViewRenderer's EGL surfaces
+        // must be torn down BEFORE the PeerConnectionFactory's
+        // EglBase context is released, otherwise eglReleaseSurface
+        // can throw. The try/catch guards against double-release.
+        try { binding.surfaceRenderer.release() } catch (_: Exception) {}
+        try { webRtcClient?.shutdown() } catch (_: Exception) {}
+        webRtcClient = null
     }
 
     private fun setupHeader() {
@@ -228,13 +255,17 @@ class CameraDetailActivity : AppCompatActivity() {
         }
 
         // Recording switch — Frigate continuous recording.
-        // The camera JSON may not carry the recording plan flag; we
-        // assume disabled until backend exposes it in the Camera view.
-        binding.switchRecording.isChecked = false
+        // The recording plan flag is surfaced by the backend via the
+        // Camera.meta map under the "recording" key as
+        // {enabled: bool, retention_days: int, segment_seconds: int}.
+        // Older backends that don't populate this field will leave the
+        // switch off by default; the user can still toggle it on.
+        val recordingEnabled = camera?.isRecordingEnabled ?: false
+        binding.switchRecording.isChecked = recordingEnabled
         binding.switchRecording.isEnabled = isAdmin
         binding.switchRecording.setOnCheckedChangeListener { _, isChecked ->
             if (!isAdmin) {
-                binding.switchRecording.isChecked = false
+                binding.switchRecording.isChecked = recordingEnabled
                 toast(R.string.camera_admin_required)
                 return@setOnCheckedChangeListener
             }
@@ -464,6 +495,46 @@ class CameraDetailActivity : AppCompatActivity() {
         // to it before calling prepare() in preparePlayback().
         binding.btnReloadStream.setOnClickListener { startPlayback() }
         binding.tvVideoError.setOnClickListener { startPlayback() }
+
+        // Fullscreen button on the player controller: tapping forces
+        // landscape orientation and hides the toolbar + action row +
+        // header card + PTZ + presets + settings sections so the
+        // video fills the screen. The Activity has
+        // configChanges=orientation|screenSize in the manifest so
+        // ExoPlayer isn't torn down on rotation. Live stream playback
+        // has no meaningful speed control, so no speed button here —
+        // speed buttons are only added to recording/alerts playback.
+        //
+        // surfaceRenderer is passed as secondaryPlayerView so the
+        // same fullscreen logic applies when WebRTC (not ExoPlayer)
+        // is the active renderer: only one of them is VISIBLE at a
+        // time, and the helper resizes whichever is showing.
+        //
+        // btnWebRtcFullscreen is the standalone overlay used only
+        // in WebRTC mode (when playerView is GONE, its built-in
+        // controller button isn't reachable). The helper wires its
+        // click listener to [toggleFullscreen] in [attach].
+        val helper = PlayerFullscreenHelper(
+            playerView = binding.playerView,
+            hostView = binding.root,
+            hideOnFullscreen = listOf(
+                binding.toolbar,
+                binding.actionButtonsRow,
+                binding.cardHeader,
+                binding.cardPtz,
+                binding.rvPresets.parent.parent as View, // presets section LinearLayout
+            ),
+            speedButton = null,
+            secondaryPlayerView = binding.surfaceRenderer,
+            fullscreenButton = binding.btnWebRtcFullscreen,
+        )
+        helper.attach()
+        fullscreenHelper = helper
+
+        // Initialize WebRTC client early so it's ready when the
+        // first startPlayback() runs. init() is idempotent.
+        ensureWebRtcClient()
+
         startPlayback()
     }
 
@@ -486,18 +557,166 @@ class CameraDetailActivity : AppCompatActivity() {
 
     private fun startPlayback() {
         val cam = camera ?: return
+        // Reset the fallback ladder. The reload button should always
+        // try WebRTC first (it's the lowest-latency transport and the
+        // one the user explicitly asked for in v1.5.3).
+        triedWebRtc = false
+        triedMp4 = false
+        triedHls = false
+
+        // WebRTC is the primary live transport (v1.5.3). It only
+        // applies to ONLINE cameras — an offline camera has no
+        // go2rtc stream to offer.
+        if (cam.isOnline && ensureWebRtcClient()) {
+            binding.tvVideoError.visibility = View.GONE
+            binding.progressVideo.visibility = View.VISIBLE
+            startWebRtcStream(cam)
+            return
+        }
+
+        // WebRTC unavailable (offline camera, factory init failed,
+        // or signaling already in progress) — fall straight through
+        // to the ExoPlayer MP4/HLS path.
+        startMp4Playback(cam)
+    }
+
+    /**
+     * Initializes the WebRTC client + SurfaceViewRenderer once.
+     * Returns true if WebRTC is available for streaming, false if
+     * the caller should fall back to ExoPlayer. Safe to call
+     * repeatedly — subsequent calls are no-ops.
+     */
+    private fun ensureWebRtcClient(): Boolean {
+        if (webRtcClient != null) return true
+        val baseUrl = container.getApiBaseUrl().ifBlank { return false }
+        val token = container.prefsManager.token
+        return try {
+            val client = WebRtcClient(
+                context = this,
+                okHttpClient = container.okHttpClient,
+                baseUrl = baseUrl,
+                token = token,
+            )
+            client.init()
+            webRtcClient = client
+            // Init the SurfaceViewRenderer with the WebRTC client's
+            // EGL context. Must run on the main thread (EGL surface
+            // creation requires it on most GPUs).
+            binding.surfaceRenderer.init(client.eglBase.eglBaseContext, null)
+            binding.surfaceRenderer.setMirror(false)
+            // SCALE_ASPECT_FILL so the video fills the renderer bounds
+            // without letterboxing — matches ExoPlayer's resize_mode
+            // = fixed_width behavior.
+            binding.surfaceRenderer.setScalingType(
+                RendererCommon.ScalingType.SCALE_ASPECT_FILL
+            )
+            true
+        } catch (e: Exception) {
+            android.util.Log.e(TAG, "WebRtcClient init failed: ${e.message}", e)
+            false
+        }
+    }
+
+    /**
+     * Kicks off a WebRTC stream attempt. On success, shows the
+     * SurfaceViewRenderer and hides the ExoPlayer StyledPlayerView.
+     * On failure, falls back to MP4 (and then HLS).
+     */
+    private fun startWebRtcStream(cam: Camera) {
+        val client = webRtcClient ?: run {
+            startMp4Playback(cam); return
+        }
+        if (webRtcInProgress) return
+        webRtcInProgress = true
+        triedWebRtc = true
+
+        // Show the WebRTC surface + standalone fullscreen button,
+        // hide the ExoPlayer view (its controller UI is irrelevant
+        // while WebRTC is rendering).
+        binding.playerView.visibility = View.GONE
+        binding.surfaceRenderer.visibility = View.VISIBLE
+        binding.btnWebRtcFullscreen.visibility = View.VISIBLE
+        binding.progressVideo.visibility = View.VISIBLE
+        binding.tvVideoError.visibility = View.GONE
+
+        // Fetch ICE config (cached after first call). The list may
+        // be empty on LAN — host candidates are enough there.
+        lifecycleScope.launch {
+            val iceConfig = cachedIceConfig ?: try {
+                val token = container.prefsManager.token ?: ""
+                container.getRepository().getIceConfig(token).also {
+                    cachedIceConfig = it
+                }
+            } catch (e: Exception) {
+                android.util.Log.w(TAG, "ICE config fetch failed: ${e.message}")
+                null
+            }
+            // Convert to PeerConnection.IceServer list expected by
+            // WebRtcClient. Empty list is OK — host candidates will
+            // be gathered automatically.
+            val iceServers = iceConfig?.ice_servers?.map { srv ->
+                PeerConnection.IceServer.builder(srv.urls).apply {
+                    srv.username?.let { setUsername(it) }
+                    srv.credential?.let { setPassword(it) }
+                }.createIceServer()
+            } ?: emptyList()
+
+            client.startStream(
+                cameraId = cam.id,
+                surfaceRenderer = binding.surfaceRenderer,
+                iceServers = iceServers,
+                listener = object : WebRtcClient.Listener {
+                    override fun onConnected() {
+                        webRtcInProgress = false
+                        binding.progressVideo.visibility = View.GONE
+                        binding.tvVideoError.visibility = View.GONE
+                        android.util.Log.d(TAG, "WebRTC connected")
+                    }
+
+                    override fun onError(reason: String) {
+                        webRtcInProgress = false
+                        android.util.Log.w(TAG, "WebRTC failed: $reason — falling back to MP4")
+                        // Hide WebRTC surface, show ExoPlayer surface
+                        // and let preparePlayback() set up the player.
+                        binding.surfaceRenderer.visibility = View.GONE
+                        binding.btnWebRtcFullscreen.visibility = View.GONE
+                        binding.playerView.visibility = View.VISIBLE
+                        startMp4Playback(cam)
+                    }
+
+                    override fun onIceStateChanged(state: PeerConnection.IceConnectionState) {
+                        android.util.Log.d(TAG, "ICE: $state")
+                    }
+                },
+            )
+        }
+    }
+
+    /**
+     * ExoPlayer fallback path (MP4 primary, HLS secondary). Used
+     * when WebRTC is unavailable or has failed. Wrapped in its own
+     * method so [startWebRtcStream]'s onError callback can resume
+     * the fallback ladder cleanly.
+     */
+    private fun startMp4Playback(cam: Camera) {
         val mp4Url = resolveMp4Url(cam)
         val hlsUrl = resolveHlsUrl(cam)
         if (mp4Url.isBlank() && hlsUrl.isBlank()) {
             binding.tvVideoError.visibility = View.VISIBLE
             binding.progressVideo.visibility = View.GONE
+            // Make sure the ExoPlayer surface is visible so the
+            // error TextView (centered in the same FrameLayout) is
+            // laid out correctly.
+            binding.playerView.visibility = View.VISIBLE
+            binding.surfaceRenderer.visibility = View.GONE
+            binding.btnWebRtcFullscreen.visibility = View.GONE
             return
         }
         binding.tvVideoError.visibility = View.GONE
         // MP4 (fMP4 stream via home-api proxy) is the primary
-        // transport — HLS Init() on go2rtc can 404 on cold streams.
-        // See the inline-playback comment in the previous
-        // CameraAdapter for the full rationale.
+        // ExoPlayer transport — HLS Init() on go2rtc can 404 on
+        // cold streams. See the inline-playback comment in the
+        // previous CameraAdapter for the full rationale.
         preparePlayback(mp4Url, hlsUrl, useMp4 = true)
     }
 
@@ -615,15 +834,25 @@ class CameraDetailActivity : AppCompatActivity() {
             prepare()
         }
         player = newPlayer
+        fullscreenHelper?.onPlayerChanged(newPlayer)
     }
 
     private fun releasePlayer() {
+        // Release both ExoPlayer and the WebRTC PeerConnection so the
+        // next startPlayback() can re-establish either one cleanly.
+        try { webRtcClient?.release() } catch (_: Exception) {}
+        webRtcInProgress = false
         val old = player
         player = null
         binding.playerView.player = null
         old?.release()
+        triedWebRtc = false
         triedMp4 = false
         triedHls = false
+        // Hide the WebRTC-only overlay so it doesn't linger when the
+        // user taps reload (which switches back to playerView during
+        // the next WebRTC attempt's setup phase).
+        binding.btnWebRtcFullscreen.visibility = View.GONE
     }
 
     private fun resolveMp4Url(camera: Camera): String {

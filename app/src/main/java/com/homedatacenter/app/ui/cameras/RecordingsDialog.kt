@@ -22,6 +22,7 @@ import com.homedatacenter.app.di.AppContainer
 import com.homedatacenter.app.databinding.DialogRecordingsBinding
 import com.homedatacenter.app.databinding.ItemRecordingBinding
 import com.homedatacenter.app.util.ExoPlayerRendererFactory
+import com.homedatacenter.app.util.PlayerFullscreenHelper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -42,6 +43,7 @@ class RecordingsDialog(
     private val baseUrl = container.getApiBaseUrl()
     private val token = container.prefsManager.token
     private var player: ExoPlayer? = null
+    private var fullscreenHelper: PlayerFullscreenHelper? = null
 
     init {
         binding = DialogRecordingsBinding.inflate(LayoutInflater.from(context))
@@ -159,9 +161,37 @@ class RecordingsDialog(
         binding.btnBack.setOnClickListener {
             player?.release()
             player = null
+            fullscreenHelper?.release()
+            fullscreenHelper = null
+            binding.btnPlaybackSpeed.visibility = View.GONE
+            binding.btnFullscreen.visibility = View.GONE
             binding.videoContainer.visibility = View.GONE
             binding.recyclerView.visibility = View.VISIBLE
         }
+
+        // Attach fullscreen + speed button handlers. The fullscreen
+        // helper hides the toolbar and rotates the underlying Activity
+        // to landscape; the speed button opens a popup with 0.5x /
+        // 1x / 1.5x / 2x options. v1.5.3: the ExoPlayer 2.x default
+        // controller layout doesn't ship a fullscreen button, so we
+        // pass a standalone overlay (btnFullscreen) that the helper
+        // wires to [toggleFullscreen].
+        if (fullscreenHelper == null) {
+            val helper = PlayerFullscreenHelper(
+                playerView = binding.playerView,
+                hostView = binding.root,
+                hideOnFullscreen = listOf(binding.toolbar, binding.btnBack),
+                speedButton = binding.btnPlaybackSpeed,
+                fullscreenButton = binding.btnFullscreen,
+            )
+            helper.attach()
+            fullscreenHelper = helper
+        }
+        fullscreenHelper?.onPlayerChanged(player)
+        // Speed + fullscreen buttons are only meaningful when a
+        // recording is loaded.
+        binding.btnPlaybackSpeed.visibility = View.VISIBLE
+        binding.btnFullscreen.visibility = View.VISIBLE
     }
 
     private fun buildRecordingUrl(recId: Long): String {
@@ -173,6 +203,8 @@ class RecordingsDialog(
     override fun dismiss() {
         player?.release()
         player = null
+        fullscreenHelper?.release()
+        fullscreenHelper = null
         super.dismiss()
     }
 
