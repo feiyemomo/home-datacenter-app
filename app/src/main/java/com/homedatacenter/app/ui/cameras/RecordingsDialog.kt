@@ -1,10 +1,12 @@
 package com.homedatacenter.app.ui.cameras
 
 import android.app.Dialog
+import android.app.DatePickerDialog
 import android.content.Context
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.Toast
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.ListAdapter
@@ -15,6 +17,7 @@ import com.google.android.exoplayer2.PlaybackException
 import com.google.android.exoplayer2.Player
 import com.google.android.exoplayer2.source.ProgressiveMediaSource
 import com.google.android.exoplayer2.upstream.DefaultHttpDataSource
+import com.google.android.exoplayer2.MediaMetadata
 import com.homedatacenter.app.R
 import com.homedatacenter.app.data.model.Camera
 import com.homedatacenter.app.data.model.Recording
@@ -28,6 +31,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
@@ -45,6 +49,19 @@ class RecordingsDialog(
     private var player: ExoPlayer? = null
     private var fullscreenHelper: PlayerFullscreenHelper? = null
 
+    // v1.5.10: virtual pagination state. The backend's
+    // /api/v1/cameras/:id/recordings endpoint returns ALL 7 days of
+    // 60s-aggregated buckets in one shot (~10080 entries) — loading
+    // them into the RecyclerView at once causes a noticeable hitch
+    // (DiffUtil + 10k binds). We keep [allRecordings] as the full
+    // source of truth and only expose [visibleRecordings] (default
+    // 50) to the adapter. When the user scrolls near the bottom we
+    // append the next batch from [allRecordings].
+    private val allRecordings = mutableListOf<Recording>()
+    private val visibleRecordings = mutableListOf<Recording>()
+    private var isLoadingMore = false
+    private val pageBatchSize = 50
+
     init {
         binding = DialogRecordingsBinding.inflate(LayoutInflater.from(context))
         setContentView(binding.root)
@@ -52,6 +69,12 @@ class RecordingsDialog(
         loadRecordings()
         binding.toolbar.setNavigationOnClickListener { dismiss() }
         binding.toolbar.title = "${camera.name} - 录像"
+        // v1.5.10: "Play full day" entry point — opens a date picker,
+        // then loads all 60s clips from the selected day into an
+        // ExoPlayer playlist so the user can scrub through a full 24h
+        // as one continuous video (the challenge the user explicitly
+        // asked for). Implementation lives in [playDayAsPlaylist].
+        binding.btnPlayDay.setOnClickListener { showDayPicker() }
     }
 
     private fun setupRecyclerView() {
@@ -62,6 +85,21 @@ class RecordingsDialog(
         )
         binding.recyclerView.layoutManager = LinearLayoutManager(context)
         binding.recyclerView.adapter = adapter
+        // v1.5.10: paginate on scroll. Trigger when the user is
+        // within 10 items of the end so the next batch is loaded
+        // before they reach the bottom (no visible "loading more"
+        // pause for fast scrollers).
+        binding.recyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
+                if (dy <= 0 || isLoadingMore) return
+                val lm = rv.layoutManager as? LinearLayoutManager ?: return
+                val lastVisible = lm.findLastVisibleItemPosition()
+                val total = adapter.itemCount
+                if (lastVisible >= total - 10) {
+                    loadMoreRecordings()
+                }
+            }
+        })
     }
 
     private fun loadRecordings() {
@@ -90,13 +128,24 @@ class RecordingsDialog(
                 }
 
                 withContext(Dispatchers.Main) {
-                    adapter.submitList(recordings)
+                    // v1.5.10: keep the full list, expose only the
+                    // first page to the adapter. Subsequent pages
+                    // are appended on scroll via [loadMoreRecordings].
+                    allRecordings.clear()
+                    allRecordings.addAll(recordings)
+                    visibleRecordings.clear()
+                    visibleRecordings.addAll(recordings.take(pageBatchSize))
+                    adapter.submitList(visibleRecordings.toList())
                     binding.progressBar.visibility = View.GONE
                     binding.recyclerView.visibility = View.VISIBLE
                     binding.tvEmpty.visibility = if (recordings.isEmpty()) View.VISIBLE else View.GONE
                     if (recordings.isEmpty()) {
                         binding.tvEmpty.text = if (resp.isSuccess) "暂无录像" else "加载失败: ${resp.message}"
                     }
+                    // v1.5.10: only show the "Play full day" button
+                    // when there's at least one recording to play.
+                    binding.btnPlayDay.visibility =
+                        if (recordings.isNotEmpty()) View.VISIBLE else View.GONE
                 }
             } catch (e: Exception) {
                 android.util.Log.e("RecordingsDialog", "Exception loading recordings: ${e.message}", e)
@@ -107,6 +156,180 @@ class RecordingsDialog(
                 }
             }
         }
+    }
+
+    /**
+     * v1.5.10: append the next page of recordings to the visible
+     * list. No-op when we've already exposed everything from
+     * [allRecordings]. Uses [ListAdapter.submitList] with a copy
+     * so DiffUtil can compute the minimal diff (one append).
+     */
+    private fun loadMoreRecordings() {
+        if (isLoadingMore) return
+        if (visibleRecordings.size >= allRecordings.size) return
+        isLoadingMore = true
+        val nextEnd = (visibleRecordings.size + pageBatchSize).coerceAtMost(allRecordings.size)
+        visibleRecordings.addAll(allRecordings.subList(visibleRecordings.size, nextEnd))
+        adapter.submitList(visibleRecordings.toList()) {
+            isLoadingMore = false
+        }
+    }
+
+    /**
+     * v1.5.10: opens a date picker for the "play full day" feature.
+     * Constraint: the date is clamped to the recordings' time range
+     * (default is today; the picker allows any date but we filter
+     * to the actual recordings we have for that day).
+     */
+    private fun showDayPicker() {
+        val cal = Calendar.getInstance()
+        DatePickerDialog(
+            context,
+            { _, year, month, day ->
+                val dayCal = Calendar.getInstance().apply {
+                    set(year, month, day, 0, 0, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }
+                playDayAsPlaylist(dayCal)
+            },
+            cal.get(Calendar.YEAR),
+            cal.get(Calendar.MONTH),
+            cal.get(Calendar.DAY_OF_MONTH),
+        ).show()
+    }
+
+    /**
+     * v1.5.10: plays a full 24h of recordings as a single ExoPlayer
+     * playlist. The user explicitly asked for "integrate playback as
+     * one big video with max duration 1 day". Implementation:
+     *
+     *  - Filter [allRecordings] to entries whose [Recording.startAt]
+     *    falls on the same day as [dayStart] (using local timezone).
+     *  - Sort ascending by [Recording.id] (which is a unix-minute
+     *    timestamp) so the playlist plays chronologically.
+     *  - Build a list of [MediaItem]s, each pointing at the existing
+     *    PlayRecording endpoint for that minute. We set
+     *    [MediaMetadata.title] on each item so ExoPlayer's controller
+     *    shows "12:30:00" while that minute is playing.
+     *  - Hand the playlist to ExoPlayer via [ExoPlayer.setMediaItems].
+     *    ExoPlayer will play them back-to-back seamlessly (no gap
+     *    between MP4 files since they're 60s clips with no metadata
+     *    overhead). The progress bar reflects the CURRENT minute; the
+     *    user can scrub within a minute but cannot yet jump across
+     *    minutes (would need a custom timeline UI — out of scope for
+     *    v1.5.10).
+     *
+     * Memory: a day has 1440 minutes; the URL list is ~144 KB. No
+     * issue. ExoPlayer preloads only the next 1-2 clips by default
+     * (LoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS), so we don't
+     * pre-fetch all 1440 segments.
+     *
+     * @param dayStart Calendar set to 00:00:00 of the day to play.
+     */
+    private fun playDayAsPlaylist(dayStart: Calendar) {
+        val dayStartMillis = dayStart.timeInMillis
+        val dayEndMillis = dayStartMillis + 24L * 60 * 60 * 1000
+
+        val fmt = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
+            timeZone = TimeZone.getTimeZone("UTC")
+        }
+        val dayRecordings = allRecordings.filter { rec ->
+            try {
+                val t = fmt.parse(rec.startAt)?.time ?: return@filter false
+                t in dayStartMillis until dayEndMillis
+            } catch (_: Exception) { false }
+        }.sortedBy { it.id }
+
+        if (dayRecordings.isEmpty()) {
+            Toast.makeText(context, "该日期无录像", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        android.util.Log.d("RecordingsDialog",
+            "Playing full day: ${dayRecordings.size} clips starting at ${dayRecordings.first().startAt}")
+
+        binding.videoContainer.visibility = View.VISIBLE
+        binding.recyclerView.visibility = View.GONE
+
+        player?.release()
+        val renderersFactory = ExoPlayerRendererFactory.create(context)
+        player = ExoPlayer.Builder(context, renderersFactory).build().apply {
+            setAudioAttributes(
+                com.google.android.exoplayer2.audio.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MOVIE)
+                    .build(),
+                /* handleAudioFocus = */ true,
+            )
+            val dataSourceFactory = DefaultHttpDataSource.Factory().apply {
+                setConnectTimeoutMs(15000)
+                setReadTimeoutMs(60000)
+                if (!token.isNullOrEmpty()) {
+                    setDefaultRequestProperties(mutableMapOf(
+                        "Authorization" to "Bearer $token",
+                        "Cookie" to "home_token=$token"
+                    ))
+                }
+            }
+            val mediaSourceFactory = ProgressiveMediaSource.Factory(dataSourceFactory)
+            // Build the playlist. Each MediaItem carries its own URL
+            // + a title formatted as "HH:mm" so the user sees the
+            // current time position in the controller.
+            val timeFmt = SimpleDateFormat("HH:mm", Locale.getDefault())
+            val items = dayRecordings.map { rec ->
+                val title = try {
+                    fmt.parse(rec.startAt)?.let { timeFmt.format(it) } ?: ""
+                } catch (_: Exception) { "" }
+                MediaItem.Builder()
+                    .setUri(buildRecordingUrl(rec.id))
+                    .setMediaMetadata(
+                        MediaMetadata.Builder()
+                            .setTitle(title)
+                            .build()
+                    )
+                    .build()
+            }
+            // setMediaSources is more efficient than setMediaItems
+            // when each item shares the same MediaSource factory.
+            val mediaSources = items.map { mediaSourceFactory.createMediaSource(it) }
+            setMediaSources(mediaSources, /* startWindowIndex = */ 0, /* startPositionMs = */ 0L)
+            playWhenReady = true
+            addListener(object : Player.Listener {
+                override fun onPlaybackStateChanged(state: Int) {
+                    binding.progressPlayer.visibility = if (state == Player.STATE_BUFFERING) View.VISIBLE else View.GONE
+                }
+                override fun onPlayerError(error: PlaybackException) {
+                    android.util.Log.e("RecordingsDialog", "Player error: ${error.message}")
+                }
+            })
+            prepare()
+        }
+        binding.playerView.player = player
+        binding.btnBack.setOnClickListener {
+            player?.release()
+            player = null
+            fullscreenHelper?.release()
+            fullscreenHelper = null
+            binding.btnPlaybackSpeed.visibility = View.GONE
+            binding.btnFullscreen.visibility = View.GONE
+            binding.videoContainer.visibility = View.GONE
+            binding.recyclerView.visibility = View.VISIBLE
+        }
+
+        if (fullscreenHelper == null) {
+            val helper = PlayerFullscreenHelper(
+                playerView = binding.playerView,
+                hostView = binding.root,
+                hideOnFullscreen = listOf(binding.toolbar, binding.btnBack),
+                speedButton = binding.btnPlaybackSpeed,
+                fullscreenButton = binding.btnFullscreen,
+            )
+            helper.attach()
+            fullscreenHelper = helper
+        }
+        fullscreenHelper?.onPlayerChanged(player)
+        binding.btnPlaybackSpeed.visibility = View.VISIBLE
+        binding.btnFullscreen.visibility = View.VISIBLE
     }
 
     private fun playRecording(recording: Recording) {

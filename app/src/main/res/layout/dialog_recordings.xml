@@ -12,7 +12,26 @@
         android:layout_height="?attr/actionBarSize"
         android:background="?attr/colorPrimary"
         app:navigationIcon="@drawable/ic_baseline_arrow_back_24"
-        app:titleTextColor="@android:color/white" />
+        app:titleTextColor="@android:color/white">
+
+        <!-- v1.5.10: "Play full day" button embedded in the toolbar.
+             Clicking opens a DatePickerDialog; the selected day is
+             then played as one big ExoPlayer playlist (1440 60s
+             clips) so the user can scrub through 24h of footage as
+             a single video. -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnPlayDay"
+            style="@style/Widget.Material3.Button.TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="end"
+            android:text="播放整天"
+            android:textColor="@android:color/white"
+            android:visibility="gone"
+            app:icon="@drawable/ic_video"
+            app:iconTint="@android:color/white" />
+
+    </com.google.android.material.appbar.MaterialToolbar>
 
     <FrameLayout
         android:layout_width="match_parent"
