@@ -4,7 +4,11 @@
     android:viewportWidth="24"
     android:viewportHeight="24"
     android:tint="?attr/colorOnPrimary">
+    <!-- v1.5.9: rounded warning triangle with 2dp corner radius
+         at all three vertices + rounded exclamation bar ends.
+         Uses quadratic Bezier curves (Q) at each vertex instead
+         of sharp L commands. -->
     <path
         android:fillColor="@android:color/white"
-        android:pathData="M12,2L1,21h22L12,2zM13,18h-2v-2h2v2zM13,14h-2v-4h2v4z"/>
+        android:pathData="M2.5,19.5 L11,3.5 A1.2,1.2 0 0 1 13,3.5 L21.5,19.5 A1.2,1.2 0 0 1 20.5,21.2 L3.5,21.2 A1.2,1.2 0 0 1 2.5,19.5 Z M11,15 L13,15 L13,10 L11,10 Z M11,18 L13,18 L13,16 L11,16 Z" />
 </vector>

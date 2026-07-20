@@ -605,6 +605,22 @@ class CameraDetailActivity : AppCompatActivity() {
         )
     }
 
+    /**
+     * v1.5.9: Updates the stream strategy badge in the top-left of
+     * the video container. The badge shows which live transport is
+     * active so the user can tell at a glance whether they're on
+     * the low-latency WebRTC path or one of the ExoPlayer fallbacks
+     * (MP4 / HLS). Pass null to hide the badge (e.g. on error).
+     */
+    private fun updateStreamStrategy(strategy: String?) {
+        if (strategy.isNullOrBlank()) {
+            binding.tvStreamStrategy.visibility = View.GONE
+        } else {
+            binding.tvStreamStrategy.text = strategy
+            binding.tvStreamStrategy.visibility = View.VISIBLE
+        }
+    }
+
     private fun startPlayback() {
         val cam = camera ?: return
         // Reset the fallback ladder. The reload button should always
@@ -613,6 +629,12 @@ class CameraDetailActivity : AppCompatActivity() {
         triedWebRtc = false
         triedMp4 = false
         triedHls = false
+
+        // v1.5.9: show the loading badge before any transport is
+        // selected. The badge is updated to the actual transport
+        // (WebRTC / MP4 / HLS) once startWebRtcStream / startMp4Playback
+        // picks one. Hidden only when the player errors out.
+        updateStreamStrategy("加载中")
 
         // WebRTC is the primary live transport (v1.5.3). It only
         // applies to ONLINE cameras — an offline camera has no
@@ -686,6 +708,11 @@ class CameraDetailActivity : AppCompatActivity() {
         webRtcInProgress = true
         triedWebRtc = true
 
+        // v1.5.9: mark the active transport. WebRTC is the primary
+        // path; if it fails the onError callback flips the badge to
+        // "MP4" when the fallback starts.
+        updateStreamStrategy("WebRTC")
+
         // Show the WebRTC surface + standalone fullscreen button,
         // hide the ExoPlayer view (its controller UI is irrelevant
         // while WebRTC is rendering).
@@ -739,6 +766,12 @@ class CameraDetailActivity : AppCompatActivity() {
                         webRtcInProgress = false
                         binding.progressVideo.visibility = View.GONE
                         binding.tvVideoError.visibility = View.GONE
+                        // v1.5.9: confirm the active transport once
+                        // ICE reaches CONNECTED — the badge was already
+                        // "WebRTC" from startWebRtcStream, this just
+                        // re-asserts it in case the user opened the
+                        // page during the fallback window.
+                        updateStreamStrategy("WebRTC")
                         android.util.Log.d(TAG, "WebRTC connected")
                     }
 
@@ -781,14 +814,22 @@ class CameraDetailActivity : AppCompatActivity() {
             binding.surfaceRenderer.visibility = View.GONE
             binding.webRtcControls.visibility = View.GONE
             binding.btnWebRtcFullscreen.visibility = View.GONE
+            // v1.5.9: no transport could be selected — hide the
+            // badge so it doesn't show a stale "加载中" next to
+            // the error message.
+            updateStreamStrategy(null)
             return
         }
         binding.tvVideoError.visibility = View.GONE
+        // v1.5.9: show "MP4" or "HLS" depending on which URL we're
+        // about to feed ExoPlayer. preparePlayback() will further
+        // update the badge when it falls back from MP4 to HLS.
+        updateStreamStrategy(if (!mp4Url.isBlank()) "MP4" else "HLS")
         // MP4 (fMP4 stream via home-api proxy) is the primary
         // ExoPlayer transport — HLS Init() on go2rtc can 404 on
         // cold streams. See the inline-playback comment in the
         // previous CameraAdapter for the full rationale.
-        preparePlayback(mp4Url, hlsUrl, useMp4 = true)
+        preparePlayback(mp4Url, hlsUrl, useMp4 = !mp4Url.isBlank())
     }
 
     private fun preparePlayback(mp4Url: String, hlsUrl: String, useMp4: Boolean) {
@@ -796,8 +837,16 @@ class CameraDetailActivity : AppCompatActivity() {
         val url = if (useMp4) mp4Url else hlsUrl
         if (url.isBlank()) {
             binding.tvVideoError.visibility = View.VISIBLE
+            // v1.5.9: blank URL means no transport available —
+            // hide the badge.
+            updateStreamStrategy(null)
             return
         }
+        // v1.5.9: reflect the actual transport that ExoPlayer is
+        // about to use. This is also reached when MP4 fails over to
+        // HLS (see onPlayerError below), so the badge correctly
+        // transitions MP4 -> HLS even mid-session.
+        updateStreamStrategy(if (useMp4) "MP4" else "HLS")
 
         binding.progressVideo.visibility = View.VISIBLE
         binding.tvVideoError.visibility = View.GONE
@@ -899,6 +948,9 @@ class CameraDetailActivity : AppCompatActivity() {
                         releasePlayer()
                         binding.tvVideoError.visibility = View.VISIBLE
                         binding.progressVideo.visibility = View.GONE
+                        // v1.5.9: both transports exhausted — hide
+                        // the badge so the error message stands alone.
+                        updateStreamStrategy(null)
                     }
                 }
             })

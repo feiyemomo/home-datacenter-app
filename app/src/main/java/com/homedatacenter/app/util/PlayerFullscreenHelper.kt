@@ -4,11 +4,16 @@ import android.app.Activity
 import android.app.Dialog
 import android.content.Context
 import android.content.pm.ActivityInfo
+import android.os.Build
 import android.util.TypedValue
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.view.WindowInsets
 import android.widget.PopupMenu
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import com.google.android.exoplayer2.ExoPlayer
 import com.google.android.exoplayer2.PlaybackParameters
 import com.google.android.exoplayer2.ui.StyledPlayerView
@@ -70,6 +75,14 @@ class PlayerFullscreenHelper(
     private var player: ExoPlayer? = null
     private var savedPlayerHeightPx: Int = 0
     private var savedSecondaryHeightPx: Int = 0
+    // v1.5.9: remember each host view's fitsSystemWindows state so
+    // we can restore it on exit. CameraDetailActivity's root ScrollView
+    // sets fitsSystemWindows=true to push content below the status bar
+    // in portrait — but in fullscreen landscape we WANT edge-to-edge
+    // rendering, so we disable it temporarily. For dialog hosts this
+    // is typically false already (dialogs handle insets themselves).
+    private var savedHostFitsSystemWindows: Boolean = false
+    private var savedParentFitsSystemWindows: Boolean = false
 
     /**
      * Attaches the fullscreen button click listener. Must be called
@@ -156,6 +169,49 @@ class PlayerFullscreenHelper(
                 // Ignore — orientation lock not allowed in this host.
             }
         }
+        // v1.5.9: hide system bars (status + navigation) in fullscreen
+        // and extend edge-to-edge. Previously, the host ScrollView's
+        // fitsSystemWindows=true left a status-bar-shaped gap at the
+        // top of the player even in landscape, so the player never
+        // filled the screen. We now:
+        //  1. Set the host activity to edge-to-edge (WindowCompat
+        //     setDecorFitsSystemWindows(false)) so the window covers
+        //     the full display.
+        //  2. Hide system bars via WindowInsetsControllerCompat
+        //     (IMMERSIVE_BEHAVIOR so they auto-show on swipe).
+        //  3. Disable fitsSystemWindows on the hostView + its parent
+        //     so child views don't apply insets as padding.
+        // All three are restored on exit.
+        if (activity != null) {
+            val window = activity.window
+            if (window != null) {
+                WindowCompat.setDecorFitsSystemWindows(window, !isFullscreen)
+                val controller = WindowInsetsControllerCompat(window, window.decorView)
+                if (isFullscreen) {
+                    controller.hide(WindowInsetsCompat.Type.systemBars())
+                    controller.systemBarsBehavior =
+                        WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                } else {
+                    controller.show(WindowInsetsCompat.Type.systemBars())
+                }
+            }
+        }
+        // Disable fitsSystemWindows on the host chain while in
+        // fullscreen. We save the previous values to restore exactly.
+        if (isFullscreen) {
+            savedHostFitsSystemWindows = hostView.fitsSystemWindows
+            (hostView.parent as? View)?.let { p ->
+                savedParentFitsSystemWindows = p.fitsSystemWindows
+                p.fitsSystemWindows = false
+            }
+            hostView.fitsSystemWindows = false
+        } else {
+            hostView.fitsSystemWindows = savedHostFitsSystemWindows
+            (hostView.parent as? View)?.let { p ->
+                p.fitsSystemWindows = savedParentFitsSystemWindows
+            }
+        }
+
         // Hide/show non-player UI elements.
         val visibility = if (isFullscreen) View.GONE else View.VISIBLE
         hideOnFullscreen.forEach { it.visibility = visibility }
