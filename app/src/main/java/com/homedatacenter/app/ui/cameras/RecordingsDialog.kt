@@ -532,25 +532,23 @@ class RecordingsDialog(
      * offset from [dayStartLocalMillis] (which is the first recording's
      * start time as of v1.5.21). So if the first recording is at LOCAL
      * 08:00, formatDayTime(0) = "08:00:00" — the label matches what
-     * the user actually sees in the video. Previous v1.5.21 returned
-     * elapsed time (0 → "00:00:00") which desync'd label from content:
-     * the user complained "进度条从00:00:00开始，但实际视频从08:00开始".
+     * the user actually sees in the video.
      *
-     * v1.5.17 attempted wall-clock but anchored dayStart at fixed
-     * LOCAL 08:00, which broke when actual recordings started at 16:00.
-     * v1.5.22 keeps v1.5.21's first-recording anchor (so SeekBar 0% =
-     * first clip) but formats the label as wall-clock time — best of
-     * both: 0% = first clip AND label = real-world time.
+     * v1.5.23: explicitly set Calendar's timezone to Asia/Shanghai.
+     * v1.5.22 relied on Calendar.getInstance() which uses the JVM
+     * default timezone — but the user's device JVM default is GMT
+     * (verified via logcat in v1.5.18: tz=GMT). So formatDayTime(0)
+     * for a recording at LOCAL 00:00 (UTC 16:00 prev day) displayed
+     * "08:00:00" (UTC) instead of "00:00:00" (LOCAL). The user
+     * reported "进度条从00:00:00开始，但实际视频从08:00:00开始".
      *
-     * Edge case: if ms is large enough to push past 24:00:00, the
-     * label wraps via modular arithmetic (e.g., 25h -> "01:00:00").
-     * The user infers "next day" from the SeekBar position.
+     * Hardcoded Asia/Shanghai matches RecordingAdapter (v1.5.19) and
+     * is safe for this single-region home app.
      */
     private fun formatDayTime(ms: Long): String {
         val instant = dayStartLocalMillis + ms
-        val cal = Calendar.getInstance().apply {
-            timeInMillis = instant
-        }
+        val cal = Calendar.getInstance(TimeZone.getTimeZone("Asia/Shanghai"))
+        cal.timeInMillis = instant
         return String.format(Locale.US, "%02d:%02d:%02d",
             cal.get(Calendar.HOUR_OF_DAY),
             cal.get(Calendar.MINUTE),
