@@ -19,8 +19,6 @@ class CamerasFragment : Fragment() {
     private var _binding: FragmentCamerasBinding? = null
     private val binding get() = _binding!!
     private lateinit var adapter: CameraAdapter
-    private var recordingsDialog: RecordingsDialog? = null
-    private var alertsDialog: AlertsDialog? = null
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -39,10 +37,12 @@ class CamerasFragment : Fragment() {
         val token = mainActivity.container.prefsManager.token
         val okHttpClient = mainActivity.container.okHttpClient
 
+        // v1.5.2: tap a camera card opens CameraDetailActivity,
+        // which now hosts the video player, recordings list, alerts
+        // list, and PTZ controls. The list itself stays cheap to
+        // scroll (no ExoPlayer per row).
         adapter = CameraAdapter(
-            onRecordingsClick = { camera -> showRecordingsDialog(camera) },
-            onAlertsClick = { camera -> showAlertsDialog(camera) },
-            onSettingsClick = { camera -> openCameraDetail(camera) },
+            onClick = { camera -> openCameraDetail(camera) },
             baseUrl = baseUrl,
             token = token,
             okHttpClient = okHttpClient,
@@ -133,20 +133,6 @@ class CamerasFragment : Fragment() {
         }
     }
 
-    private fun showRecordingsDialog(camera: Camera) {
-        val context = context ?: return
-        val mainActivity = activity as? MainActivity ?: return
-        recordingsDialog?.dismiss()
-        recordingsDialog = RecordingsDialog(context, camera, mainActivity.container).apply { show() }
-    }
-
-    private fun showAlertsDialog(camera: Camera) {
-        val context = context ?: return
-        val mainActivity = activity as? MainActivity ?: return
-        alertsDialog?.dismiss()
-        alertsDialog = AlertsDialog(context, camera, mainActivity.container).apply { show() }
-    }
-
     private fun showEmpty(show: Boolean) {
         binding.tvEmpty.visibility = if (show) View.VISIBLE else View.GONE
         binding.recyclerView.visibility = if (show) View.GONE else View.VISIBLE
@@ -157,10 +143,6 @@ class CamerasFragment : Fragment() {
         if (this::adapter.isInitialized) {
             adapter.releaseAllPlayers()
         }
-        recordingsDialog?.dismiss()
-        alertsDialog?.dismiss()
-        recordingsDialog = null
-        alertsDialog = null
         _binding = null
     }
 }

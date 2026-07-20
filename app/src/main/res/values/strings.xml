@@ -34,6 +34,7 @@
     <string name="alert_no_zones">无区域</string>
     <string name="network_quality">网络质量</string>
     <string name="network_strategy">连接策略</string>
+    <string name="network_current_path_label">当前路径</string>
     <string name="network_ipv6">IPv6</string>
     <string name="network_nat">NAT</string>
     <string name="network_p2p">P2P</string>
@@ -95,7 +96,7 @@
     <string name="error">错误</string>
     <string name="success">成功</string>
 
-    <string name="badge_clip">录像</string>
+    <string name="badge_clip">查看录像</string>
     <string name="badge_snapshot">截图</string>
     <string name="network_upgrade_ipv6">可升级至 IPv6 直连</string>
     <string name="network_upgrade_p2p">可升级至 P2P</string>
@@ -117,6 +118,12 @@
 
     <!-- Camera detail / control page -->
     <string name="camera_detail_title">摄像头控制</string>
+    <string name="camera_video_section">实时视频</string>
+    <string name="camera_action_recordings">查看录像</string>
+    <string name="camera_action_alerts">报警记录</string>
+    <string name="camera_action_reload">重新加载</string>
+    <string name="camera_video_loading">正在加载视频…</string>
+    <string name="camera_video_failed">视频加载失败，点击重试</string>
     <string name="camera_ptz_section">云台控制 (PTZ)</string>
     <string name="camera_ptz_up">上</string>
     <string name="camera_ptz_down">下</string>

@@ -1,0 +1,10 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <!-- Unknown / loading: a simple cloud silhouette -->
+    <path
+        android:fillColor="#FFCBD5E1"
+        android:pathData="M10,22 Q10,12 18,12 Q20,6 28,6 Q38,6 38,16 Q46,16 46,25 Q46,32 38,32 L14,32 Q10,32 10,22 Z" />
+</vector>

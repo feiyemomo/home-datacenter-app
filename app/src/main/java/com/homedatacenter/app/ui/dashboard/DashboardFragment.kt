@@ -1,7 +1,6 @@
 package com.homedatacenter.app.ui.dashboard
 
 import android.content.Intent
-import android.graphics.BitmapFactory
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -229,12 +228,11 @@ class DashboardFragment : Fragment() {
 
     private fun updateWeatherUI(weather: WeatherResponse) {
         val current = weather.currentCondition.firstOrNull() ?: return
-        val area = weather.nearestArea.firstOrNull()
-        val locationName = area?.areaName?.firstOrNull()?.value
-            ?: area?.region?.firstOrNull()?.value
-            ?: "—"
 
-        binding.tvWeatherLocation.text = locationName
+        // Fixed location: 宝鸡市陈仓区 (per product requirement, the
+        // dashboard always shows this single location regardless of
+        // what wttr.in's nearest_area returns).
+        binding.tvWeatherLocation.text = "宝鸡市陈仓区"
         binding.tvWeatherTemp.text = "${current.tempC}°"
         binding.tvWeatherDesc.text = current.weatherDesc.firstOrNull()?.value ?: ""
 
@@ -245,29 +243,30 @@ class DashboardFragment : Fragment() {
         }
         binding.tvWeatherExtra.text = extra
 
-        val iconUrl = current.weatherIconUrl.firstOrNull()?.value
-        if (!iconUrl.isNullOrEmpty()) {
-            val absoluteUrl = if (iconUrl.startsWith("http")) iconUrl else "https:$iconUrl"
-            loadWeatherIcon(absoluteUrl)
-        }
+        // Use local vector icons based on WMO weatherCode (wttr.in
+        // returns the standard WMO weather interpretation codes).
+        // Cleaner than wttr.in's heavy PNG icons and matches the
+        // app's vector design language. See:
+        // https://wttr.in/:help (weatherCode column).
+        val iconRes = weatherIconFor(current.weatherCode)
+        binding.ivWeatherIcon.setImageResource(iconRes)
     }
 
-    private fun loadWeatherIcon(url: String) {
-        val client = OkHttpClient()
-        lifecycleScope.launch {
-            try {
-                val bitmap = withContext(Dispatchers.IO) {
-                    val req = Request.Builder().url(url).build()
-                    client.newCall(req).execute().use { resp ->
-                        if (!resp.isSuccessful) return@use null
-                        resp.body?.byteStream()?.use { BitmapFactory.decodeStream(it) }
-                    }
-                }
-                if (bitmap != null) {
-                    binding.ivWeatherIcon.setImageBitmap(bitmap)
-                }
-            } catch (_: Exception) {
-            }
+    /** Map a wttr.in / WMO weatherCode to a local vector drawable. */
+    private fun weatherIconFor(weatherCode: String): Int {
+        val code = weatherCode.toIntOrNull() ?: return R.drawable.ic_weather_unknown
+        return when (code) {
+            113 -> R.drawable.ic_weather_clear
+            116 -> R.drawable.ic_weather_partly_cloudy
+            119, 122 -> R.drawable.ic_weather_cloudy
+            143, 248, 260 -> R.drawable.ic_weather_fog
+            176, 263, 266, 281, 284, 293, 296, 299, 302, 305, 308,
+            311, 314, 317, 350, 353, 356, 359, 362, 365 -> R.drawable.ic_weather_rain
+            377, 374, 371, 368, 320, 323, 326, 329, 332, 335, 338,
+            341, 344, 347, 392, 395 -> R.drawable.ic_weather_snow
+            200, 386, 389 -> R.drawable.ic_weather_thunder
+            179, 182, 185, 227, 230, 286, 289 -> R.drawable.ic_weather_heavy_rain
+            else -> R.drawable.ic_weather_unknown
         }
     }
 
@@ -427,26 +426,31 @@ class DashboardFragment : Fragment() {
             iv.setImageResource(if (idx < q) R.drawable.ic_star_on else R.drawable.ic_star_off)
         }
 
-        // Strategy text — the web shows the static "Relay" floor and an
-        // upgrade arrow when the achievable strategy is better than the
-        // initial one (e.g. "Relay ↑ upgradable to P2P"). We mirror that
-        // here: tvNetworkStrategy always shows the initial path, and
-        // tvNetworkUpgrade shows the better target when applicable.
-        val initialLabel = when (status.initial) {
-            "ipv6_direct" -> "IPv6 Direct"
+        // Strategy text — show the ACTUAL strategy the system is
+        // currently using (status.strategy), not the initial one.
+        // The initial path is the safe default the system boots with
+        // (usually "relay"); the actual strategy reflects what the
+        // probing found reachable (e.g. "p2p" or "ipv6_direct").
+        // Showing the actual current path is what the user wants to
+        // see at a glance — "当前路径: P2P" is clearer than a bare
+        // "Relay" word with no context.
+        val actualLabel = when (status.strategy) {
+            "ipv6_direct" -> "IPv6 直连"
             "p2p" -> "P2P"
             "relay" -> getString(R.string.network_relay)
-            else -> status.initial.ifBlank { getString(R.string.network_unknown) }
+            else -> status.strategy.ifBlank { getString(R.string.network_unknown) }
         }
-        binding.tvNetworkStrategy.text = initialLabel
+        binding.tvNetworkStrategy.text = actualLabel
 
-        // Upgrade hint: only when the achievable strategy differs from
-        // the initial path (e.g. initial=relay, strategy=p2p).
-        val canUpgrade = status.strategy != status.initial &&
-            status.strategy != "relay" && status.strategy.isNotBlank()
+        // Upgrade hint: when the initial path is better than the
+        // current strategy (e.g. system is on relay but P2P is
+        // available as the initial target), show an upgrade arrow.
+        // This mirrors the web dashboard's "↑ upgradable to P2P" hint.
+        val canUpgrade = status.initial != status.strategy &&
+            status.initial != "relay" && status.initial.isNotBlank()
         if (canUpgrade) {
             binding.tvNetworkUpgrade.visibility = View.VISIBLE
-            binding.tvNetworkUpgrade.text = when (status.strategy) {
+            binding.tvNetworkUpgrade.text = when (status.initial) {
                 "ipv6_direct" -> "↑ " + getString(R.string.network_upgrade_ipv6)
                 "p2p" -> "↑ " + getString(R.string.network_upgrade_p2p)
                 else -> ""

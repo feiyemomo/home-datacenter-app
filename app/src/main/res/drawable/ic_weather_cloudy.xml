@@ -1,0 +1,13 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <!-- Cloudy / overcast: two layered clouds -->
+    <path
+        android:fillColor="#FFCBD5E1"
+        android:pathData="M10,26 Q10,20 16,20 Q18,16 23,16 Q30,16 30,22 Q36,22 36,27 Q36,32 30,32 L14,32 Q10,32 10,26 Z" />
+    <path
+        android:fillColor="#FFE2E8F0"
+        android:pathData="M14,34 Q14,28 20,28 Q22,24 27,24 Q34,24 34,30 Q40,30 40,35 Q40,40 34,40 L18,40 Q14,40 14,34 Z" />
+</vector>

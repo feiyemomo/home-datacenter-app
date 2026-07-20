@@ -1,0 +1,31 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <!-- Fog / mist: 4 horizontal wavy lines -->
+    <path
+        android:strokeColor="#FF94A3B8"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M8,14 Q12,12 16,14 T24,14 T32,14 T40,14" />
+    <path
+        android:strokeColor="#FF94A3B8"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M8,22 Q12,20 16,22 T24,22 T32,22 T40,22" />
+    <path
+        android:strokeColor="#FF94A3B8"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M8,30 Q12,28 16,30 T24,30 T32,30 T40,30" />
+    <path
+        android:strokeColor="#FF94A3B8"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M8,38 Q12,36 16,38 T24,38 T32,38 T40,38" />
+</vector>

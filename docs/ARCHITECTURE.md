@@ -758,3 +758,52 @@ binding.cardNetwork.setOnClickListener {
 - 客户端不主动检查 JWT 过期，靠后端 401 触发登出
 
 详见后端 [`docs/security.md`](https://github.com/feiyemomo/home-datacenter/blob/main/docs/security.md)。
+
+---
+
+## 14. 摄像头列表与详情页重构（v1.5.2）
+
+### 列表层：紧凑缩略图卡片
+
+`CameraAdapter` 不再持有 ExoPlayer 实例——之前的内联直播模式让滚动每行都要分配 MediaCodec、attach surface、prepare media source，在 Cloudflare Tunnel 1.4s+ TTFB 下表现灾难性（首帧 5-10s 出不来，且容易触发 BAD_INDEX）。v1.5.2 改为：
+
+- `CameraCard` Compose 卡片仅渲染 128×72 缩略图 + 名称 / 厂商 / codec 徽章
+- 缩略图通过 `GET /api/v1/cameras/:id/frame` 异步加载，LRU 16 条缓存避免回滚重复请求
+- 点击整卡进入 `CameraDetailActivity`（构造函数简化为 `onClick: (Camera) -> Unit` + 可选的 `baseUrl / token / okHttpClient` 用于缩略图加载）
+
+`releaseAllPlayers()` 保留为 no-op 以维持 `CamerasFragment.onPause / onDestroyView` 调用兼容。
+
+### 详情页：单一 ExoPlayer 实例
+
+`CameraDetailActivity` 顶部插入 `StyledPlayerView`（200dp 高、`fixed_width` 模式、`show_buffering=when_playing`），下方三按钮动作区：
+
+- `重新加载`（`btnReloadStream`）：释放旧 player 并重新 `startPlayback()`
+- `查看录像`（`btnRecordings`）：打开 `RecordingsDialog`
+- `报警记录`（`btnAlerts`）：打开 `AlertsDialog`
+
+直播流播放逻辑从旧 `CameraAdapter` 迁移至 `CameraDetailActivity.preparePlayback()`：
+
+- **MP4 优先**：`/api/v1/cameras/:id/stream.mp4`（home-api 代理 go2rtc fMP4），ExoPlayer `ProgressiveMediaSource` 直接消费无限 fMP4 流
+- **HLS 容错**：MP4 失败时自动切到 `/api/stream.m3u8?src=<stream_name>&mp4=`（`HlsMediaSource` + low-latency `MediaItem.LiveConfiguration` 3s 目标偏移）
+- **Surface-before-prepare 模式**：`binding.playerView.player = newPlayer` 必须在 `prepare()` 之前执行，否则 MediaCodec 进入 no-surface 模式，后续 `setOutputSurface` 失败（BAD_INDEX），98% buffer unfetched
+- **DefaultLoadControl**：minBuffer 2s / maxBuffer 5s / forPlayback 1s / forRebuffer 1.5s，首帧 ~1-2s 出现
+- **ExoPlayerRendererFactory**：模拟器过滤 c2.goldfish.h264.decoder（初始化成功但每帧报错），真机启用 software-decoder fallback
+- **认证**：`Authorization: Bearer <token>` + `Cookie: home_token=<token>` 双 header（同时满足 home-api JWT 校验和 go2rtc cookie 透传）
+- **生命周期**：`onPause` 释放 player（避免后台占用 MediaCodec），用户回到详情页时点击"重新加载"恢复播放——而非自动恢复，避免通知栏下拉等短暂遮挡触发 buffering 循环
+
+### PTZ 控制图标统一
+
+5 个 PTZ 图标（`ic_ptz_up / down / left / right / stop`）替换为 Material chevron 系列（`expand_less / expand_more / chevron_left / chevron_right`）+ 环形 `cancel` 风格的 stop。之前的 up/down 是全宽 arrow_upward/downward 而 left/right 是小三角，视觉不一致；统一 chevron 后 D-pad 更现代、更符合 PTZ 控件惯例。
+
+### 报警项布局精简
+
+`item_alert.xml` + `AlertListAdapter` 重写——删除：
+
+- "截图"按钮（后端无对应端点）
+- 可展开详情区（`expandableDetails`）
+- 大图预览模态（`ivLargePreview` + `progressLarge` + `tvLargeError`）
+- 元数据行（事件 ID / 检测区域 / 抓拍时间）
+- 跳转摄像头按钮（与"查看录像"重复）
+
+保留：72×48 缩略图 + 标签 + 摄像头名 + 时间 + "查看录像" Chip（点击跳转摄像头 tab）。修复了原布局因 metadata 行过多导致"前门"等长摄像头名截断、Chip 文字溢出问题。
+

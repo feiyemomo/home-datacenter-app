@@ -1,6 +1,7 @@
 package com.homedatacenter.app.ui.cameras
 
 import android.app.AlertDialog
+import android.net.Uri
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -14,6 +15,14 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.google.android.exoplayer2.DefaultLoadControl
+import com.google.android.exoplayer2.ExoPlayer
+import com.google.android.exoplayer2.MediaItem
+import com.google.android.exoplayer2.PlaybackException
+import com.google.android.exoplayer2.Player
+import com.google.android.exoplayer2.source.ProgressiveMediaSource
+import com.google.android.exoplayer2.source.hls.HlsMediaSource
+import com.google.android.exoplayer2.upstream.DefaultHttpDataSource
 import com.homedatacenter.app.HomeCenterApp
 import com.homedatacenter.app.R
 import com.homedatacenter.app.data.api.NetworkFactory
@@ -21,11 +30,19 @@ import com.homedatacenter.app.data.model.Camera
 import com.homedatacenter.app.data.model.CameraPreset
 import com.homedatacenter.app.databinding.ActivityCameraDetailBinding
 import com.homedatacenter.app.di.AppContainer
+import com.homedatacenter.app.util.ExoPlayerRendererFactory
 import kotlinx.coroutines.launch
 
 /**
- * Camera control screen: PTZ, presets, codec, recording plan, audio
- * toggle, delete camera. Reachable from a [CameraCard] settings gear.
+ * Camera control screen: live video, PTZ, presets, codec, recording
+ * plan, audio toggle, delete camera. Reachable from a [CameraCard]
+ * tap (v1.5.2 redesign).
+ *
+ * The activity owns the ExoPlayer instance — inline playback was
+ * moved out of the camera list so scrolling stays cheap (no per-row
+ * MediaCodec allocations). Live stream uses MP4 (fMP4 via home-api
+ * proxy) as primary and HLS as fallback, matching the previous inline
+ * playback behavior.
  *
  * Role-based visibility:
  *  - Non-admin users can read the camera info and presets list, and
@@ -52,6 +69,15 @@ class CameraDetailActivity : AppCompatActivity() {
     private var isAdmin: Boolean = false
     private var presets: List<CameraPreset> = emptyList()
     private lateinit var presetAdapter: PresetListAdapter
+
+    // Live stream playback state. The player is created on demand
+    // and released in onPause/onDestroy to free the MediaCodec.
+    private var player: ExoPlayer? = null
+    private var triedMp4 = false
+    private var triedHls = false
+    private var audioEnabled = true
+    private var recordingsDialog: RecordingsDialog? = null
+    private var alertsDialog: AlertsDialog? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -80,11 +106,33 @@ class CameraDetailActivity : AppCompatActivity() {
         }
 
         setupHeader()
+        setupVideo()
+        setupActions()
         setupPtz()
         setupPresets()
         setupSettings()
 
         loadPresets()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // Release the MediaCodec when leaving the foreground so it
+        // can be reclaimed by other apps. Playback resumes on resume
+        // via setupVideo() — actually, we don't auto-resume here to
+        // keep the behavior predictable; the user taps "重新加载"
+        // to restart the stream. This avoids buffering loops when
+        // the activity is briefly paused (e.g. notification shade).
+        releasePlayer()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        releasePlayer()
+        recordingsDialog?.dismiss()
+        alertsDialog?.dismiss()
+        recordingsDialog = null
+        alertsDialog = null
     }
 
     private fun setupHeader() {
@@ -400,6 +448,211 @@ class CameraDetailActivity : AppCompatActivity() {
         }
     }
 
+    // --- Live video playback ---
+
+    /**
+     * Wires the [StyledPlayerView] and kicks off the initial live
+     * stream load. The player is created on demand and released in
+     * onPause/onDestroy to free the MediaCodec for other apps.
+     */
+    private fun setupVideo() {
+        camera ?: return
+        // Surface must be attached before prepare() to avoid the
+        // "setOutputSurface -- failed to set consumer usage (BAD_INDEX)"
+        // issue on software decoders. The StyledPlayerView in the
+        // layout already provides the surface; we attach the player
+        // to it before calling prepare() in preparePlayback().
+        binding.btnReloadStream.setOnClickListener { startPlayback() }
+        binding.tvVideoError.setOnClickListener { startPlayback() }
+        startPlayback()
+    }
+
+    private fun setupActions() {
+        binding.btnRecordings.setOnClickListener { showRecordings() }
+        binding.btnAlerts.setOnClickListener { showAlerts() }
+    }
+
+    private fun showRecordings() {
+        val cam = camera ?: return
+        recordingsDialog?.dismiss()
+        recordingsDialog = RecordingsDialog(this, cam, container).apply { show() }
+    }
+
+    private fun showAlerts() {
+        val cam = camera ?: return
+        alertsDialog?.dismiss()
+        alertsDialog = AlertsDialog(this, cam, container).apply { show() }
+    }
+
+    private fun startPlayback() {
+        val cam = camera ?: return
+        val mp4Url = resolveMp4Url(cam)
+        val hlsUrl = resolveHlsUrl(cam)
+        if (mp4Url.isBlank() && hlsUrl.isBlank()) {
+            binding.tvVideoError.visibility = View.VISIBLE
+            binding.progressVideo.visibility = View.GONE
+            return
+        }
+        binding.tvVideoError.visibility = View.GONE
+        // MP4 (fMP4 stream via home-api proxy) is the primary
+        // transport — HLS Init() on go2rtc can 404 on cold streams.
+        // See the inline-playback comment in the previous
+        // CameraAdapter for the full rationale.
+        preparePlayback(mp4Url, hlsUrl, useMp4 = true)
+    }
+
+    private fun preparePlayback(mp4Url: String, hlsUrl: String, useMp4: Boolean) {
+        releasePlayer()
+        val url = if (useMp4) mp4Url else hlsUrl
+        if (url.isBlank()) {
+            binding.tvVideoError.visibility = View.VISIBLE
+            return
+        }
+
+        binding.progressVideo.visibility = View.VISIBLE
+        binding.tvVideoError.visibility = View.GONE
+
+        val token = container.prefsManager.token
+        val dataSourceFactory = DefaultHttpDataSource.Factory().apply {
+            // Cloudflare Tunnel from China can be very slow (TTFB
+            // 1.4s+, 10s+ timeouts). Generous timeouts let the
+            // stream establish before ExoPlayer gives up.
+            setConnectTimeoutMs(30_000)
+            setReadTimeoutMs(60_000)
+            setUserAgent("HomeDatacenter/1.5")
+            if (!token.isNullOrEmpty()) {
+                setDefaultRequestProperties(
+                    mapOf(
+                        "Authorization" to "Bearer $token",
+                        "Cookie" to "home_token=$token",
+                    ),
+                )
+            }
+        }
+
+        val mediaSource = if (useMp4) {
+            triedMp4 = true
+            ProgressiveMediaSource.Factory(dataSourceFactory)
+                .createMediaSource(MediaItem.fromUri(Uri.parse(url)))
+        } else {
+            triedHls = true
+            val mediaItem = MediaItem.Builder()
+                .setUri(Uri.parse(url))
+                .setLiveConfiguration(
+                    MediaItem.LiveConfiguration.Builder()
+                        .setTargetOffsetMs(3_000)
+                        .setMaxOffsetMs(10_000)
+                        .setMinOffsetMs(1_000)
+                        .build()
+                )
+                .build()
+            HlsMediaSource.Factory(dataSourceFactory)
+                .createMediaSource(mediaItem)
+        }
+
+        // Low-latency load control so the first frame appears in
+        // ~1-2s instead of 5-10s. Tuned to satisfy ExoPlayer's
+        // buffer-duration invariants (see DefaultLoadControl).
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                /* minBufferMs= */ 2_000,
+                /* maxBufferMs= */ 5_000,
+                /* bufferForPlaybackMs= */ 1_000,
+                /* bufferForPlaybackAfterRebufferMs= */ 1_500,
+            )
+            .setTargetBufferBytes(DefaultLoadControl.DEFAULT_TARGET_BUFFER_BYTES)
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .build()
+
+        val renderersFactory = ExoPlayerRendererFactory.create(this)
+        val newPlayer = ExoPlayer.Builder(this, renderersFactory)
+            .setLoadControl(loadControl)
+            .build()
+        // CRITICAL: attach the surface BEFORE prepare(). ExoPlayer
+        // creates the MediaCodec during prepare() — if no surface is
+        // attached at that point, the codec initializes in no-surface
+        // mode and never renders frames.
+        binding.playerView.player = newPlayer
+        newPlayer.setAudioAttributes(
+            com.google.android.exoplayer2.audio.AudioAttributes.Builder()
+                .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MOVIE)
+                .build(),
+            /* handleAudioFocus = */ true,
+        )
+        newPlayer.apply {
+            setMediaSource(mediaSource)
+            playWhenReady = true
+            volume = if (audioEnabled) 1.0f else 0.0f
+            addListener(object : Player.Listener {
+                override fun onPlaybackStateChanged(state: Int) {
+                    binding.progressVideo.visibility =
+                        if (state == Player.STATE_BUFFERING) View.VISIBLE else View.GONE
+                    if (state == Player.STATE_READY) {
+                        binding.tvVideoError.visibility = View.GONE
+                    }
+                    if (state == Player.STATE_IDLE || state == Player.STATE_ENDED) {
+                        binding.progressVideo.visibility = View.GONE
+                    }
+                }
+
+                override fun onPlayerError(error: PlaybackException) {
+                    android.util.Log.e(
+                        TAG,
+                        "Playback error (useMp4=$useMp4): ${error.message}",
+                        error,
+                    )
+                    // Failover: MP4 → HLS → give up.
+                    if (useMp4 && hlsUrl.isNotBlank() && !triedHls) {
+                        preparePlayback(mp4Url, hlsUrl, useMp4 = false)
+                    } else {
+                        releasePlayer()
+                        binding.tvVideoError.visibility = View.VISIBLE
+                        binding.progressVideo.visibility = View.GONE
+                    }
+                }
+            })
+            prepare()
+        }
+        player = newPlayer
+    }
+
+    private fun releasePlayer() {
+        val old = player
+        player = null
+        binding.playerView.player = null
+        old?.release()
+        triedMp4 = false
+        triedHls = false
+    }
+
+    private fun resolveMp4Url(camera: Camera): String {
+        // Preferred: home-api proxy that streams fragmented MP4
+        // straight from go2rtc. ExoPlayer consumes the infinite fMP4
+        // stream via ProgressiveMediaSource.
+        val baseUrl = container.getApiBaseUrl().orEmpty()
+        if (baseUrl.isBlank()) return ""
+        return "${baseUrl.trimEnd('/')}/api/v1/cameras/${camera.id}/stream.mp4"
+    }
+
+    private fun resolveHlsUrl(camera: Camera): String {
+        val baseUrl = container.getApiBaseUrl().orEmpty()
+        val hlsUrl = camera.stream?.hlsUrl?.trim().orEmpty()
+        if (hlsUrl.isNotEmpty()) return resolveAbsoluteUrl(hlsUrl)
+
+        val streamName = camera.stream?.streamName?.trim().orEmpty()
+        if (streamName.isEmpty() || baseUrl.isBlank()) return ""
+        return "${baseUrl.trimEnd('/')}/api/stream.m3u8?src=${Uri.encode(streamName)}&mp4="
+    }
+
+    private fun resolveAbsoluteUrl(url: String): String {
+        if (url.startsWith("http://") || url.startsWith("https://")) return url
+        val baseUrl = container.getApiBaseUrl().orEmpty()
+        if (baseUrl.isBlank()) return url
+        val origin = baseUrl.trimEnd('/')
+        return if (url.startsWith('/')) "$origin$url" else "$origin/$url"
+    }
+
     private fun toast(msg: String) {
         Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
     }
@@ -456,6 +709,7 @@ class CameraDetailActivity : AppCompatActivity() {
     }
 
     companion object {
+        private const val TAG = "CameraDetailActivity"
         const val EXTRA_CAMERA_JSON = "camera_json"
     }
 }

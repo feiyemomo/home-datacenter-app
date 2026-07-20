@@ -22,11 +22,88 @@
             app:title="@string/camera_detail_title"
             app:titleTextColor="@color/text_primary" />
 
+        <!-- Video player + action buttons: rendered edge-to-edge
+             below the toolbar so the live feed gets maximum width.
+             v1.5.2: moved inline playback here from the camera list
+             so the list stays cheap to scroll. -->
+        <FrameLayout
+            android:id="@+id/videoContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@color/card_bg">
+
+            <com.google.android.exoplayer2.ui.StyledPlayerView
+                android:id="@+id/playerView"
+                android:layout_width="match_parent"
+                android:layout_height="200dp"
+                app:resize_mode="fixed_width"
+                app:use_controller="true"
+                app:show_buffering="when_playing"
+                app:show_timeout="0" />
+
+            <ProgressBar
+                android:id="@+id/progressVideo"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/tvVideoError"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:padding="16dp"
+                android:text="@string/camera_video_failed"
+                android:textColor="@color/text_primary"
+                android:background="@drawable/bg_glass_card"
+                android:visibility="gone" />
+        </FrameLayout>
+
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:padding="16dp">
+
+            <!-- Quick actions row -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginBottom="16dp">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnReloadStream"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="6dp"
+                    android:text="@string/camera_action_reload"
+                    app:icon="@drawable/ic_refresh" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnRecordings"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:layout_marginEnd="6dp"
+                    android:text="@string/camera_action_recordings"
+                    app:icon="@drawable/ic_video" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnAlerts"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:text="@string/camera_action_alerts"
+                    app:icon="@drawable/ic_alerts" />
+            </LinearLayout>
 
             <!-- Camera header card: name / status / vendor -->
             <LinearLayout
