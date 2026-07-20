@@ -76,13 +76,31 @@ class RecordingsDialog(
     // fixed 60000ms buckets to keep the math simple + predictable.
     private var dayTotalMs: Long = 24L * 60 * 60 * 1000
     private var dayClipDurationMs: Long = 60_000L
+    // v1.5.16: per-clip LOCAL start offset (ms from LOCAL 00:00).
+    // The previous SeekBar mapped windowIndex*60000ms directly to
+    // progress, which assumed clips were laid out contiguously
+    // starting from LOCAL 00:00. In reality the playlist starts at
+    // the first available recording (often LOCAL 08:00+), so the
+    // SeekBar's "00:00:00" label was wrong — it actually pointed at
+    // a clip that started at LOCAL 16:05. Now each clip carries its
+    // real LOCAL start offset; SeekBar progress maps to absolute
+    // LOCAL time-of-day via binary search.
+    private var clipStartOffsets: LongArray = LongArray(0)
+    private var dayStartLocalMillis: Long = 0L
     private val daySeekHandler = Handler(Looper.getMainLooper())
     private var daySeekUserDragging = false
     private val daySeekUpdateRunnable = object : Runnable {
         override fun run() {
             val p = player ?: return
             if (!daySeekUserDragging) {
-                val cur = p.currentWindowIndex.toLong() * dayClipDurationMs + p.currentPosition
+                // v1.5.16: SeekBar progress = absolute LOCAL time-of-day
+                // (ms from LOCAL 00:00), not playlist-internal position.
+                val cur = if (clipStartOffsets.isNotEmpty() &&
+                              p.currentWindowIndex in clipStartOffsets.indices) {
+                    clipStartOffsets[p.currentWindowIndex] + p.currentPosition
+                } else {
+                    p.currentWindowIndex.toLong() * dayClipDurationMs + p.currentPosition
+                }
                 val safe = cur.coerceIn(0L, dayTotalMs)
                 binding.daySeekBar.progress = safe.toInt()
                 binding.tvDayPosition.text = formatDayTime(safe)
@@ -255,6 +273,8 @@ class RecordingsDialog(
         // backend's UTC ISO strings.
         val dayStartLocalMillis = dayStart.timeInMillis
         val dayEndLocalMillis = dayStartLocalMillis + 24L * 60 * 60 * 1000
+        // v1.5.16: stash for alert overlay (also uses LOCAL day bounds).
+        this.dayStartLocalMillis = dayStartLocalMillis
 
         val parseFmt = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
             timeZone = TimeZone.getTimeZone("UTC")
@@ -276,6 +296,24 @@ class RecordingsDialog(
             Toast.makeText(context, "该日期无录像", Toast.LENGTH_SHORT).show()
             return
         }
+
+        // v1.5.16: compute each clip's LOCAL start offset (ms from
+        // LOCAL 00:00 of the picked day). The SeekBar maps progress
+        // to absolute LOCAL time-of-day via binary search on this
+        // array — see onStopTrackingTouch + daySeekUpdateRunnable.
+        // We use dayStart's midnight as the reference point.
+        clipStartOffsets = LongArray(dayRecordings.size) { i ->
+            try {
+                val t = parseFmt.parse(dayRecordings[i].startAt)?.time ?: 0L
+                (t - dayStartLocalMillis).coerceIn(0L, dayTotalMs)
+            } catch (_: Exception) { 0L }
+        }
+        android.util.Log.d("RecordingsDialog",
+            "playDayAsPlaylist: ${dayRecordings.size} clips, " +
+            "firstStartOffset=${clipStartOffsets.firstOrNull() ?: -1}ms " +
+            "(${formatDayTime(clipStartOffsets.firstOrNull() ?: 0L)}), " +
+            "lastStartOffset=${clipStartOffsets.lastOrNull() ?: -1}ms " +
+            "(${formatDayTime(clipStartOffsets.lastOrNull() ?: 0L)})")
 
         android.util.Log.d("RecordingsDialog",
             "Playing full day: ${dayRecordings.size} clips starting at ${dayRecordings.first().startAt}")
@@ -380,16 +418,42 @@ class RecordingsDialog(
                 daySeekUserDragging = false
                 val progress = seek?.progress?.toLong() ?: return
                 val p = player ?: return
-                // Map the day-relative ms to a playlist window index
-                // + position-in-window. We assume 60s buckets — if
-                // the actual clip is shorter (camera was offline
-                // part of the minute), ExoPlayer clamps our seek to
-                // the clip's actual duration, which is fine.
-                val targetWindow = (progress / dayClipDurationMs).toInt()
-                    .coerceAtMost(p.mediaItemCount - 1)
-                val targetPosition = (progress % dayClipDurationMs)
+                // v1.5.16: map absolute LOCAL time-of-day (progress) to
+                // the containing clip via binary search on
+                // clipStartOffsets. The previous math assumed contiguous
+                // 60s buckets starting from LOCAL 00:00 — when the
+                // playlist actually started at LOCAL 16:05, dragging to
+                // "10:00:00" would seek to a non-existent window 600
+                // (1000h/60000ms), which ExoPlayer clamped to the last
+                // clip, making the SeekBar useless for navigation.
+                //
+                // Binary search finds the rightmost clip whose start
+                // offset <= progress. Then position within that clip =
+                // progress - clipStartOffsets[idx].
+                val targetWindow: Int
+                val targetPosition: Long
+                if (clipStartOffsets.isNotEmpty()) {
+                    // binarySearch returns the index if found, or
+                    // -(insertionPoint+1). For "rightmost clip whose
+                    // start <= progress", we want insertionPoint-1
+                    // when not found.
+                    val raw = clipStartOffsets.binarySearch(progress)
+                    val idx = if (raw >= 0) raw
+                              else (-raw - 2).coerceAtLeast(0)
+                    targetWindow = idx.coerceIn(0, clipStartOffsets.size - 1)
+                        .coerceAtMost(p.mediaItemCount - 1)
+                    targetPosition = (progress - clipStartOffsets[targetWindow])
+                        .coerceIn(0L, dayClipDurationMs)
+                } else {
+                    // Fallback (shouldn't happen) — old contiguous math.
+                    targetWindow = (progress / dayClipDurationMs).toInt()
+                        .coerceAtMost(p.mediaItemCount - 1)
+                    targetPosition = (progress % dayClipDurationMs)
+                }
                 android.util.Log.d("RecordingsDialog",
-                    "Day seek: progress=${progress}ms -> window=$targetWindow pos=${targetPosition}ms")
+                    "Day seek: progress=${progress}ms (${formatDayTime(progress)}) " +
+                    "-> window=$targetWindow pos=${targetPosition}ms " +
+                    "(clipStartOffset=${if (clipStartOffsets.isNotEmpty()) clipStartOffsets[targetWindow] else -1})")
                 p.seekTo(targetWindow, targetPosition)
             }
         })
