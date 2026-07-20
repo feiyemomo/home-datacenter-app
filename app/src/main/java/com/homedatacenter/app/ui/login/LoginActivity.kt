@@ -59,6 +59,11 @@ class LoginActivity : AppCompatActivity() {
                     container.prefsManager.saveUserInfo(user.name, user.isAdmin)
                 } catch (_: Exception) {
                 }
+                // v1.5.6: kick off WebRTC pre-warming now that the
+                // user is authenticated. By the time they tap a
+                // camera the PeerConnectionFactory + EGL context will
+                // already be initialized.
+                container.warmWebRtc()
                 navigateToMain()
             } catch (e: Exception) {
                 showError(getString(com.homedatacenter.app.R.string.login_error) + ": ${e.message}")

@@ -1,12 +1,19 @@
 package com.homedatacenter.app.di
 
 import android.content.Context
+import android.util.Log
 import com.homedatacenter.app.data.api.HomeCenterApi
 import com.homedatacenter.app.data.api.NetworkFactory
 import com.homedatacenter.app.data.repository.HomeCenterRepository
 import com.homedatacenter.app.util.BaseUrlResolver
 import com.homedatacenter.app.util.PrefsManager
 import com.homedatacenter.app.util.RoleManager
+import com.homedatacenter.app.util.WebRtcClient
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 
 class AppContainer(private val context: Context) {
@@ -90,6 +97,67 @@ class AppContainer(private val context: Context) {
     fun resetApi() {
         currentApi = null
         currentRepository = null
+    }
+
+    // --- WebRTC预热 (v1.5.6) ---
+    //
+    // PeerConnectionFactory.initialize + EGL context creation takes
+    // ~300-500ms on real devices. Doing it synchronously when the user
+    // taps a camera delays the first frame. We pre-build a WebRtcClient
+    // on a background coroutine right after the user is authenticated
+    // (HomeCenterApp.onCreate) so by the time they navigate to a
+    // camera detail page the factory is ready and only the actual
+    // SDP/ICE negotiation (~200-500ms on LAN) remains.
+    //
+    // The warmed client is consumed by CameraDetailActivity.ensureWebRtcClient
+    // — first call takes it out; subsequent calls build a fresh one
+    // the slow way. If the user opens a camera before warming is
+    // done, ensureWebRtcClient falls back to synchronous init.
+    @Volatile
+    private var warmWebRtcClient: WebRtcClient? = null
+    private val warmScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var warmJob: Job? = null
+
+    /**
+     * Kick off WebRTC client pre-warming. Called from
+     * HomeCenterApp.onCreate after we know the user is logged in
+     * (token present). Idempotent — no-op if already warming or
+     * already warmed.
+     */
+    fun warmWebRtc() {
+        if (warmWebRtcClient != null || warmJob?.isActive == true) return
+        val baseUrl = getApiBaseUrl().ifBlank { return }
+        val token = prefsManager.token ?: return
+        warmJob = warmScope.launch {
+            try {
+                val client = WebRtcClient(
+                    context = context,
+                    okHttpClient = okHttpClient,
+                    baseUrl = baseUrl,
+                    token = token,
+                )
+                // init() must run on a thread with a Looper. We're
+                // on Dispatchers.IO here; switch to Main for the
+                // PeerConnectionFactory.initialize call.
+                kotlinx.coroutines.withContext(Dispatchers.Main) {
+                    client.init()
+                }
+                warmWebRtcClient = client
+                Log.d("AppContainer", "WebRtcClient warmed up")
+            } catch (e: Exception) {
+                Log.w("AppContainer", "WebRtc warm-up failed: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Take the warmed-up WebRtcClient if available. Returns null when
+     * warming isn't done yet or has failed — caller should fall back
+     * to synchronous creation. The returned client is removed from
+     * the warm cache so a second call returns null.
+     */
+    fun takeWarmWebRtcClient(): WebRtcClient? {
+        return warmWebRtcClient.also { warmWebRtcClient = null }
     }
 
     companion object {

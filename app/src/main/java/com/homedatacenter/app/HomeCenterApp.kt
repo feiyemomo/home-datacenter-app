@@ -37,5 +37,13 @@ class HomeCenterApp : Application() {
         if (container.prefsManager.baseUrl.isNullOrBlank()) {
             container.baseUrlResolver.probeLanOnStartup()
         }
+        // v1.5.6: pre-warm the WebRTC PeerConnectionFactory + EGL
+        // context on a background thread so the first camera detail
+        // page opens with minimal first-frame latency. Safe to skip
+        // when the user isn't logged in yet — LoginActivity will
+        // call warmWebRtc() after successful auth.
+        if (!container.prefsManager.token.isNullOrBlank()) {
+            container.warmWebRtc()
+        }
     }
 }

@@ -91,6 +91,14 @@ class PlayerFullscreenHelper(
         }
         speedButton?.let { attachSpeedButton(it) }
         fullscreenButton?.setOnClickListener { toggleFullscreen() }
+        // v1.5.6: allow the player view to render outside its parent's
+        // bounds during fullscreen (we lift it via bringToFront +
+        // elevation). Without this, the ScrollView would clip the
+        // expanded surface to its original wrap_content height.
+        (playerView.parent as? ViewGroup)?.clipChildren = false
+        secondaryPlayerView?.let {
+            (it.parent as? ViewGroup)?.clipChildren = false
+        }
     }
 
     /**
@@ -170,10 +178,25 @@ class PlayerFullscreenHelper(
     }
 
     /**
-     * Expands [view] to MATCH_PARENT in fullscreen and restores its
-     * saved height (or [DEFAULT_PLAYER_HEIGHT_DP]) on exit. Also
-     * expands the immediate parent (videoContainer) so MATCH_PARENT
-     * has the full screen to fill. No-op when [view] is null.
+     * Expands [view] to fill the screen in fullscreen and restores its
+     * saved height on exit. v1.5.6: rewritten to fix an ANR where the
+     * previous version set the parent ViewGroup's height to
+     * MATCH_PARENT — but the player host is nested in a ScrollView,
+     * and ScrollView.measure passes UNSPECIFIED specs to its children.
+     * MATCH_PARENT under ScrollView resolves to 0 or to a bogus value
+     * (SurfaceView surfaces with height=-1 get coerced to 16777215,
+     * which SurfaceFlinger rejects: "ExternalTexture with size (1280,
+     * 16777215) exceeds render target size limit of 16384"). The main
+     * thread then blocks on the surface negotiation, causing an ANR.
+     *
+     * Fix: leave the parent alone, set the view's own height to the
+     * exact pixel height of the display (so the surface knows exactly
+     * how big to be). The view still needs to be rendered above its
+     * siblings while fullscreen — we use [View.bringToFront] + set
+     * elevation to lift it out of the ScrollView's normal layout flow
+     * visually. The parent's clipChildren=false on the host ScrollView
+     * is set once in [attach] so the player can render outside its
+     * previous bounds during fullscreen.
      */
     private fun applyHeight(
         view: View?,
@@ -186,10 +209,18 @@ class PlayerFullscreenHelper(
             if (params.height > 0) {
                 save(params.height)
             }
-            params.height = ViewGroup.LayoutParams.MATCH_PARENT
-            (view.parent as? ViewGroup)?.apply {
-                layoutParams?.height = ViewGroup.LayoutParams.MATCH_PARENT
-            }
+            // Use the actual screen height in pixels instead of
+            // MATCH_PARENT. The exact pixel value bypasses the
+            // ScrollView/measure negotiation that produced the
+            // 16777215 surface-height bug.
+            val displayMetrics = hostView.resources.displayMetrics
+            params.height = displayMetrics.heightPixels
+            // Lift the view above siblings so it isn't clipped by
+            // the ScrollView's other children (toolbar, action row,
+            // etc.). bringToFront changes z-order; elevation enforces
+            // it on API 21+.
+            view.bringToFront()
+            view.elevation = 16f
         } else {
             val saved = restore()
             params.height = saved.takeIf { it > 0 }
@@ -198,9 +229,7 @@ class PlayerFullscreenHelper(
                     DEFAULT_PLAYER_HEIGHT_DP.toFloat(),
                     hostView.resources.displayMetrics,
                 ).toInt()
-            (view.parent as? ViewGroup)?.apply {
-                layoutParams?.height = ViewGroup.LayoutParams.WRAP_CONTENT
-            }
+            view.elevation = 0f
         }
         view.layoutParams = params
     }
