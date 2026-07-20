@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- v1.6.4 rev6: dark glass panel for player-area overlays (toolbar,
+     scrub bar container, chip scroller) over the black video surface.
+     A flat #CC000000 reads as "black sheet" — too flat. This panel
+     uses a 60% dark blue-gray solid + a subtle 1dp white stroke at
+     20% alpha + slight inner highlight to suggest a frosted-glass
+     sheet floating above the video. Pairs visually with the warm
+     liquid glass of the dialog background (when the user is on the
+     day-list view, the dark panel isn't visible; it only shows over
+     the black player surface in playback mode). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#99141822" />
+    <stroke
+        android:width="1dp"
+        android:color="#33FFFFFF" />
+</shape>

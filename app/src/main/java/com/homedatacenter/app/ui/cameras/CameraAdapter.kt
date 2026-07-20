@@ -175,20 +175,16 @@ class CameraAdapter(
                         android.util.Log.w(TAG, "Frame HTTP ${response.code} for $url")
                         return@use null
                     }
-                    // v1.5.9: downsample the JPEG on decode so we
-                    // don't hold a 1920x1080 ARGB bitmap (~8 MB)
-                    // per camera in the LRU cache. The card renders
-                    // the thumbnail at 128x72dp (~ 256x144 px on
-                    // xhdpi), so a 480x270 bitmap is more than enough.
-                    // - inSampleSize=4 on a 1920x1080 source yields
-                    //   480x270, a 4x memory reduction.
-                    // - RGB_565 uses 2 bytes/pixel instead of 4 for
-                    //   ARGB_8888, halving memory again. The JPEG is
-                    //   already band-limited from go2rtc's encoder,
-                    //   so the color banding from 565 isn't visible
-                    //   at this thumbnail size.
+                    // v1.6.4 rev6: downsample less aggressively now that
+                    // the card thumbnail is 192×108dp (was 128×72dp).
+                    // - inSampleSize=2 on a 1920x1080 source yields
+                    //   960x540 (~2 MB ARGB or 1 MB RGB_565) — sharp
+                    //   enough for the larger card render without
+                    //   blowing up the LRU cache.
+                    // - RGB_565 keeps each bitmap at ~1 MB so the
+                    //   16-entry LRU stays under ~16 MB.
                     val opts = BitmapFactory.Options().apply {
-                        inSampleSize = 4
+                        inSampleSize = 2
                         inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
                     }
                     response.body?.byteStream()?.use {

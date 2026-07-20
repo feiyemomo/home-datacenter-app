@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- v1.6.4 rev6: liquid glass (warm) background for the recordings
+     dialog. User design constraint: "液态玻璃，温馨". The drawable
+     layers a warm cream-to-soft-blue gradient (matching the app's
+     existing bg_primary / gradient_* palette) with a translucent
+     white overlay that simulates the frosted-glass look without
+     requiring RenderEffect (API 31+). On API < 31 the layered
+     gradient alone produces the "soft warm glass" feel; on API 31+
+     the host activity can additionally apply a real blur via
+     RenderEffect if desired (not wired here to keep the dialog
+     portable to older devices). -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Base warm gradient: cream → peach → soft blue.
+         Angle 135 puts cream at top-left, soft blue at bottom-right
+         (matches the home page dashboard's existing gradient). -->
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:type="linear"
+                android:angle="135"
+                android:startColor="@color/gradient_start"
+                android:centerColor="@color/gradient_mid"
+                android:endColor="@color/gradient_end" />
+        </shape>
+    </item>
+    <!-- Translucent white overlay to give the frosted-glass sheen.
+         18% white over the warm gradient adds the "liquid" feel
+         without flattening the warm undertone. -->
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#2EFFFFFF" />
+        </shape>
+    </item>
+</layer-list>

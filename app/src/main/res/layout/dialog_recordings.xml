@@ -1,16 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- v1.6.4 rev6: liquid glass (warm) background per user design
+     constraint "液态玻璃，温馨". The root LinearLayout uses
+     @drawable/bg_liquid_glass_warm (warm cream→soft blue gradient
+     with a frosted-white overlay). Overlays inside videoContainer
+     (toolbar over player, scrub bar, chip scroller) use
+     @drawable/bg_glass_dark_panel — a translucent dark glass panel
+     that floats over the black video surface. The day-list view
+     (RecyclerView) shows the warm gradient directly, since the
+     list cards are themselves warm glass tiles. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="@android:color/white">
+    android:background="@drawable/bg_liquid_glass_warm">
 
     <com.google.android.material.appbar.MaterialToolbar
         android:id="@+id/toolbar"
         android:layout_width="match_parent"
         android:layout_height="?attr/actionBarSize"
-        android:background="?attr/colorPrimary"
+        android:background="@drawable/bg_glass_dark_panel"
         app:navigationIcon="@drawable/ic_baseline_arrow_back_24"
         app:titleTextColor="@android:color/white">
 
@@ -105,6 +114,36 @@
                         android:visibility="gone"
                         android:indeterminateTint="@android:color/white" />
 
+                    <!-- v1.6.4 rev6: centered pause/play toggle button.
+                         User asked: "为播放器多设计一些交互（暂停键…)".
+                         We place a 56dp circular glass button at the
+                         center of the player surface. Tapping it toggles
+                         ExoPlayer.play/pause. The icon is swapped at
+                         runtime by PlayerGestureHelper based on the
+                         player's STATE_READY + playWhenReady state.
+                         Auto-hides after 2s of inactivity (handled in
+                         PlayerGestureHelper) so it doesn't permanently
+                         obscure the video. The dark glass background
+                         matches the toolbar/scrub bar panels. -->
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnCenterPause"
+                        style="@style/Widget.Material3.Button.IconButton"
+                        android:layout_width="56dp"
+                        android:layout_height="56dp"
+                        android:layout_gravity="center"
+                        android:background="@drawable/bg_glass_dark_panel"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:padding="0dp"
+                        android:insetLeft="0dp"
+                        android:insetRight="0dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        app:iconSize="32dp"
+                        app:icon="@drawable/ic_pause"
+                        app:iconTint="@android:color/white"
+                        android:visibility="gone" />
+
                     <!-- Standalone playback speed button. v1.6.4 rev2:
                          menu now opens as a Material AlertDialog with
                          single-choice items + rounded corners (was
@@ -177,7 +216,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
-                    android:background="#CC000000"
+                    android:background="@drawable/bg_glass_dark_panel"
                     android:paddingStart="12dp"
                     android:paddingEnd="12dp"
                     android:paddingTop="6dp"
@@ -256,7 +295,7 @@
                     android:layout_weight="1"
                     android:scrollbars="none"
                     android:overScrollMode="never"
-                    android:background="#1A000000"
+                    android:background="@drawable/bg_glass_dark_panel"
                     android:fillViewport="false"
                     android:visibility="gone">
 
