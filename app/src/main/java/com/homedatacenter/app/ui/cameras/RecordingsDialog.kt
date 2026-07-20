@@ -43,6 +43,7 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+import kotlin.math.abs
 
 class RecordingsDialog(
     context: Context,
@@ -914,13 +915,14 @@ class RecordingsDialog(
         // then re-sort by start time asc for display. This keeps the
         // most significant motion events while preventing pathological
         // days from slowing the UI.
-        // v1.6.4 rev4: reduced from 200 -> 60. With 109 segments/24h,
-        // 200 meant no filtering. 60 keeps the top events so the
-        // fisheye scroller has room to show "HH:mm" labels without
-        // chips piling on top of each other. Edge chips are further
-        // compressed to thin colored bars by FisheyeChipScroller when
-        // their scale drops below [textThreshold].
-        val cap = 60
+        // v1.6.4 rev4: reduced from 200 -> 60 (fit-to-screen mode).
+        // v1.6.4 rev5: bumped back to 100 since we returned to scrolling.
+        // Scrolling means more chips is fine — the user can swipe through
+        // them; the fisheye transform keeps the centered chip readable
+        // while edge chips collapse to thin colored bars. 100 is a
+        // compromise between "show the whole day's activity" and "don't
+        // load 1000+ TextViews on a busy day".
+        val cap = 100
         val sorted = if (chips.size > cap) {
             chips.sortedByDescending { it.motionScore }.take(cap).sortedBy { it.startRelativeMs }
         } else {
@@ -966,6 +968,31 @@ class RecordingsDialog(
             container.addView(tv)
         }
         binding.motionChipScroller.visibility = View.VISIBLE
+        // v1.6.4 rev5: scroll the fisheye scroller so the chip nearest
+        // to the current ExoPlayer playback position is centered in
+        // the viewport. This gives the user an immediate "you are here"
+        // focal point when the chip list first appears — the centered
+        // chip is the one scaled to full size with its "HH:mm" label
+        // visible. Without this, the scroller opens at position 0 and
+        // the user has to scroll to find their current playback moment.
+        val p = player
+        if (p != null && clipStartOffsets.isNotEmpty() &&
+            p.currentWindowIndex in clipStartOffsets.indices) {
+            val currentMs = clipStartOffsets[p.currentWindowIndex] + p.currentPosition
+            // Find the chip whose startMs is closest to (but not after)
+            // the current playback position. Falls back to index 0 if
+            // playback is before the first chip.
+            var bestIdx = 0
+            var bestDelta = Long.MAX_VALUE
+            for (i in sorted.indices) {
+                val delta = abs(sorted[i].startRelativeMs - currentMs)
+                if (delta < bestDelta) {
+                    bestDelta = delta
+                    bestIdx = i
+                }
+            }
+            binding.motionChipScroller.scrollToCenterChip(bestIdx)
+        }
     }
 
     /**
@@ -975,6 +1002,10 @@ class RecordingsDialog(
      * also scroll the chip scroller so the tapped chip becomes
      * visible (helpful when the user taps a chip that's off-screen
      * after a previous chip tap scrolled the list).
+     * v1.6.4 rev5: now also calls [FisheyeChipScroller.scrollToCenterChip]
+     * so the tapped chip is centered in the viewport (full-size with
+     * label visible). The user said "我想要滑动的时候，中间大的chip跟
+     * 着替换" — tapping a chip should make it the new focal point.
      */
     private fun seekToMotionStart(chip: MotionChip) {
         val p = player ?: return
@@ -989,6 +1020,23 @@ class RecordingsDialog(
         p.seekTo(targetWindow, targetPosition)
         binding.daySeekBar.progress = progress.toInt()
         binding.tvDayPosition.text = formatDayTime(progress)
+        // v1.6.4 rev5: center the tapped chip in the viewport so it
+        // becomes the focal point (full-size, label visible). The
+        // user said "我想要滑动的时候，中间大的chip跟着替换".
+        // We find the chip's index in the container by matching its
+        // label (stashed as tv.tag in populateMotionChips) against
+        // the chip's formatted "HH:mm" start time.
+        val container = binding.motionChipContainer
+        val tz = TimeZone.getTimeZone("Asia/Shanghai")
+        val fmt = SimpleDateFormat("HH:mm", Locale.US).apply { timeZone = tz }
+        val targetLabel = fmt.format(Date(chip.startUnixSec * 1000L))
+        for (i in 0 until container.childCount) {
+            val tv = container.getChildAt(i)
+            if ((tv.tag as? String) == targetLabel) {
+                binding.motionChipScroller.scrollToCenterChip(i)
+                break
+            }
+        }
         android.util.Log.d("RecordingsDialog",
             "Chip tap: seek to window=$targetWindow pos=${targetPosition}ms " +
             "(day-relative ${progress}ms = ${formatDayTime(progress)})")
