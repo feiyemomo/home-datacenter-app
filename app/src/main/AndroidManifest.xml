@@ -10,6 +10,14 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- v1.6.11: required by in-app self-update. Lets the app invoke
+         the system PackageInstaller on a downloaded APK. Without this,
+         ACTION_INSTALL_PACKAGE Intent resolves to "request blocked".
+         Android 8.0+ requires this permission (declared in manifest)
+         for any app that wants to install other packages — the user
+         must also explicitly grant "install unknown apps" for our app
+         in Settings → Apps → Special access on first install. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- Camera and microphone are optional because the app receives streams
          and must remain installable on devices without capture hardware. -->
@@ -64,6 +72,21 @@
             android:name=".ui.network.NetworkDetailActivity"
             android:exported="false"
             android:label="@string/network_detail_title" />
+
+        <!-- v1.6.11: FileProvider for sharing the downloaded APK
+             with the system PackageInstaller. The installer needs a
+             content:// URI (not a file:// URI) to read the APK from
+             our private storage. file_paths.xml exposes filesDir/
+             downloads/ — exactly where ApkInstaller writes the APK. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
     </application>
 

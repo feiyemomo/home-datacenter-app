@@ -394,6 +394,31 @@ class HomeCenterRepository(
         return resp.decodeData<DeleteUserResult>()?.deletedDevices ?: 0
     }
 
+    // --- In-app self-update (v1.6.11) ---
+
+    /**
+     * Fetch metadata about the latest APK release. The caller
+     * compares [com.homedatacenter.app.data.model.UpdateInfo.versionCode]
+     * against the installed versionCode to decide if an update is
+     * available. Network-only — no cache, since the user wants
+     * up-to-the-minute accuracy when they tap "Check for updates".
+     */
+    suspend fun getLatestRelease(token: String): com.homedatacenter.app.data.model.UpdateInfo {
+        val resp = api.getLatestRelease(bearer(token))
+        ensureSuccess(resp)
+        return resp.decodeDataOrThrow()
+    }
+
+    /**
+     * Stream the latest APK to the caller. Returns the raw
+     * ResponseBody — the caller is responsible for writing it to
+     * disk (see ApkInstaller.downloadApk) and closing the body to
+     * release the connection.
+     */
+    suspend fun downloadLatestApk(token: String): okhttp3.ResponseBody {
+        return api.downloadLatestApk(bearer(token))
+    }
+
     private fun bearer(token: String): String = "Bearer $token"
 
     private fun ensureSuccess(resp: com.homedatacenter.app.data.model.ApiResponse) {

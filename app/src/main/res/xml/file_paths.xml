@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- v1.6.11: FileProvider paths for in-app APK self-update.
+     The downloaded APK is written to filesDir/downloads/ and
+     shared with the system PackageInstaller via a content:// URI.
+     The installer needs temporary read access to that URI, which
+     FileProvider grants via Intent.FLAG_GRANT_READ_URI_PERMISSION. -->
+<paths>
+    <!-- filesDir = /data/data/<pkg>/files. We save APKs to
+         filesDir/downloads/ so they live in the app's private
+         storage (no external storage permission needed) and are
+         auto-cleaned on uninstall. -->
+    <files-path name="downloads" path="downloads/" />
+</paths>

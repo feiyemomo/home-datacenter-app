@@ -198,6 +198,95 @@ class AppContainer(private val context: Context) {
      *  can now be reused. */
     fun takeWarmWebRtcClient(): WebRtcClient? = sharedWebRtcClient
 
+    // --- v1.6.11: in-app self-update ---
+    //
+    // On app startup we silently check the server for a newer APK.
+    // If found, we cache the result so the SettingsFragment can show
+    // a "new version available" hint without re-fetching. We do NOT
+    // auto-prompt — that would interrupt the user on every cold start
+    // where a new version exists. The user discovers the update when
+    // they visit the settings page (where we show a badge) or when
+    // they tap "Check for updates" manually.
+    @Volatile
+    private var cachedUpdateInfo: com.homedatacenter.app.data.model.UpdateInfo? = null
+    @Volatile
+    private var updateCheckFailed: Boolean = false
+    private var updateCheckJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * Silent background update check. Idempotent — no-op if a check
+     * is already in flight or has already completed this session.
+     * Safe to call from HomeCenterApp.onCreate (background coroutine).
+     */
+    fun checkUpdateOnStartup() {
+        if (cachedUpdateInfo != null || updateCheckFailed) return
+        if (updateCheckJob?.isActive == true) return
+        val token = prefsManager.token ?: return
+
+        updateCheckJob = warmScope.launch {
+            try {
+                val info = getRepository().getLatestRelease(token)
+                val installed = com.homedatacenter.app.util.ApkInstaller
+                    .installedVersionCode(context)
+                if (info.version_code > installed) {
+                    cachedUpdateInfo = info
+                    Log.d("AppContainer",
+                        "Update available: ${info.version_name} (code=${info.version_code}), " +
+                        "installed=$installed")
+                } else {
+                    Log.d("AppContainer",
+                        "App is up-to-date (installed=$installed, latest=${info.version_code})")
+                }
+            } catch (e: Exception) {
+                updateCheckFailed = true
+                Log.w("AppContainer", "Update check failed: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Returns the cached UpdateInfo from the last checkUpdateOnStartup
+     * call, or null if no update is available / no check has been run.
+     * SettingsFragment reads this to render the "new version available"
+     * hint. Manual "Check for updates" button should bypass this cache
+     * and call [forceCheckUpdate] instead.
+     */
+    fun getCachedUpdateInfo(): com.homedatacenter.app.data.model.UpdateInfo? =
+        cachedUpdateInfo
+
+    /**
+     * Force a fresh update check (manual user action). Always hits the
+     * network — does not return a cached result. Updates the cache on
+     * success so subsequent visits to SettingsFragment show the new
+     * state immediately. Returns the UpdateInfo (or null if no update
+     * is available / check failed).
+     */
+    suspend fun forceCheckUpdate(): com.homedatacenter.app.data.model.UpdateInfo? {
+        val token = prefsManager.token ?: return null
+        return try {
+            val info = getRepository().getLatestRelease(token)
+            val installed = com.homedatacenter.app.util.ApkInstaller
+                .installedVersionCode(context)
+            if (info.version_code > installed) {
+                cachedUpdateInfo = info
+                info
+            } else {
+                cachedUpdateInfo = null
+                null
+            }
+        } catch (e: Exception) {
+            Log.w("AppContainer", "forceCheckUpdate failed: ${e.message}")
+            null
+        }
+    }
+
+    /** Clear the cached update info (e.g. after the user installs
+     *  the new version and the app restarts). */
+    fun clearCachedUpdateInfo() {
+        cachedUpdateInfo = null
+        updateCheckFailed = false
+    }
+
     // --- ICE config 预取 (v1.5.7) ---
     //
     // CameraDetailActivity.startWebRtcStream needs the ICE server list
