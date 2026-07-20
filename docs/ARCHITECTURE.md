@@ -588,6 +588,51 @@ private fun resolveHlsUrl(camera: Camera): String {
 4. 如果有 `pendingInitialTimestamp`，调 `openDayForTimestamp(ts)` 直接进入整天播放（绕过列表）
 5. 用户在播放中点"返回列表"按钮 → 回到按天列表（`videoContainer.GONE` + `recyclerView.VISIBLE`）
 
+#### v1.6.3：Motion chip 列表 + 后端预聚合
+
+**问题诊断**：用户报告 v1.6.0-v1.6.2 的 SeekBar 红条方案"范围太大不精准"——根本问题是 24h/720px 时间轴上每像素 = 120s，红条永远只能显示成"宽 1-2px 的线段"，无法承载精确信息。再细的吸附半径也只是像素级修补。
+
+**新方案：报警事件 chip 列表**。在 SeekBar 上方新增 `HorizontalScrollView`，每个 motion range 渲染成一个可点击 chip，点击直接 seek ExoPlayer 到该 motion 起始时刻。
+
+UI 组件：
+- `motionChipScroller`（HorizontalScrollView）+ `motionChipContainer`（LinearLayout horizontal）添加到 `dialog_recordings.xml` 的 SeekBar 上方
+- 每个 chip 是 `item_motion_chip.xml`（TextView，`monospace` 字体，`selectableItemBackground` 涟漪）
+- chip 背景色编码 motion 强度（来自后端预聚合 `motion_score` 字段）：
+  - 低 motion_score（< max/4）：teal `#4DB6AC`（轻微 motion，如风吹树叶）
+  - 中（max/4 ~ max*3/4）：amber `#FFB300`
+  - 高（≥ max*3/4）：bright orange `#FF7043`（大量 motion，可能用户自己走过）
+  - AI 检测（`peak_objects > 0`）：red `#EF5350`（最优先级，覆盖 motion_score 分级）
+- chip 文本："HH:mm:ss · Ns"（UTC 转 LOCAL 时间 + 持续秒数）
+- chip 数量 > 200 时按 `motion_score` 排序保留 top 200，再按时间排序展示（避免繁忙日压垮 UI）
+
+数据流：
+1. `loadAlertRangesForDay` 调 `listMotionRanges` API 拿到 v1.6.3 富结构响应 `{"ranges": [{start, end, duration, motion_score, segment_count, peak_objects}, ...], "total": N}`
+2. 手动用 `kotlinx.serialization.json.JsonObject` 解析（同 v1.6.0 原因——裸数组无法用 @Serializable 自动解码）
+3. 每个 range 同时加入 `dayRanges`（供 AlertRangeOverlay 绘制）和 `chipData`（供 chip 列表渲染）
+4. `rangeIsAi` 集合记录 `peak_objects > 0` 的索引，传给 `setAlertRanges(ranges, aiIndices)` 让 overlay 用更亮的红色绘制 AI 段
+5. `populateMotionChips(chipData, dayStartLocalMillis)` 在主线程生成 chips，每个 chip 设置 `setOnClickListener { seekToMotionStart(chip) }`
+
+Seek 逻辑（`seekToMotionStart`）：
+- 复用 `clipStartOffsets.binarySearch(progress)` 找到目标 window
+- `player.seekTo(targetWindow, targetPosition)` 跳转
+- 同步更新 SeekBar 视觉 + 位置标签
+- 与 `onStopTrackingTouch` 共用同一 seek 路径
+
+AlertRangeOverlay 优化（辅助 chip 列表）：
+- `minW` 从 2px 降到 1px（chip 承载精确信息，overlay 只做视觉锚点）
+- 每个 range 起点画白色 tick dot（直径 0.8px）让用户看清"motion 在此开始"
+- AI 检测段用更亮的 `#FF5252`（Material Red A200）区分
+
+后端 v1.6.3：
+- `MotionRange` 结构体替代 `[][2]int64`，含预聚合字段 `start/end/duration/motion_score/segment_count/peak_objects`——客户端零现场计算
+- `mergeGapSeconds` 从 v1.6.1 的 0s 改为 2s（人眼"同一动作"感知阈值；0s 产生 ~750 段过密，2s 产生 ~109 段正好适合 chip 列表）
+- 60s TTL 缓存避免重复请求 Frigate 的 1-2s 慢查询；按 `<camera>:<after>:<before>` key 隔离；超过 32 条自动淘汰最旧的一半
+
+性能：
+- 后端：首次请求 1-2s（Frigate 慢），命中缓存 < 5ms
+- 客户端：chip 解析 + 渲染 200 个 < 50ms，seek 命中 binarySearch O(log n)
+- 内存：每个 chip ~1KB（TextView），200 个 chip 总计 ~200KB
+
 **报警推送精确跳转**：`AlertsFragment.onJumpCamera` / `DashboardFragment.jumpToCamerasWithAlert` 现在直接 `startActivity(CameraDetailActivity)`，Intent extra `EXTRA_INITIAL_TIMESTAMP = alert.startTime.toLong()`。流程：
 1. `CameraDetailActivity.onCreate` 检测到 `EXTRA_INITIAL_TIMESTAMP > 0`，`binding.root.post { showRecordings(initialTs) }`（post 是为了让 `startPlayback()` 的直播流先初始化完成，避免 surface 冲突）。
 2. `showRecordings(initialTs)` 构造 `RecordingsDialog(context, camera, container, initialTimestamp = initialTs)`。
