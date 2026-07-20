@@ -15,6 +15,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.webrtc.AudioTrack
 import org.webrtc.DefaultVideoDecoderFactory
 import org.webrtc.DefaultVideoEncoderFactory
 import org.webrtc.EglBase
@@ -94,8 +95,30 @@ class WebRtcClient(
     private var factory: PeerConnectionFactory? = null
     private var peerConnection: PeerConnection? = null
     private var videoTrack: VideoTrack? = null
+    private var audioTrack: AudioTrack? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var signalingJob: Job? = null
+
+    /**
+     * v1.5.8: Toggle video track enabled state. Used by the
+     * WebRTC control bar's pause button — when disabled, the
+     * SurfaceViewRenderer stops getting new frames (last frame
+     * stays on screen) but the PeerConnection stays alive so
+     * resume is instant (no re-negotiation needed).
+     */
+    fun setVideoEnabled(enabled: Boolean) {
+        videoTrack?.setEnabled(enabled)
+    }
+
+    /**
+     * v1.5.8: Toggle audio track enabled state. Mute is a local
+     * operation — the backend keeps sending RTP audio, we just
+     * stop rendering it. Cheaper than setVolume(0f) and survives
+     * track re-negotiation.
+     */
+    fun setAudioEnabled(enabled: Boolean) {
+        audioTrack?.setEnabled(enabled)
+    }
 
     interface Listener {
         /** WebRTC connection established; video is rendering. */
@@ -215,12 +238,19 @@ class WebRtcClient(
             }
             override fun onTrack(transceiver: RtpTransceiver?) {
                 val track = transceiver?.receiver?.track() ?: return
-                if (track.kind() == MediaStreamTrack.VIDEO_TRACK_KIND) {
-                    val vt = track as VideoTrack
-                    videoTrack = vt
-                    // addSink must run on the main thread (EGL
-                    // renderer's onFrame is posted there).
-                    scope.launch { vt.addSink(surfaceRenderer) }
+                when (track.kind()) {
+                    MediaStreamTrack.VIDEO_TRACK_KIND -> {
+                        val vt = track as VideoTrack
+                        videoTrack = vt
+                        // addSink must run on the main thread (EGL
+                        // renderer's onFrame is posted there).
+                        scope.launch { vt.addSink(surfaceRenderer) }
+                    }
+                    MediaStreamTrack.AUDIO_TRACK_KIND -> {
+                        // v1.5.8: capture the audio track so the
+                        // control bar's mute button can toggle it.
+                        audioTrack = track as AudioTrack
+                    }
                 }
             }
             override fun onSignalingChange(state: PeerConnection.SignalingState?) {}
@@ -246,10 +276,19 @@ class WebRtcClient(
             // firing onIceGatheringChange(COMPLETE).
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_ONCE
-            // Candidate selection: prefer host candidates on LAN
-            // (faster than STUN/TURN relay for local streaming).
-            // Keep the default policy = ALL so TURN works when
-            // the user is off-LAN.
+            // v1.5.8: optimize ICE gathering for LAN.
+            // - tcpCandidatePolicy = DISABLED: TCP candidate gathering
+            //   adds 100-300ms on LAN (tries to connect to TCP 80/443
+            //   on the gateway which never answers). LAN streaming
+            //   uses UDP host candidates only.
+            // - rtcpMuxPolicy = REQUIRE: only gather RTCP on the same
+            //   port as RTP (modern default, avoids a second candidate
+            //   pair round).
+            // The user research report pointed out that go2rtc also
+            // restricts candidate types in its FilterCandidate
+            // function for the same reason.
+            tcpCandidatePolicy = PeerConnection.TcpCandidatePolicy.DISABLED
+            rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE
         }
 
         val pc = pcFactory.createPeerConnection(pcConfig, pcObserver) ?: run {
@@ -447,6 +486,7 @@ class WebRtcClient(
     fun release() {
         signalingJob?.cancel()
         videoTrack = null
+        audioTrack = null
         peerConnection?.let {
             try { it.dispose() } catch (_: Exception) {}
         }

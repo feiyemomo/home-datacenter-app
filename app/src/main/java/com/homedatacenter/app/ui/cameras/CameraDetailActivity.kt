@@ -94,6 +94,12 @@ class CameraDetailActivity : AppCompatActivity() {
     // True while a WebRTC attempt is in-flight — prevents the
     // reload button from triggering overlapping offers.
     private var webRtcInProgress = false
+    // v1.5.8: WebRTC live stream control state. Pause freezes the
+    // last rendered frame by disabling the sink; mute toggles the
+    // audio track's enabled state. Both are local-only — the
+    // PeerConnection stays alive so resume is instant.
+    private var webRtcPaused = false
+    private var webRtcMuted = false
     // Cached ICE config from /api/v1/cameras/ice — fetched once
     // per activity instance (re-fetched on retry if null).
     private var cachedIceConfig: IceConfig? = null
@@ -541,6 +547,7 @@ class CameraDetailActivity : AppCompatActivity() {
     private fun setupActions() {
         binding.btnRecordings.setOnClickListener { showRecordings() }
         binding.btnAlerts.setOnClickListener { showAlerts() }
+        setupWebRtcControls()
     }
 
     private fun showRecordings() {
@@ -553,6 +560,49 @@ class CameraDetailActivity : AppCompatActivity() {
         val cam = camera ?: return
         alertsDialog?.dismiss()
         alertsDialog = AlertsDialog(this, cam, container).apply { show() }
+    }
+
+    /**
+     * v1.5.8: Wire up the WebRTC-only control bar (pause / mute /
+     * fullscreen). ExoPlayer's built-in controller isn't visible
+     * when playerView is GONE (which it is during WebRTC playback),
+     * so we provide a minimal control bar at the bottom of the
+     * videoContainer.
+     *
+     * Pause: freezes the last frame by calling setEnabled(false) on
+     * the video track. The PeerConnection stays alive — the backend
+     * keeps sending RTP, we just stop rendering. Resume is instant.
+     *
+     * Mute: toggles the audio track's enabled state. Same PeerConnection
+     * semantics — local-only change.
+     *
+     * Fullscreen: delegates to the shared PlayerFullscreenHelper via
+     * the `fullscreenButton` parameter (wired in setupVideo).
+     */
+    private fun setupWebRtcControls() {
+        binding.btnWebRtcPause.setOnClickListener {
+            webRtcPaused = !webRtcPaused
+            try {
+                webRtcClient?.setVideoEnabled(!webRtcPaused)
+            } catch (_: Exception) {}
+            updateWebRtcControlButtons()
+        }
+        binding.btnWebRtcMute.setOnClickListener {
+            webRtcMuted = !webRtcMuted
+            try {
+                webRtcClient?.setAudioEnabled(!webRtcMuted)
+            } catch (_: Exception) {}
+            updateWebRtcControlButtons()
+        }
+    }
+
+    private fun updateWebRtcControlButtons() {
+        binding.btnWebRtcPause.setIconResource(
+            if (webRtcPaused) R.drawable.ic_play_circle else R.drawable.ic_pause
+        )
+        binding.btnWebRtcMute.setIconResource(
+            if (webRtcMuted) R.drawable.ic_volume_off else R.drawable.ic_volume_on
+        )
     }
 
     private fun startPlayback() {
@@ -639,11 +689,19 @@ class CameraDetailActivity : AppCompatActivity() {
         // Show the WebRTC surface + standalone fullscreen button,
         // hide the ExoPlayer view (its controller UI is irrelevant
         // while WebRTC is rendering).
+        // v1.5.8: show the WebRTC control bar (pause / mute /
+        // fullscreen) instead of just a fullscreen overlay button
+        // so the user has parity with ExoPlayer's controller.
         binding.playerView.visibility = View.GONE
         binding.surfaceRenderer.visibility = View.VISIBLE
+        binding.webRtcControls.visibility = View.VISIBLE
         binding.btnWebRtcFullscreen.visibility = View.VISIBLE
         binding.progressVideo.visibility = View.VISIBLE
         binding.tvVideoError.visibility = View.GONE
+        // Initial state: not paused, not muted.
+        webRtcPaused = false
+        webRtcMuted = false
+        updateWebRtcControlButtons()
 
         // Fetch ICE config (cached after first call). The list may
         // be empty on LAN — host candidates are enough there.
@@ -690,6 +748,7 @@ class CameraDetailActivity : AppCompatActivity() {
                         // Hide WebRTC surface, show ExoPlayer surface
                         // and let preparePlayback() set up the player.
                         binding.surfaceRenderer.visibility = View.GONE
+                        binding.webRtcControls.visibility = View.GONE
                         binding.btnWebRtcFullscreen.visibility = View.GONE
                         binding.playerView.visibility = View.VISIBLE
                         startMp4Playback(cam)
@@ -720,6 +779,7 @@ class CameraDetailActivity : AppCompatActivity() {
             // laid out correctly.
             binding.playerView.visibility = View.VISIBLE
             binding.surfaceRenderer.visibility = View.GONE
+            binding.webRtcControls.visibility = View.GONE
             binding.btnWebRtcFullscreen.visibility = View.GONE
             return
         }
@@ -864,6 +924,7 @@ class CameraDetailActivity : AppCompatActivity() {
         // user taps reload (which switches back to playerView during
         // the next WebRTC attempt's setup phase).
         binding.btnWebRtcFullscreen.visibility = View.GONE
+        binding.webRtcControls.visibility = View.GONE
     }
 
     private fun resolveMp4Url(camera: Camera): String {

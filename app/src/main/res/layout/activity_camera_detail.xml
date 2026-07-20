@@ -43,7 +43,7 @@
                 app:resize_mode="fixed_width"
                 app:use_controller="true"
                 app:show_buffering="when_playing"
-                app:show_timeout="0" />
+                app:show_timeout="3000" />
 
             <!-- WebRTC surface: shown when the live stream is delivered
                  via WebRtcClient (v1.5.3 primary path). Hidden when the
@@ -54,24 +54,61 @@
                 android:layout_height="200dp"
                 android:visibility="gone" />
 
-            <!-- Fullscreen button overlay for WebRTC mode. The
-                 StyledPlayerView's built-in fullscreen button isn't
-                 visible when playerView is GONE, so we provide a
-                 standalone overlay that calls into the same
-                 PlayerFullscreenHelper. -->
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnWebRtcFullscreen"
-                style="@style/Widget.Material3.Button.IconButton"
-                android:layout_width="wrap_content"
+            <!-- v1.5.8: WebRTC control overlay. When WebRTC is the
+                 active renderer, the ExoPlayer controller (pause /
+                 volume / scrubber) isn't available because playerView
+                 is GONE. We provide a minimal control bar at the
+                 bottom of the video area so the user can pause the
+                 live stream (which freezes the last frame) and mute/
+                 unmute the audio track. -->
+            <LinearLayout
+                android:id="@+id/webRtcControls"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_gravity="top|end"
-                android:layout_margin="4dp"
-                android:background="@android:color/transparent"
-                android:contentDescription="@string/camera_detail_title"
-                android:elevation="8dp"
-                android:visibility="gone"
-                app:icon="@drawable/ic_fullscreen"
-                app:iconTint="@android:color/white" />
+                android:layout_gravity="bottom"
+                android:orientation="horizontal"
+                android:background="#80000000"
+                android:padding="6dp"
+                android:gravity="center_vertical"
+                android:visibility="gone">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnWebRtcPause"
+                    style="@style/Widget.Material3.Button.IconButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@android:color/transparent"
+                    app:icon="@drawable/ic_pause"
+                    app:iconTint="@android:color/white"
+                    app:iconSize="28dp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnWebRtcMute"
+                    style="@style/Widget.Material3.Button.IconButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@android:color/transparent"
+                    app:icon="@drawable/ic_volume_on"
+                    app:iconTint="@android:color/white"
+                    app:iconSize="24dp" />
+
+                <View
+                    android:layout_width="0dp"
+                    android:layout_height="0dp"
+                    android:layout_weight="1" />
+
+                <!-- Fullscreen button placed inside the control bar
+                     so it's alongside the other controls. -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnWebRtcFullscreen"
+                    style="@style/Widget.Material3.Button.IconButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@android:color/transparent"
+                    app:icon="@drawable/ic_fullscreen"
+                    app:iconTint="@android:color/white"
+                    app:iconSize="24dp" />
+            </LinearLayout>
 
             <ProgressBar
                 android:id="@+id/progressVideo"
