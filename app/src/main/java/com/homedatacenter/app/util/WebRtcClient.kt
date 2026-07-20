@@ -188,16 +188,29 @@ class WebRtcClient(
             }
             override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
                 Log.d(TAG, "ICE state: $state")
-                state?.let { listener.onIceStateChanged(it) }
-                when (state) {
-                    PeerConnection.IceConnectionState.CONNECTED,
-                    PeerConnection.IceConnectionState.COMPLETED -> {
-                        listener.onConnected()
+                // v1.5.5: PeerConnection.Observer callbacks fire on
+                // WebRTC's internal signaling thread, NOT the main
+                // thread. If the listener touches any View (e.g.
+                // binding.progressVideo.visibility = View.GONE) we
+                // get a CalledFromWrongThreadException. The WebRTC
+                // JNI bridge checks env->ExceptionCheck() after the
+                // callback returns, sees the pending Java exception,
+                // and fails RTC_CHECK(!env->ExceptionCheck()) —
+                // which calls abort() and kills the process.
+                // Fix: dispatch ALL listener callbacks through the
+                // main-thread scope so listeners can safely touch UI.
+                state?.let { nonNullState ->
+                    scope.launch { listener.onIceStateChanged(nonNullState) }
+                    when (nonNullState) {
+                        PeerConnection.IceConnectionState.CONNECTED,
+                        PeerConnection.IceConnectionState.COMPLETED -> {
+                            scope.launch { listener.onConnected() }
+                        }
+                        PeerConnection.IceConnectionState.FAILED -> {
+                            scope.launch { listener.onError("ICE failed") }
+                        }
+                        else -> {}
                     }
-                    PeerConnection.IceConnectionState.FAILED -> {
-                        listener.onError("ICE failed")
-                    }
-                    else -> {}
                 }
             }
             override fun onTrack(transceiver: RtpTransceiver?) {
