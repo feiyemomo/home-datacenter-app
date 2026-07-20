@@ -76,7 +76,8 @@ class RecordingsDialog(
     // fixed 60000ms buckets to keep the math simple + predictable.
     private var dayTotalMs: Long = 24L * 60 * 60 * 1000
     private var dayClipDurationMs: Long = 60_000L
-    // v1.5.16: per-clip LOCAL start offset (ms from LOCAL 00:00).
+    // v1.5.16: per-clip LOCAL start offset (ms from dayStart, which
+    // is LOCAL 08:00 of the picked day as of v1.5.17).
     // The previous SeekBar mapped windowIndex*60000ms directly to
     // progress, which assumed clips were laid out contiguously
     // starting from LOCAL 00:00. In reality the playlist starts at
@@ -85,6 +86,9 @@ class RecordingsDialog(
     // a clip that started at LOCAL 16:05. Now each clip carries its
     // real LOCAL start offset; SeekBar progress maps to absolute
     // LOCAL time-of-day via binary search.
+    // v1.5.17: dayStart is now LOCAL 08:00 (not 00:00), so a clip at
+    // LOCAL 08:00 has offset 0 — i.e., the SeekBar's 0% actually
+    // corresponds to the first recording of the day.
     private var clipStartOffsets: LongArray = LongArray(0)
     private var dayStartLocalMillis: Long = 0L
     private val daySeekHandler = Handler(Looper.getMainLooper())
@@ -229,6 +233,16 @@ class RecordingsDialog(
      * Constraint: the date is clamped to the recordings' time range
      * (default is today; the picker allows any date but we filter
      * to the actual recordings we have for that day).
+     *
+     * v1.5.17: the "day" window starts at LOCAL 08:00 of the picked
+     * date and ends at LOCAL 08:00 the next day. The user explicitly
+     * clarified that recordings naturally span 8am→8am (Frigate's
+     * recording schedule + the user's camera setup), so the previous
+     * 0:00→24:00 window left the first 8h of the SeekBar empty and
+     * made the time labels misleading. Starting at 8am means the
+     * SeekBar's 0% actually corresponds to the first available
+     * recording, and "08:00:00" / "20:00:00" / "08:00:00(+1d)"
+     * labels map directly to wall-clock time.
      */
     private fun showDayPicker() {
         val cal = Calendar.getInstance()
@@ -236,7 +250,7 @@ class RecordingsDialog(
             context,
             { _, year, month, day ->
                 val dayCal = Calendar.getInstance().apply {
-                    set(year, month, day, 0, 0, 0)
+                    set(year, month, day, 8, 0, 0)
                     set(Calendar.MILLISECOND, 0)
                 }
                 playDayAsPlaylist(dayCal)
@@ -253,7 +267,7 @@ class RecordingsDialog(
      * one big video with max duration 1 day". Implementation:
      *
      *  - Filter [allRecordings] to entries whose [Recording.startAt]
-     *    falls on the same day as [dayStart] (using LOCAL timezone).
+     *    falls within the [dayStart, dayStart+24h) window (LOCAL tz).
      *  - Sort ascending by [Recording.id] (which is a unix-minute
      *    timestamp) so the playlist plays chronologically.
      *
@@ -265,7 +279,13 @@ class RecordingsDialog(
      * converts each recording's UTC instant to local time BEFORE
      * comparing against the user-picked local date.
      *
-     * @param dayStart Calendar set to 00:00:00 LOCAL of the day to play.
+     * v1.5.17: the day window now starts at LOCAL 08:00 of the
+     * picked date and ends at LOCAL 08:00 the next day. This matches
+     * the actual recording schedule (Frigate starts the day at 8am),
+     * so the SeekBar's 0% corresponds to the first available
+     * recording instead of being 8h of empty space.
+     *
+     * @param dayStart Calendar set to 08:00:00 LOCAL of the day to play.
      */
     private fun playDayAsPlaylist(dayStart: Calendar) {
         // v1.5.12: dayStart is in the user's local timezone (Calendar
@@ -395,7 +415,10 @@ class RecordingsDialog(
         binding.dayScrubBarContainer.visibility = View.VISIBLE
         binding.daySeekBar.max = dayTotalMs.toInt()
         binding.daySeekBar.progress = 0
-        binding.tvDayPosition.text = "00:00:00"
+        // v1.5.17: initial position label = LOCAL wall-clock time at
+        // dayStart (08:00 of picked day). Duration label stays
+        // "24:00:00" since the window is still 24h wide.
+        binding.tvDayPosition.text = formatDayTime(0L)
         binding.tvDayDuration.text = "24:00:00"
         // Start the periodic update — it re-posts itself every 500ms
         // until [stopDaySeekUpdates] is called (in dismiss / back).
@@ -493,13 +516,25 @@ class RecordingsDialog(
      * HH:mm:ss on a 24-hour clock. Used by both the SeekBar update
      * loop and the user-drag listener to render the current playback
      * position in the full-day playlist.
+     *
+     * v1.5.17: previously this returned elapsed time since 0:00 LOCAL
+     * (so 0 → "00:00:00", 12h → "12:00:00", 24h → "24:00:00"). Now
+     * that the day window starts at 08:00 LOCAL (see [showDayPicker]),
+     * we return the actual LOCAL wall-clock time-of-day at the given
+     * offset from [dayStartLocalMillis]. So 0 → "08:00:00",
+     * 12h → "20:00:00", 24h → "08:00:00" (next day, indistinguishable
+     * from start without a date suffix — the user infers from the
+     * SeekBar position whether they're before or after midnight).
      */
     private fun formatDayTime(ms: Long): String {
-        val totalSeconds = ms / 1000
-        val h = totalSeconds / 3600
-        val m = (totalSeconds % 3600) / 60
-        val s = totalSeconds % 60
-        return String.format(Locale.US, "%02d:%02d:%02d", h, m, s)
+        val instant = dayStartLocalMillis + ms
+        val cal = Calendar.getInstance().apply {
+            timeInMillis = instant
+        }
+        return String.format(Locale.US, "%02d:%02d:%02d",
+            cal.get(Calendar.HOUR_OF_DAY),
+            cal.get(Calendar.MINUTE),
+            cal.get(Calendar.SECOND))
     }
 
     /**
