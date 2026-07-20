@@ -926,12 +926,19 @@ class RecordingsDialog(
         // convert to LOCAL for display using Asia/Shanghai tz. Reuses
         // the same SimpleDateFormat pattern as formatDayTime().
         val tz = TimeZone.getTimeZone("Asia/Shanghai")
-        val fmt = SimpleDateFormat("HH:mm:ss", Locale.US).apply { timeZone = tz }
+        val fmt = SimpleDateFormat("HH:mm", Locale.US).apply { timeZone = tz }
 
         val inflater = LayoutInflater.from(context)
         for (chip in sorted) {
             val tv = inflater.inflate(R.layout.item_motion_chip, container, false) as android.widget.TextView
-            val label = "${fmt.format(Date(chip.startUnixSec * 1000L))} · ${chip.durationSec}s"
+            // v1.6.4 rev3: chip label shortened from "HH:mm:ss · Ns"
+            // to just "HH:mm" — seconds + duration were noise when
+            // 100+ chips are fit-to-screen, and the long label made
+            // chips overlap into a solid color block. The user said
+            // "他们现在连成一片了". Tighter label + tighter padding
+            // (see item_motion_chip.xml) gives visible gaps between
+            // chips even on a busy day.
+            val label = fmt.format(Date(chip.startUnixSec * 1000L))
             tv.text = label
             // Color by score (low/mid/high) — AI-detected (peak>0) overrides.
             val bgRes = when {

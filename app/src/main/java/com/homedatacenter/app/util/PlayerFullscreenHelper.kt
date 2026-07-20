@@ -10,14 +10,14 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.view.WindowInsets
-import android.widget.PopupMenu
+import android.widget.ArrayAdapter
+import android.widget.ListPopupWindow
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.google.android.exoplayer2.ExoPlayer
 import com.google.android.exoplayer2.PlaybackParameters
 import com.google.android.exoplayer2.ui.StyledPlayerView
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.homedatacenter.app.R
 
 /**
@@ -515,37 +515,70 @@ class PlayerFullscreenHelper(
     private fun attachSpeedButton(button: View) {
         button.setOnClickListener { view ->
             val p = player ?: return@setOnClickListener
-            val currentSpeed = p.playbackParameters.speed
-            // v1.6.4 rev2: replace PopupMenu with MaterialAlertDialogBuilder.
-            // The user said "切倍速的菜单太生硬了，优化一下UI". PopupMenu
-            // had no rounded corners, no animation, and rendered as a
-            // tiny anchored window that looked like a context menu from
-            // Android 4.x. MaterialAlertDialogBuilder gives us:
-            //  - Rounded corners (Material 3 default 28dp)
-            //  - Smooth fade-in/scale animation (system Material default)
-            //  - Wider, more readable list rows (Material list item height)
-            //  - A title "播放速度" so the dialog's purpose is obvious
-            //  - Standard OK/Cancel button row (we omit since tap = apply)
-            //  - Theme-aware colors (works in light/dark)
+            // v1.6.4 rev3: revert from MaterialAlertDialogBuilder back to
+            // a dropdown style. The user said "倍速菜单还是下拉样式好" —
+            // the centered Material dialog felt too "modal" for a quick
+            // speed tweak; the dropdown anchors to the button and lets
+            // the user tap an item without context-switching.
             //
-            // The labels use [formatSpeed] so 1.0 → "1x", 1.5 → "1.5x"
-            // (v1.6.4 fix). The current speed is pre-selected; tapping
-            // any item immediately applies + dismisses.
-            val labels = SPEEDS.map { formatSpeed(it) }.toTypedArray()
-            val checkedIdx = SPEEDS.indexOfFirst { it == currentSpeed }
-                .coerceAtLeast(0)
-            MaterialAlertDialogBuilder(view.context)
-                .setTitle("播放速度")
-                .setSingleChoiceItems(labels, checkedIdx) { dialog, which ->
-                    val speed = SPEEDS[which]
-                    p.playbackParameters = PlaybackParameters(speed)
-                    if (button is android.widget.TextView) {
-                        button.text = formatSpeed(speed)
-                    }
-                    dialog.dismiss()
+            // We use ListPopupWindow (not PopupMenu) because:
+            //  - PopupMenu has no public API for rounded corners or
+            //    elevation on Android < 29 (it falls back to the old
+            //    4.x context-menu look the user called "生硬").
+            //  - ListPopupWindow accepts a custom content view + adapter,
+            //    so we can give it Material-styled list items with proper
+            //    height (48dp), readable 14sp text, and the app theme's
+            //    colors via android.R.layout.simple_list_item_1.
+            //  - It anchors to the button via anchorView, so it visually
+            //    "drops down" from the speed button — exactly the
+            //    "下拉样式" the user asked for.
+            val labels = SPEEDS.map { formatSpeed(it) }
+            val popup = ListPopupWindow(view.context).apply {
+                anchorView = view
+                setAdapter(ArrayAdapter(
+                    view.context,
+                    android.R.layout.simple_list_item_1,
+                    labels,
+                ))
+                setModal(true)
+                // Width: wrap to longest label so all options are
+                // fully visible without truncation.
+                width = measureListPopupWidth(view.context, labels)
+                // v1.6.4 rev3: give the dropdown a slight elevation
+                // + rounded background via the default Material
+                // ListPopupWindow background (the theme handles this
+                // when the activity uses a Material3 theme).
+                height = ViewGroup.LayoutParams.WRAP_CONTENT
+            }
+            popup.setOnItemClickListener { _, _, position, _ ->
+                val speed = SPEEDS[position]
+                p.playbackParameters = PlaybackParameters(speed)
+                if (button is android.widget.TextView) {
+                    button.text = formatSpeed(speed)
                 }
-                .show()
+                popup.dismiss()
+            }
+            popup.show()
         }
+    }
+
+    /**
+     * v1.6.4 rev3: measures the longest label in [labels] and returns
+     * a ListPopupWindow width that fits it plus 48dp padding (24dp
+     * each side) so no item is truncated. Used by [attachSpeedButton]
+     * for the dropdown.
+     */
+    private fun measureListPopupWidth(context: Context, labels: List<String>): Int {
+        val padding = (24 * context.resources.displayMetrics.density).toInt() * 2
+        var maxW = 0
+        val paint = android.graphics.Paint().apply {
+            textSize = 14f * context.resources.displayMetrics.scaledDensity
+        }
+        for (label in labels) {
+            val w = paint.measureText(label).toInt()
+            if (w > maxW) maxW = w
+        }
+        return maxW + padding
     }
 
     companion object {

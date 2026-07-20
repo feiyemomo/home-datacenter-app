@@ -129,15 +129,21 @@
                         android:textSize="13sp"
                         android:visibility="gone" />
 
-                    <!-- Fullscreen button stacked under btnPlaybackSpeed. -->
+                    <!-- Fullscreen button at bottom|end (player's
+                         bottom-right corner). v1.6.4 rev3: moved from
+                         top|end (stacked under btnPlaybackSpeed) to
+                         bottom|end per user request "全屏按钮放到播放器
+                         右下角". The bottom-right placement is the
+                         conventional video player fullscreen button
+                         location (matches YouTube, Bilibili, etc.) so
+                         the user's muscle memory carries over. -->
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnFullscreen"
                         style="@style/Widget.Material3.Button.IconButton"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_gravity="top|end"
-                        android:layout_marginTop="54dp"
-                        android:layout_marginEnd="6dp"
+                        android:layout_gravity="bottom|end"
+                        android:layout_margin="6dp"
                         android:background="#80000000"
                         android:minWidth="0dp"
                         android:minHeight="0dp"
