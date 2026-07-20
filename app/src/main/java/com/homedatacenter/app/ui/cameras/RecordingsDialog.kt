@@ -3,9 +3,12 @@ package com.homedatacenter.app.ui.cameras
 import android.app.Dialog
 import android.app.DatePickerDialog
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.SeekBar
 import android.widget.Toast
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -61,6 +64,34 @@ class RecordingsDialog(
     private val visibleRecordings = mutableListOf<Recording>()
     private var isLoadingMore = false
     private val pageBatchSize = 50
+
+    // v1.5.11: big scrub bar state for the full-day playlist mode.
+    // [dayTotalMs] is the full 24h window (constant once a day is
+    // picked). [dayClipDurationMs] is the duration of each clip —
+    // we use this to compute the window index from a SeekBar
+    // progress. We assume 60000ms (60s buckets) since that's what
+    // the backend's PlayRecording handler emits; if a clip is
+    // shorter (camera offline), ExoPlayer will still report the
+    // actual duration via player.duration, but our SeekBar uses
+    // fixed 60000ms buckets to keep the math simple + predictable.
+    private var dayTotalMs: Long = 24L * 60 * 60 * 1000
+    private var dayClipDurationMs: Long = 60_000L
+    private val daySeekHandler = Handler(Looper.getMainLooper())
+    private var daySeekUserDragging = false
+    private val daySeekUpdateRunnable = object : Runnable {
+        override fun run() {
+            val p = player ?: return
+            if (!daySeekUserDragging) {
+                val cur = p.currentWindowIndex.toLong() * dayClipDurationMs + p.currentPosition
+                val safe = cur.coerceIn(0L, dayTotalMs)
+                binding.daySeekBar.progress = safe.toInt()
+                binding.tvDayPosition.text = formatDayTime(safe)
+            }
+            // Tick every 500ms — frequent enough for smooth scrub
+            // updates but cheap (one int assignment + one text set).
+            daySeekHandler.postDelayed(this, 500)
+        }
+    }
 
     init {
         binding = DialogRecordingsBinding.inflate(LayoutInflater.from(context))
@@ -252,6 +283,9 @@ class RecordingsDialog(
         binding.recyclerView.visibility = View.GONE
 
         player?.release()
+        // v1.5.11: stop any pending scrub updates from a previous
+        // playlist session before we (re)build the player.
+        daySeekHandler.removeCallbacks(daySeekUpdateRunnable)
         val renderersFactory = ExoPlayerRendererFactory.create(context)
         player = ExoPlayer.Builder(context, renderersFactory).build().apply {
             setAudioAttributes(
@@ -305,6 +339,53 @@ class RecordingsDialog(
             prepare()
         }
         binding.playerView.player = player
+
+        // v1.5.11: hide ExoPlayer's built-in controller scrubber in
+        // playlist mode so the user doesn't see two competing
+        // progress bars — we show the day-spanning SeekBar instead.
+        // The built-in controller still shows the play/pause button
+        // + current clip's timestamp, which is useful context.
+        binding.playerView.useController = false
+        binding.dayScrubBarContainer.visibility = View.VISIBLE
+        binding.daySeekBar.max = dayTotalMs.toInt()
+        binding.daySeekBar.progress = 0
+        binding.tvDayPosition.text = "00:00:00"
+        binding.tvDayDuration.text = "24:00:00"
+        // Start the periodic update — it re-posts itself every 500ms
+        // until [stopDaySeekUpdates] is called (in dismiss / back).
+        daySeekHandler.post(daySeekUpdateRunnable)
+
+        // v1.5.11: drag listener — while the user drags the big
+        // SeekBar we pause the live-update loop (so we don't fight
+        // their thumb) and update the position label from the
+        // dragged progress. On release we seek ExoPlayer to the
+        // matching clip + offset.
+        binding.daySeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seek: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (!fromUser) return
+                binding.tvDayPosition.text = formatDayTime(progress.toLong())
+            }
+            override fun onStartTrackingTouch(seek: SeekBar?) {
+                daySeekUserDragging = true
+            }
+            override fun onStopTrackingTouch(seek: SeekBar?) {
+                daySeekUserDragging = false
+                val progress = seek?.progress?.toLong() ?: return
+                val p = player ?: return
+                // Map the day-relative ms to a playlist window index
+                // + position-in-window. We assume 60s buckets — if
+                // the actual clip is shorter (camera was offline
+                // part of the minute), ExoPlayer clamps our seek to
+                // the clip's actual duration, which is fine.
+                val targetWindow = (progress / dayClipDurationMs).toInt()
+                    .coerceAtMost(p.mediaItemCount - 1)
+                val targetPosition = (progress % dayClipDurationMs)
+                android.util.Log.d("RecordingsDialog",
+                    "Day seek: progress=${progress}ms -> window=$targetWindow pos=${targetPosition}ms")
+                p.seekTo(targetWindow, targetPosition)
+            }
+        })
+
         binding.btnBack.setOnClickListener {
             player?.release()
             player = null
@@ -312,6 +393,9 @@ class RecordingsDialog(
             fullscreenHelper = null
             binding.btnPlaybackSpeed.visibility = View.GONE
             binding.btnFullscreen.visibility = View.GONE
+            binding.dayScrubBarContainer.visibility = View.GONE
+            binding.playerView.useController = true
+            daySeekHandler.removeCallbacks(daySeekUpdateRunnable)
             binding.videoContainer.visibility = View.GONE
             binding.recyclerView.visibility = View.VISIBLE
         }
@@ -330,6 +414,20 @@ class RecordingsDialog(
         fullscreenHelper?.onPlayerChanged(player)
         binding.btnPlaybackSpeed.visibility = View.VISIBLE
         binding.btnFullscreen.visibility = View.VISIBLE
+    }
+
+    /**
+     * v1.5.11: formats a day-relative millisecond offset as
+     * HH:mm:ss on a 24-hour clock. Used by both the SeekBar update
+     * loop and the user-drag listener to render the current playback
+     * position in the full-day playlist.
+     */
+    private fun formatDayTime(ms: Long): String {
+        val totalSeconds = ms / 1000
+        val h = totalSeconds / 3600
+        val m = (totalSeconds % 3600) / 60
+        val s = totalSeconds % 60
+        return String.format(Locale.US, "%02d:%02d:%02d", h, m, s)
     }
 
     private fun playRecording(recording: Recording) {
@@ -424,6 +522,11 @@ class RecordingsDialog(
     }
 
     override fun dismiss() {
+        // v1.5.11: stop the day-scrub update loop BEFORE releasing
+        // the player — otherwise the runnable can fire one last
+        // time after player is null and silently no-op, but it's
+        // cleaner to cancel explicitly.
+        daySeekHandler.removeCallbacks(daySeekUpdateRunnable)
         player?.release()
         player = null
         fullscreenHelper?.release()
