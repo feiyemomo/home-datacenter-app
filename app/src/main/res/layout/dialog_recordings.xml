@@ -313,7 +313,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
-                    android:background="@drawable/bg_glass_dark_panel"
+                    android:background="@android:color/transparent"
                     android:paddingStart="12dp"
                     android:paddingEnd="12dp"
                     android:paddingTop="6dp"
@@ -392,7 +392,7 @@
                     android:layout_weight="1"
                     android:scrollbars="none"
                     android:overScrollMode="never"
-                    android:background="@drawable/bg_glass_dark_panel"
+                    android:background="@android:color/transparent"
                     android:fillViewport="false"
                     android:visibility="gone">
 
@@ -414,29 +414,34 @@
                      position regardless of player size.
 
                      v1.6.4 rev5: restyled per user feedback "返回列表按钮
-                     好丑". Now uses a Material3 text button with:
-                      - Icon (ic_baseline_arrow_back_24) on the left
-                      - Outlined style for clearer affordance
-                      - Rounded corners 24dp (pill shape)
-                      - Smaller padding for compact look
-                      - White tint on dark video background. -->
+                     好丑". Was OutlinedButton.Icon with 1dp 50% white stroke.
+                     v1.6.6 rev8: user said "返回列表的对比度太低了" — over
+                     the warm cream/blue gradient background, white text +
+                     thin translucent stroke was nearly invisible. Switched
+                     to FILLED style with a dark translucent background
+                     (#B3000000 = 70% black) + bold white text + white
+                     icon. The high-contrast pill pops clearly against
+                     the warm gradient. Corner radius 24dp (pill shape)
+                     preserved. -->
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnBack"
-                    style="@style/Widget.Material3.Button.OutlinedButton.Icon"
+                    style="@style/Widget.Material3.Button.Icon"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="返回列表"
                     android:layout_gravity="center_horizontal"
                     android:layout_marginTop="6dp"
                     android:layout_marginBottom="16dp"
+                    android:minWidth="120dp"
+                    android:backgroundTint="#B3000000"
                     android:textColor="@android:color/white"
+                    android:textStyle="bold"
+                    android:textSize="14sp"
                     app:icon="@drawable/ic_baseline_arrow_back_24"
                     app:iconTint="@android:color/white"
                     app:iconGravity="textStart"
-                    app:iconPadding="4dp"
-                    app:cornerRadius="24dp"
-                    app:strokeColor="#80FFFFFF"
-                    app:strokeWidth="1dp" />
+                    app:iconPadding="6dp"
+                    app:cornerRadius="24dp" />
             </LinearLayout>
 
         </FrameLayout>
