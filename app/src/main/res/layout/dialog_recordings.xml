@@ -140,20 +140,24 @@
                          v1.6.4 rev4: moved closer to corner (margin 6dp
                          -> 2dp) and enlarged (iconSize 24dp -> 36dp,
                          padding 8dp -> 12dp) per user request "全屏图标
-                         在靠近右下一些，并放大一点". -->
+                         在靠近右下一些，并放大一点".
+                         v1.6.4 rev5: margin 2dp -> 0dp to touch the
+                         corner exactly per user "全屏按钮再靠右下".
+                         Background removed for cleaner look — the icon
+                         on black video surface is already high contrast. -->
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnFullscreen"
                         style="@style/Widget.Material3.Button.IconButton"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_gravity="bottom|end"
-                        android:layout_marginEnd="2dp"
-                        android:layout_marginBottom="2dp"
-                        android:background="#80000000"
+                        android:layout_marginEnd="0dp"
+                        android:layout_marginBottom="0dp"
+                        android:background="@android:color/transparent"
                         android:minWidth="0dp"
                         android:minHeight="0dp"
-                        android:padding="12dp"
-                        app:iconSize="36dp"
+                        android:padding="14dp"
+                        app:iconSize="40dp"
                         android:visibility="gone"
                         app:icon="@drawable/ic_fullscreen"
                         app:iconTint="@android:color/white" />
@@ -235,32 +239,35 @@
                     </FrameLayout>
                 </LinearLayout>
 
-                <!-- Middle: fisheye chip container. v1.6.4 rev2: now a
-                     non-scrolling ViewGroup — all chips are fit into the
-                     viewport width, with edge chips shrunk via scaleX/Y
-                     for a compression effect (no alpha dimming, no
-                     hiding). The user asked "我想要chip靠近两边时的挤压
-                     效果，越靠近边上，体积越小，而不是隐藏；同时我要能
-                     够看到一整天的chip那种". This container delivers
-                     both — fit-to-screen + edge compression.
+                <!-- Middle: fisheye chip container. v1.6.4 rev5: returned
+                     to HorizontalScrollView (rev4 was non-scrolling ViewGroup).
+                     The user said "这个chip滑动不了，我想要滑动的时候，
+                     中间大的chip跟着替换". Chips scroll horizontally; the
+                     one in the viewport center is scaled to full size with
+                     its "HH:mm" label visible; chips scrolling toward the
+                     edges shrink and collapse to thin colored bars (no text).
 
-                     layout_weight=1 so it fills the remaining space
-                     between the scrub bar (above) and the "返回列表"
-                     button (below). -->
+                     layout_weight=1 fills remaining space between the scrub
+                     bar (above) and the "返回列表" button (below). -->
                 <com.homedatacenter.app.ui.cameras.FisheyeChipScroller
                     android:id="@+id/motionChipScroller"
                     android:layout_width="match_parent"
                     android:layout_height="0dp"
                     android:layout_weight="1"
+                    android:scrollbars="none"
+                    android:overScrollMode="never"
                     android:background="#1A000000"
+                    android:fillViewport="false"
                     android:visibility="gone">
 
                     <LinearLayout
                         android:id="@+id/motionChipContainer"
-                        android:layout_width="match_parent"
+                        android:layout_width="wrap_content"
                         android:layout_height="match_parent"
                         android:orientation="horizontal"
-                        android:gravity="center_vertical" />
+                        android:gravity="center_vertical"
+                        android:paddingStart="8dp"
+                        android:paddingEnd="8dp" />
                 </com.homedatacenter.app.ui.cameras.FisheyeChipScroller>
 
                 <!-- Bottom: "返回列表" button. v1.6.4 rev2: moved DOWN
@@ -270,19 +277,30 @@
                      the bottom of the layout gives it a stable, predictable
                      position regardless of player size.
 
-                     Centered horizontally, with 16dp bottom margin to
-                     clear gesture nav bars on edge-to-edge devices. -->
+                     v1.6.4 rev5: restyled per user feedback "返回列表按钮
+                     好丑". Now uses a Material3 text button with:
+                      - Icon (ic_baseline_arrow_back_24) on the left
+                      - Outlined style for clearer affordance
+                      - Rounded corners 24dp (pill shape)
+                      - Smaller padding for compact look
+                      - White tint on dark video background. -->
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnBack"
+                    style="@style/Widget.Material3.Button.OutlinedButton.Icon"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="返回列表"
                     android:layout_gravity="center_horizontal"
                     android:layout_marginTop="6dp"
                     android:layout_marginBottom="16dp"
-                    android:background="#80000000"
                     android:textColor="@android:color/white"
-                    app:cornerRadius="8dp" />
+                    app:icon="@drawable/ic_baseline_arrow_back_24"
+                    app:iconTint="@android:color/white"
+                    app:iconGravity="textStart"
+                    app:iconPadding="4dp"
+                    app:cornerRadius="24dp"
+                    app:strokeColor="#80FFFFFF"
+                    app:strokeWidth="1dp" />
             </LinearLayout>
 
         </FrameLayout>

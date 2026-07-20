@@ -633,41 +633,59 @@ AlertRangeOverlay 优化（辅助 chip 列表）：
 - 客户端：chip 解析 + 渲染 200 个 < 50ms，seek 命中 binarySearch O(log n)
 - 内存：每个 chip ~1KB（TextView），200 个 chip 总计 ~200KB
 
-#### v1.6.4 rev4：chip 稀疏化 + 全屏按钮放大 + app 图标放大
+#### v1.6.4 rev5：chip 滑动 + 中心放大替换 + 全屏按钮贴角 + btnBack 美化
 
-**问题诊断**：v1.6.4 rev3 用户反馈三点：
-1. "chip 还是太多了，靠边的就不用带字了吧，一直压缩为细线"——rev3 的边缘 chip 仍显示文字，60+ chip 时仍然拥挤。
-2. "全屏图标在靠近右下一些，并放大一点"——rev3 的 6dp margin + 24dp iconSize 不够。
-3. "app 图标放大一些（源文件在 D:\Projects\Android\home.png）"——图标视觉占比偏小。
+**问题诊断**：v1.6.4 rev4 用户反馈三点：
+1. "这个chip滑动不了，我想要滑动的时候，中间大的chip跟着替换，现在中间部分的chip仍然太密集了"——rev4 改成 fit-to-screen 不滚动反而造成中间密集。
+2. "全屏按钮再靠右下"——rev4 的 2dp margin 不够贴角。
+3. "返回列表按钮好丑"——rev4 的 `Widget.Material3.Button` 默认样式在视频上很突兀。
 
-**方案 1：chip 数量减半 + 边缘压缩为细线**
-- `RecordingsDialog.populateMotionChips`：cap 从 200 → 60（按 `motion_score` 取 top 60）
-- `FisheyeChipScroller` 增加 `textThreshold = 0.7f`：
-  - 当 `scale < 0.7` 时，`tv.text = ""`（清空文字）+ `cw = thinBarWidthPx`（宽度强制为 3dp）
-  - chip 的 label 通过 `tv.tag = label` 保存，在 `scale >= 0.7` 时还原 `tv.text = label`
-  - alpha 保持 1.0 不淡化（符合"而不是隐藏"）
-  - 边缘 chip 变成无文字的彩色细条（仅显示背景色），中心 chip 仍显示"HH:mm"标签
+**方案 1：FisheyeChipScroller 改回 HorizontalScrollView**
+- 从 `ViewGroup` 子类改回 `HorizontalScrollView` 子类，恢复滑动
+- 在 `onScrollChanged` / `onLayout` 中遍历 chip 应用 fisheye：
+  - `dx = abs(chipCenterX - viewportCenterX)`
+  - `dx ≤ fullScaleBandPx(80px)`：scale=1.0（中心带，全大小+显示"HH:mm"文字）
+  - `dx > 80px`：`t = (dx - 80) / (viewportHalfWidth - 80)`，`scale = lerp(1.0, 0.4, t)`
+  - 当 `scale < textThreshold(0.65)` 时：清空 `tv.text`、强制 `layoutParams.width = 3dp` → 边缘 chip 变无文字彩色细条
+  - alpha 始终 1.0（不淡化，符合"而不是隐藏"）
+- 新增 `scrollToCenterChip(idx)`：scroll 到指定 chip 居中
+- chip label 通过 `tv.tag` 保存，scale 变化时动态还原/清空文字
+- 配合 chip cap 调回 100（rev4 是 60，因 fit-to-screen；rev5 滑动可承载更多）
 
-**方案 2：全屏按钮靠右下 + 放大**
-- `dialog_recordings.xml` 中 `btnFullscreen`：
-  - `marginEnd/marginBottom`：6dp → 2dp（更靠右下角）
-  - `iconSize`：默认 24dp → 36dp（显式指定放大）
-  - `padding`：8dp → 12dp（点击区域也增大）
+**方案 2：初始定位到当前播放位置**
+- `populateMotionChips` 末尾遍历 chip 找最接近 `clipStartOffsets[currentWindowIndex] + currentPosition` 的
+- 调用 `scrollToCenterChip(bestIdx)` 把它居中
+- 用户进入 dialog 立即看到"you are here"焦点 chip（全大小+文字）
+- 点击 chip 后也调用 `scrollToCenterChip`，让被点击的 chip 成为新焦点（"中间大的chip跟着替换"）
 
-**方案 3：app 图标放大**
-- `scripts/generate_app_icon.ps1` 自动检测 `home.png` 的内容边界（实际内容 477×434 在 1024×1024 画布中，原本有 ~50% 透明边距）
-- 裁剪到内容 bbox，然后放到 8% padding 的目标画布上（v.s. 之前直接缩放保留 ~15% padding）
-- 视觉放大约 15%
-- 生成 5 密度 × 2 形状 = 10 个 PNG，分别覆盖 mipmap-mdpi/hdpi/xhdpi/xxhdpi/xxxhdpi
+**方案 3：全屏按钮贴角放大**
+- `btnFullscreen`：
+  - `marginEnd/marginBottom`：2dp → 0dp（紧贴右下角）
+  - `background`：`#80000000` → `transparent`（去掉黑底，icon 直接显示在视频上）
+  - `iconSize`：36dp → 40dp（再放大）
+  - `padding`：12dp → 14dp（点击区域更大）
 
-**保留 v1.6.4 rev3 的功能**：
+**方案 4："返回列表"按钮美化**
+- 从 `Widget.Material3.Button` 默认样式改为 `Widget.Material3.Button.OutlinedButton.Icon`：
+  - `cornerRadius`：8dp → 24dp（pill 形）
+  - `strokeColor`：`#80FFFFFF`（半透明白描边）
+  - `strokeWidth`：1dp
+  - `icon`：`ic_baseline_arrow_back_24`（左侧返回箭头）
+  - `iconGravity`：`textStart`（图标紧贴文字）
+  - `iconPadding`：4dp
+  - `textColor`：white（在黑色视频背景上清晰）
+
+**保留 v1.6.4 rev4 的功能**：
+- chip 数量上限 100（rev4 是 60，rev5 因滑动可承载更多）
 - chip 变窄（padding 4dp/2dp、margin 1dp、textSize 9sp）
 - chip label "HH:mm"（去掉秒和时长）
+- chip label 通过 `tv.tag` 保存
+- 边缘 chip 压缩为无文字彩色细条（alpha 1.0 不淡化）
 - 倍速菜单 `ListPopupWindow` 下拉样式
-- `FisheyeChipScroller` 不滚动 ViewGroup + fit-to-screen + minScale=0.6
 - `PlayerFullscreenHelper.controllerSyncViews` + tap-to-toggle
 - `playerHostFrame` 作为 `secondaryPlayerView` 全屏时 MATCH_PARENT
 - `formatSpeed` 修复 1.5f → "1.5x"
+- app 图标 `generate_app_icon.ps1` + 8% padding 视觉放大
 
 **报警推送精确跳转**：`AlertsFragment.onJumpCamera` / `DashboardFragment.jumpToCamerasWithAlert` 现在直接 `startActivity(CameraDetailActivity)`，Intent extra `EXTRA_INITIAL_TIMESTAMP = alert.startTime.toLong()`。流程：
 1. `CameraDetailActivity.onCreate` 检测到 `EXTRA_INITIAL_TIMESTAMP > 0`，`binding.root.post { showRecordings(initialTs) }`（post 是为了让 `startPlayback()` 的直播流先初始化完成，避免 surface 冲突）。
