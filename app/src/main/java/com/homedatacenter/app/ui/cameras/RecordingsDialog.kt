@@ -28,6 +28,7 @@ import com.homedatacenter.app.databinding.DialogRecordingsBinding
 import com.homedatacenter.app.databinding.ItemDayRecordingBinding
 import com.homedatacenter.app.util.ExoPlayerRendererFactory
 import com.homedatacenter.app.util.PlayerFullscreenHelper
+import com.homedatacenter.app.util.PlayerGestureHelper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -64,6 +65,10 @@ class RecordingsDialog(
     private val token = container.prefsManager.token
     private var player: ExoPlayer? = null
     private var fullscreenHelper: PlayerFullscreenHelper? = null
+    // v1.6.4 rev6: gesture helper for pause button + double-tap seek
+    // + long-press fast-forward. See [PlayerGestureHelper] for the
+    // interaction contract.
+    private var gestureHelper: PlayerGestureHelper? = null
 
     // v1.6.2: source-of-truth for the per-day list view. v1.5.x
     // kept [allRecordings] + [visibleRecordings] for virtual
@@ -670,6 +675,12 @@ class RecordingsDialog(
             player = null
             fullscreenHelper?.release()
             fullscreenHelper = null
+            // v1.6.4 rev6: release gesture helper + hide the centered
+            // pause button so it doesn't linger if the user re-opens
+            // playback for another day.
+            gestureHelper?.release()
+            gestureHelper = null
+            binding.btnCenterPause.visibility = View.GONE
             binding.btnPlaybackSpeed.visibility = View.GONE
             binding.btnFullscreen.visibility = View.GONE
             binding.dayScrubBarContainer.visibility = View.GONE
@@ -703,12 +714,29 @@ class RecordingsDialog(
                     binding.motionChipScroller,
                     binding.btnBack,
                     binding.btnPlaybackSpeed,
+                    // v1.6.4 rev6: include the centered pause button
+                    // so it follows the same show/hide cycle as the
+                    // rest of the chrome in fullscreen.
+                    binding.btnCenterPause,
                 ),
             )
             helper.attach()
             fullscreenHelper = helper
         }
         fullscreenHelper?.onPlayerChanged(player)
+        // v1.6.4 rev6: attach the gesture helper once. Subsequent
+        // day-changes call onPlayerChanged to keep the helper's
+        // player reference fresh without re-wiring touch listeners.
+        if (gestureHelper == null) {
+            val gh = PlayerGestureHelper(
+                playerView = binding.playerView,
+                pauseButton = binding.btnCenterPause,
+            )
+            gh.attach(player)
+            gestureHelper = gh
+        } else {
+            gestureHelper?.onPlayerChanged(player)
+        }
         binding.btnPlaybackSpeed.visibility = View.VISIBLE
         binding.btnFullscreen.visibility = View.VISIBLE
     }
@@ -1105,6 +1133,10 @@ class RecordingsDialog(
         player = null
         fullscreenHelper?.release()
         fullscreenHelper = null
+        // v1.6.4 rev6: release the gesture helper's auto-hide handler
+        // + touch listener so the dismissed dialog doesn't leak.
+        gestureHelper?.release()
+        gestureHelper = null
         super.dismiss()
     }
 

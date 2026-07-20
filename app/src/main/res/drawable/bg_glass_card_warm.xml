@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- v1.6.4 rev6: warm liquid glass card for the camera list.
+     Replaces the previous solid dark CardBackground (#171C24)
+     which felt cold. The card uses a 90% warm-white solid + a
+     subtle 1dp warm peach border + 20dp corner radius. The warm
+     tint matches the dialog's liquid glass palette so the entire
+     camera flow (list → detail → recordings) shares a single
+     "温馨 + 液态玻璃" identity.
+
+     On the camera list (fragment_cameras.xml background is
+     bg_primary #FFF5F0), the card reads as a frosted cream tile
+     floating on a warmer cream sheet — the layered effect is the
+     "liquid glass" look. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#F2FFFFFF" />
+    <stroke
+        android:width="1.2dp"
+        android:color="#66FFD4B8" />
+    <corners android:radius="22dp" />
+</shape>
