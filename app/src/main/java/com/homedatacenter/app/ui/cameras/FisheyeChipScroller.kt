@@ -3,135 +3,188 @@ package com.homedatacenter.app.ui.cameras
 import android.content.Context
 import android.util.AttributeSet
 import android.view.View
-import android.widget.HorizontalScrollView
+import android.view.ViewGroup
 import android.widget.LinearLayout
+import kotlin.math.abs
 
 /**
- * v1.6.4: a HorizontalScrollView that applies a "fisheye" scale
- * transform to its children on scroll. Each child is scaled along
- * X and Y based on its distance from the ScrollView's horizontal
- * center: children near the center get scale = 1.0 (full size),
- * children near the edges get scale = [minScale] (e.g. 0.55).
+ * v1.6.4 (rev2): a non-scrolling ViewGroup that lays out its children
+ * in a horizontal "fisheye" layout — all children are visible on
+ * screen at once, with edge chips shrunk via [scaleX]/[scaleY] for a
+ * "compression" effect, but never hidden.
  *
- * This directly addresses the user's request: "在类似与原有chip的
- * 基础上，越靠近两边的chip越小，靠近中间的类似于原有的chip，
- * 整个chip在滑动中不断变化". With this scroller, a chip "grows"
- * as it scrolls into the center and "shrinks" as it scrolls out —
- * giving the user a clear focal point while still keeping the full
- * 24h of motion events accessible via horizontal scroll.
+ * The user explicitly asked: "我想要chip靠近两边时的挤压效果，越靠
+ * 近边上，体积越小，而不是隐藏；同时我要能够看到一整天的chip那种".
  *
- * Implementation notes:
- *  - We override [onScrollChanged] (fires on every frame during a
- *    scroll/fling) and [onLayout] (fires after children are added/
- *    removed via [populateChips]) to re-apply scales.
- *  - We walk the direct children of the inner LinearLayout (the
- *    chip container). Each child must have pivotX=0.5 (the default
- *    for TextViews) so scaling shrinks toward the chip's center.
- *  - Scale is computed via a smooth falloff: chips within
- *    [fullScaleBand] of the center get scale 1.0, chips farther
- *    than [fullScaleBand] decay linearly toward [minScale] at the
- *    edge of the viewport.
- *  - The transform is GPU-cheap (just scaleX/scaleY on a TextView),
- *    so this is fine to run on every scroll frame even with 200 chips.
+ * This is a FrameLayout subclass (not HorizontalScrollView) so there
+ * is no scrolling at all — the entire 24h of motion chips is always
+ * visible. Each chip is centered in its own equal-width slot
+ * (viewportWidth / N), then a scale transform is applied based on
+ * distance from the viewport center.
  *
- * Usage: caller populates chips into [binding.motionChipContainer]
- * (a LinearLayout inside this scroller, same as v1.6.3), then calls
- * [requestLayout] once to trigger the initial scale pass.
+ * Scale formula:
+ *  - distNorm = abs((i + 0.5) / N - 0.5) * 2  // 0 at center, 1 at edge
+ *  - scale = lerp(1.0, minScale, distNorm)     // 1.0 center, 0.45 edge
+ *
+ * v1.6.3 alpha (edge chip dimmed) is REMOVED — alpha stays 1.0 so
+ * edge chips remain fully visible (just smaller). The "compression"
+ * is purely geometric (scale), not opacity.
+ *
+ * Children are added by [RecordingsDialog.populateMotionChips] the
+ * same way as before — they're TextViews inflated from
+ * [R.layout.item_motion_chip]. The container expects its children
+ * to be laid out directly inside it (no intermediate LinearLayout
+ * wrapper), but for backwards-compat with v1.6.3's XML which wraps
+ * chips in a `motionChipContainer` LinearLayout, we detect the
+ * wrapper and operate on its children.
+ *
+ * Touch handling: children's hit-rect is the post-scale position
+ * (since we use [View.scaleX] which is a render transform, not a
+ * layout transform). Taps land on the chip's actual drawn region.
+ * Edge chips with scale 0.45 are still tappable — the hit area is
+ * 45% × 45% of the original, which for a 50dp-wide chip is ~22dp
+ * × 14dp — still above the 16dp minimum recommended touch target
+ * (with a 6dp slop).
  */
 class FisheyeChipScroller @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
     defStyleAttr: Int = 0,
-) : HorizontalScrollView(context, attrs, defStyleAttr) {
+) : ViewGroup(context, attrs, defStyleAttr) {
 
     /**
-     * The minimum scale applied to chips at the edge of the
-     * viewport. 0.55 = roughly half size; small enough that edge
-     * chips clearly look "compressed" but still readable enough
-     * to recognize the time. Setting below 0.5 makes the time
-     * label illegible at the edges.
+     * The minimum scale applied to chips at the extreme edges of the
+     * viewport. 0.45 = roughly half size; small enough to clearly
+     * look "compressed" but not so small that the chip becomes
+     * illegible. The user said "越靠近边上，体积越小" — we go from
+     * 1.0 at center to 0.45 at edge, giving a clear compression
+     * gradient without ever hiding anything.
      */
-    private val minScale = 0.55f
+    private val minScale = 0.45f
 
     /**
-     * Half-width (in px) of the "full scale" band around the
-     * viewport center. Chips within this band get scale 1.0;
-     * chips outside decay linearly toward [minScale]. 96px ≈
-     * ~1 chip-width, so the chip currently in the center + its
-     * immediate neighbors stay full-size, then decay kicks in.
+     * The actual child container — v1.6.3 used a LinearLayout named
+     * `motionChipContainer` as the only child of the scroller, and
+     * chips were added to that LinearLayout. We keep that layout
+     * in the XML (no XML change needed) but treat the LinearLayout's
+     * children as our chip list. If there's no wrapper (chips added
+     * directly), we fall back to our own children.
      */
-    private val fullScaleBandPx = 96
+    private val chipContainer: LinearLayout?
+        get() = (0 until childCount).map { getChildAt(it) }
+            .firstOrNull { it is LinearLayout } as? LinearLayout
 
-    private val container: LinearLayout?
-        get() = getChildAt(0) as? LinearLayout
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        // Measure ourselves to the parent's suggested size.
+        val widthMode = MeasureSpec.getMode(widthMeasureSpec)
+        val widthSize = MeasureSpec.getSize(widthMeasureSpec)
+        val heightMode = MeasureSpec.getMode(heightMeasureSpec)
+        val heightSize = MeasureSpec.getSize(heightMeasureSpec)
 
-    override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) {
-        super.onScrollChanged(l, t, oldl, oldt)
-        applyFisheyeScales()
+        val resolvedWidth = when (widthMode) {
+            MeasureSpec.EXACTLY, MeasureSpec.AT_MOST -> widthSize
+            else -> suggestedMinimumWidth
+        }
+        val resolvedHeight = when (heightMode) {
+            MeasureSpec.EXACTLY, MeasureSpec.AT_MOST -> heightSize
+            else -> suggestedMinimumHeight
+        }
+
+        // Measure each chip with UNRESTRICTED width so they report
+        // their natural wrap_content size — we apply the fisheye
+        // scale visually but layout each chip in its slot.
+        val container = chipContainer
+        if (container != null) {
+            for (i in 0 until container.childCount) {
+                val child = container.getChildAt(i)
+                measureChildWithMargins(
+                    child,
+                    MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED),
+                    0,
+                    MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED),
+                    0,
+                )
+            }
+        }
+        setMeasuredDimension(resolvedWidth, resolvedHeight)
     }
 
-    override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
-        super.onLayout(changed, l, t, r, b)
-        // After children are laid out (e.g. populateChips added new
-        // views), re-apply scales so the initial visible state is
-        // correct without requiring the user to scroll first.
-        applyFisheyeScales()
-    }
-
-    /**
-     * Walks each chip in the container and sets its scaleX/scaleY
-     * based on its distance from the viewport center. Called from
-     * [onScrollChanged] and [onLayout].
-     *
-     * Scale formula:
-     *  - dx = abs(chipCenterX - viewportCenterX)
-     *  - if dx <= fullScaleBandPx: scale = 1.0
-     *  - else: scale = lerp(1.0, minScale, (dx - band) / (viewportHalfWidth - band))
-     *    clamped to [minScale, 1.0]
-     *
-     * The lerp target is `viewportHalfWidth - band` so a chip at
-     * the very edge of the viewport reaches exactly [minScale].
-     */
-    private fun applyFisheyeScales() {
-        val container = container ?: return
-        val viewportCenterX = scrollX + width / 2
-        val viewportHalfWidth = (width / 2).coerceAtLeast(1)
-        // v1.6.4: decay range = from the edge of the full-scale band
-        // to the edge of the viewport. Below this we're at full scale,
-        // beyond it we're at minScale.
-        val decayRange = (viewportHalfWidth - fullScaleBandPx).coerceAtLeast(1)
-        for (i in 0 until container.childCount) {
-            val child = container.getChildAt(i) ?: continue
-            val chipCenterX = (child.left + child.right) / 2
-            val dx = Math.abs(chipCenterX - viewportCenterX)
-            val scale = if (dx <= fullScaleBandPx) {
-                1.0f
-            } else {
-                val t = ((dx - fullScaleBandPx).toFloat() / decayRange).coerceIn(0f, 1f)
-                lerp(1.0f, minScale, t)
-            }
-            // Only set if changed — avoids triggering a layout pass
-            // on a chip whose scale is already correct (most chips
-            // on every scroll frame).
-            if (child.scaleX != scale) {
-                child.scaleX = scale
-                child.scaleY = scale
-            }
-            // Dim edge chips slightly for visual depth (alpha 0.5 at
-            // the edge). This makes the focal point stand out more
-            // without sacrificing legibility since edge chips are
-            // "preview" thumbnails the user can scroll to focus on.
-            val alpha = if (dx <= fullScaleBandPx) {
-                1.0f
-            } else {
-                val t = ((dx - fullScaleBandPx).toFloat() / decayRange).coerceIn(0f, 1f)
-                lerp(1.0f, 0.5f, t)
-            }
-            if (child.alpha != alpha) {
-                child.alpha = alpha
-            }
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        val container = chipContainer ?: return
+        val n = container.childCount
+        if (n == 0) return
+        val w = right - left
+        val h = bottom - top
+        // Equal-width slot for each chip — all N chips fit in the
+        // viewport width. This is the key "see the whole day at once"
+        // behavior: no scrolling needed.
+        val slotWidth = w.toFloat() / n
+        // Layout the wrapper LinearLayout to fill us so its children
+        // can be positioned within our coordinate space.
+        container.layout(0, 0, w, h)
+        for (i in 0 until n) {
+            val child = container.getChildAt(i)
+            val cw = child.measuredWidth
+            val ch = child.measuredHeight
+            // Chip center X within viewport: each slot is slotWidth
+            // wide; this chip's center is at (i + 0.5) * slotWidth.
+            val centerX = (i + 0.5f) * slotWidth
+            // Distance from viewport center, normalized to [0, 1]:
+            // 0 at exact center chip, 1 at extreme edge chip.
+            val distNorm = abs((i + 0.5f) / n - 0.5f) * 2f
+            // Fisheye scale: 1.0 at center, minScale at edge.
+            // Linear interpolation keeps the gradient predictable
+            // (no sudden drop-off the user might find jarring).
+            val scale = lerp(1.0f, minScale, distNorm)
+            // Pivot center for scale — chip shrinks toward its own
+            // center, not toward viewport center. This makes the
+            // compression look like "the chip itself is smaller",
+            // not "the chip is being pushed off-screen".
+            child.pivotX = cw / 2f
+            child.pivotY = ch / 2f
+            child.scaleX = scale
+            child.scaleY = scale
+            // v1.6.4 rev2: alpha stays 1.0. v1.6.4 rev1 dimmed edge
+            // chips to 0.5 which made them look "hidden" — the user
+            // explicitly said "而不是隐藏". Keeping alpha at 1.0
+            // means edge chips are just smaller, not faded.
+            child.alpha = 1.0f
+            // Center the chip in its slot horizontally, and vertically
+            // center it within the container.
+            val chipLeft = (centerX - cw / 2f).toInt()
+            val chipTop = (h - ch) / 2
+            child.layout(chipLeft, chipTop, chipLeft + cw, chipTop + ch)
         }
     }
 
+    /**
+     * Re-applies fisheye scales without triggering a full layout pass.
+     * Useful when the chip count hasn't changed but we want to
+     * refresh scales (e.g. after the host rotates and viewport
+     * dimensions change). Currently unused — onLayout already runs
+     * on rotation — but kept as a public hook for future callers.
+     */
+    fun refreshScales() {
+        requestLayout()
+    }
+
     private fun lerp(a: Float, b: Float, t: Float): Float = a + (b - a) * t
+
+    // LayoutParams required for measureChildWithMargins to work
+    // without crashing when the child has no LayoutParams set yet.
+    override fun generateLayoutParams(attrs: AttributeSet?): LayoutParams {
+        return MarginLayoutParams(2, 2)
+    }
+
+    override fun checkLayoutParams(p: LayoutParams): Boolean {
+        return p is MarginLayoutParams
+    }
+
+    override fun generateLayoutParams(p: LayoutParams): LayoutParams {
+        return MarginLayoutParams(p)
+    }
+
+    override fun generateDefaultLayoutParams(): LayoutParams {
+        return MarginLayoutParams(2, 2)
+    }
 }

@@ -17,6 +17,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import com.google.android.exoplayer2.ExoPlayer
 import com.google.android.exoplayer2.PlaybackParameters
 import com.google.android.exoplayer2.ui.StyledPlayerView
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.homedatacenter.app.R
 
 /**
@@ -514,23 +515,36 @@ class PlayerFullscreenHelper(
     private fun attachSpeedButton(button: View) {
         button.setOnClickListener { view ->
             val p = player ?: return@setOnClickListener
-            val popup = PopupMenu(view.context, view)
-            SPEEDS.forEachIndexed { idx, speed ->
-                val item = popup.menu.add(0, idx, idx, formatSpeed(speed))
-                if (speed == p.playbackParameters.speed) {
-                    item.isChecked = true
+            val currentSpeed = p.playbackParameters.speed
+            // v1.6.4 rev2: replace PopupMenu with MaterialAlertDialogBuilder.
+            // The user said "切倍速的菜单太生硬了，优化一下UI". PopupMenu
+            // had no rounded corners, no animation, and rendered as a
+            // tiny anchored window that looked like a context menu from
+            // Android 4.x. MaterialAlertDialogBuilder gives us:
+            //  - Rounded corners (Material 3 default 28dp)
+            //  - Smooth fade-in/scale animation (system Material default)
+            //  - Wider, more readable list rows (Material list item height)
+            //  - A title "播放速度" so the dialog's purpose is obvious
+            //  - Standard OK/Cancel button row (we omit since tap = apply)
+            //  - Theme-aware colors (works in light/dark)
+            //
+            // The labels use [formatSpeed] so 1.0 → "1x", 1.5 → "1.5x"
+            // (v1.6.4 fix). The current speed is pre-selected; tapping
+            // any item immediately applies + dismisses.
+            val labels = SPEEDS.map { formatSpeed(it) }.toTypedArray()
+            val checkedIdx = SPEEDS.indexOfFirst { it == currentSpeed }
+                .coerceAtLeast(0)
+            MaterialAlertDialogBuilder(view.context)
+                .setTitle("播放速度")
+                .setSingleChoiceItems(labels, checkedIdx) { dialog, which ->
+                    val speed = SPEEDS[which]
+                    p.playbackParameters = PlaybackParameters(speed)
+                    if (button is android.widget.TextView) {
+                        button.text = formatSpeed(speed)
+                    }
+                    dialog.dismiss()
                 }
-            }
-            popup.menu.setGroupCheckable(0, true, true)
-            popup.setOnMenuItemClickListener { menuItem ->
-                val speed = SPEEDS[menuItem.itemId]
-                p.playbackParameters = PlaybackParameters(speed)
-                if (button is android.widget.TextView) {
-                    button.text = formatSpeed(speed)
-                }
-                true
-            }
-            popup.show()
+                .show()
         }
     }
 

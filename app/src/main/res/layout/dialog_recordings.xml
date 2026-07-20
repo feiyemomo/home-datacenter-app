@@ -14,11 +14,6 @@
         app:navigationIcon="@drawable/ic_baseline_arrow_back_24"
         app:titleTextColor="@android:color/white">
 
-        <!-- v1.5.10: "Play full day" button embedded in the toolbar.
-             Clicking opens a DatePickerDialog; the selected day is
-             then played as one big ExoPlayer playlist (1440 60s
-             clips) so the user can scrub through 24h of footage as
-             a single video. -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnPlayDay"
             style="@style/Widget.Material3.Button.TextButton"
@@ -67,33 +62,26 @@
             android:background="@android:color/black"
             android:visibility="gone">
 
-            <!-- v1.6.4: vertical layout — player on top (fixed 200dp
-                 height in non-fullscreen), fisheye chip scroller in
-                 the middle (fills remaining space), scrub bar at the
-                 bottom. The user explicitly asked: "正常未全屏时，
-                 播放器就放在顶部，然后中部放chip，其他插件你合理
-                 布局即可".
+            <!-- v1.6.4 rev2: vertical layout re-ordered per user request
+                 "将进度条上移至播放器下面，'返回列表'按钮下移":
+                   1. Player (200dp, top)
+                   2. Scrub bar (was at bottom — moved UP to right under player)
+                   3. Fisheye chip scroller (middle, layout_weight=1)
+                   4. "返回列表" button (was inside player host — moved DOWN to bottom)
 
-                 In fullscreen, PlayerFullscreenHelper resizes
-                 playerView to MATCH_PARENT and hides motionChipScroller
-                 + dayScrubBarContainer + btnBack via hideOnFullscreen.
-                 Tapping the playerView toggles these back on/off (the
-                 "全屏时点击播放器收起进度条等的插件，再次点击是在
-                 展现" behavior wired in PlayerFullscreenHelper). -->
+                 In fullscreen, PlayerFullscreenHelper resizes playerView
+                 + playerHostFrame to MATCH_PARENT and hides toolbar via
+                 hideOnFullscreen; dayScrubBarContainer / motionChipScroller
+                 / btnBack / btnPlaybackSpeed toggle visibility via
+                 controllerSyncViews on playerView tap. -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
                 android:orientation="vertical">
 
-                <!-- Top: player view. v1.6.4: fixed 200dp height in
-                     non-fullscreen so the chip scroller has room
-                     below. In fullscreen, PlayerFullscreenHelper
-                     applies MATCH_PARENT to fill the screen.
-
-                     Wrapped in a FrameLayout so the floating overlay
-                     buttons (speed, fullscreen, progress) can sit on
-                     top of the player without overlapping the chip
-                     scroller below. -->
+                <!-- Top: player host frame. Fixed 200dp in non-fullscreen;
+                     MATCH_PARENT in fullscreen (PlayerFullscreenHelper's
+                     secondaryPlayerView expands this). -->
                 <FrameLayout
                     android:id="@+id/playerHostFrame"
                     android:layout_width="match_parent"
@@ -117,10 +105,11 @@
                         android:visibility="gone"
                         android:indeterminateTint="@android:color/white" />
 
-                    <!-- Standalone playback speed button. v1.5.3: moved out
-                         of the player's settings (gear) menu — the user wanted
-                         speed control exposed directly. Tapping opens a popup
-                         with 0.5x / 1x / 1.5x / 2x options. -->
+                    <!-- Standalone playback speed button. v1.6.4 rev2:
+                         menu now opens as a Material AlertDialog with
+                         single-choice items + rounded corners (was
+                         PopupMenu which felt "生硬"). Stays in top|end
+                         so it's reachable over the player surface. -->
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnPlaybackSpeed"
                         style="@style/Widget.Material3.Button.IconButton"
@@ -140,15 +129,7 @@
                         android:textSize="13sp"
                         android:visibility="gone" />
 
-                    <!-- Standalone fullscreen overlay button. ExoPlayer 2.x's
-                         built-in controller fullscreen button exists but is hidden
-                         by default; rather than override the controller layout
-                         we provide our own overlay so the same button works in
-                         all player hosts (RecordingsDialog, AlertsDialog, and
-                         CameraDetailActivity's WebRTC mode).
-
-                         v1.6.4: stacked under btnPlaybackSpeed in top|end
-                         (marginTop 54dp) so the two buttons don't overlap. -->
+                    <!-- Fullscreen button stacked under btnPlaybackSpeed. -->
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnFullscreen"
                         style="@style/Widget.Material3.Button.IconButton"
@@ -164,68 +145,17 @@
                         android:visibility="gone"
                         app:icon="@drawable/ic_fullscreen"
                         app:iconTint="@android:color/white" />
-
-                    <!-- v1.6.4: "返回列表" inside the player host frame
-                         at bottom|center_horizontal. Kept on the player's
-                         own surface so it stays reachable in both
-                         non-fullscreen (200dp player) and fullscreen
-                         (toggled by PlayerFullscreenHelper's controller
-                         visibility sync). -->
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnBack"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="返回列表"
-                        android:layout_gravity="bottom|center_horizontal"
-                        android:layout_marginBottom="6dp"
-                        android:background="#80000000"
-                        android:textColor="@android:color/white"
-                        app:cornerRadius="8dp" />
                 </FrameLayout>
 
-                <!-- Middle: fisheye chip scroller. v1.6.4: replaced the
-                     v1.6.3 HorizontalScrollView with [FisheyeChipScroller]
-                     which applies a scale transform to chips based on
-                     their distance from the viewport center. The user
-                     asked: "越靠近两边的chip越小，靠近中间的类似于
-                     原有的chip，整个chip在滑动中不断变化". Chips in the
-                     center stay at scale 1.0 (same as v1.6.3), chips
-                     near the edges shrink to 0.55 scale + 0.5 alpha
-                     for a clear focal point.
+                <!-- v1.6.4 rev2: scrub bar moved UP to sit directly
+                     under the player. Was at the very bottom in v1.6.3,
+                     which forced the user to reach past the chip
+                     scroller to drag the SeekBar. Now SeekBar + overlay
+                     sit immediately below the player surface — natural
+                     thumb-reach when the player is at eye level.
 
-                     layout_weight=1 so it fills the remaining space
-                     between the player (200dp top) and the scrub bar
-                     (wrap_content bottom). Each chip is added to
-                     motionChipContainer by [populateMotionChips]. -->
-                <com.homedatacenter.app.ui.cameras.FisheyeChipScroller
-                    android:id="@+id/motionChipScroller"
-                    android:layout_width="match_parent"
-                    android:layout_height="0dp"
-                    android:layout_weight="1"
-                    android:scrollbars="none"
-                    android:background="#22000000"
-                    android:fillViewport="true"
-                    android:visibility="gone">
-
-                    <LinearLayout
-                        android:id="@+id/motionChipContainer"
-                        android:layout_width="wrap_content"
-                        android:layout_height="match_parent"
-                        android:orientation="horizontal"
-                        android:gravity="center_vertical"
-                        android:paddingStart="8dp"
-                        android:paddingEnd="8dp" />
-                </com.homedatacenter.app.ui.cameras.FisheyeChipScroller>
-
-                <!-- Bottom: scrub bar + overlay. v1.6.4: moved out of
-                     the player's FrameLayout so it doesn't overlap the
-                     player surface (was floating at the bottom of
-                     videoContainer in v1.6.3). Now it sits in its own
-                     row below the chip scroller, full width.
-
-                     FrameLayout wraps SeekBar + AlertRangeOverlay so
-                     the red marks sit ON TOP of the SeekBar track
-                     (v1.5.14 trick). -->
+                     AlertRangeOverlay + SeekBar share a FrameLayout so
+                     the red marks sit on top of the SeekBar track. -->
                 <LinearLayout
                     android:id="@+id/dayScrubBarContainer"
                     android:layout_width="match_parent"
@@ -292,6 +222,55 @@
                             android:visibility="visible" />
                     </FrameLayout>
                 </LinearLayout>
+
+                <!-- Middle: fisheye chip container. v1.6.4 rev2: now a
+                     non-scrolling ViewGroup — all chips are fit into the
+                     viewport width, with edge chips shrunk via scaleX/Y
+                     for a compression effect (no alpha dimming, no
+                     hiding). The user asked "我想要chip靠近两边时的挤压
+                     效果，越靠近边上，体积越小，而不是隐藏；同时我要能
+                     够看到一整天的chip那种". This container delivers
+                     both — fit-to-screen + edge compression.
+
+                     layout_weight=1 so it fills the remaining space
+                     between the scrub bar (above) and the "返回列表"
+                     button (below). -->
+                <com.homedatacenter.app.ui.cameras.FisheyeChipScroller
+                    android:id="@+id/motionChipScroller"
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"
+                    android:background="#1A000000"
+                    android:visibility="gone">
+
+                    <LinearLayout
+                        android:id="@+id/motionChipContainer"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical" />
+                </com.homedatacenter.app.ui.cameras.FisheyeChipScroller>
+
+                <!-- Bottom: "返回列表" button. v1.6.4 rev2: moved DOWN
+                     from inside the player host (was bottom|center_horizontal
+                     of playerHostFrame) to the very bottom of the screen.
+                     The user said "返回列表按钮下移" — placing it at
+                     the bottom of the layout gives it a stable, predictable
+                     position regardless of player size.
+
+                     Centered horizontally, with 16dp bottom margin to
+                     clear gesture nav bars on edge-to-edge devices. -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnBack"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="返回列表"
+                    android:layout_gravity="center_horizontal"
+                    android:layout_marginTop="6dp"
+                    android:layout_marginBottom="16dp"
+                    android:background="#80000000"
+                    android:textColor="@android:color/white"
+                    app:cornerRadius="8dp" />
             </LinearLayout>
 
         </FrameLayout>
