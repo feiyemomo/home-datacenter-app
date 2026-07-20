@@ -54,13 +54,16 @@ class FisheyeChipScroller @JvmOverloads constructor(
 
     /**
      * The minimum scale applied to chips at the extreme edges of the
-     * viewport. 0.45 = roughly half size; small enough to clearly
-     * look "compressed" but not so small that the chip becomes
-     * illegible. The user said "越靠近边上，体积越小" — we go from
-     * 1.0 at center to 0.45 at edge, giving a clear compression
-     * gradient without ever hiding anything.
+     * viewport. v1.6.4 rev3: bumped from 0.45 to 0.6 — at 0.45 the
+     * edge chips' 9sp text became unreadable (~4px effective), and
+     * the user said "他们现在连成一片了" because chips at 0.45 scale
+     * + 4dp padding were too small to show visual gaps. At 0.6 the
+     * edge chips are still clearly "compressed" (60% of full size)
+     * but readable, and the tighter item_motion_chip.xml padding
+     * (4dp/2dp v.s. v1.6.3's 10dp/5dp) leaves visible inter-chip
+     * gaps even at scale 0.6.
      */
-    private val minScale = 0.45f
+    private val minScale = 0.6f
 
     /**
      * The actual child container — v1.6.3 used a LinearLayout named

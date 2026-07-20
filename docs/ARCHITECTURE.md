@@ -633,46 +633,36 @@ AlertRangeOverlay 优化（辅助 chip 列表）：
 - 客户端：chip 解析 + 渲染 200 个 < 50ms，seek 命中 binarySearch O(log n)
 - 内存：每个 chip ~1KB（TextView），200 个 chip 总计 ~200KB
 
-#### v1.6.4 rev2：Fisheye chip fit-to-screen + 进度条上移 + 倍速菜单优化
+#### v1.6.4 rev3：chip 变窄 + 倍速改下拉 + 全屏按钮右下角
 
-**问题诊断**：用户对 v1.6.4 rev1 反馈三点新需求：
-1. chip 边缘要"挤压效果"而非"隐藏"——rev1 的 alpha 0.5 让边缘 chip 看着像被淡出，不符合用户原话"而不是隐藏"。
-2. 要"能够看到一整天的 chip"——rev1 仍可滚动，需要主动滑才能看完。
-3. 进度条上移到播放器下方，"返回列表"按钮下移。
-4. 倍速菜单太生硬——rev1 的 PopupMenu 无圆角无动画。
+**问题诊断**：v1.6.4 rev2 用户反馈三点：
+1. "这个看起来是一坨，他们现在连成一片了"——根因：chip 内容"HH:mm:ss · Ns"太长，padding 10dp/5dp 太大，fisheye minScale=0.45 让边缘 chip 文字几乎不可读。
+2. "倍速菜单还是下拉样式好"——rev2 的 Material AlertDialog 居中模态感太重。
+3. "全屏按钮放到播放器右下角"——rev2 的 top|end 位置不符合视频 app 肌肉记忆。
 
-**方案 1：FisheyeChipScroller 改为不滚动 ViewGroup**
-- 从 `HorizontalScrollView` 子类改成 `ViewGroup` 直接子类——完全不响应滚动手势
-- `onLayout` 把每个 chip 放到等宽 slot（`slotWidth = viewportWidth / N`）的中心
-- 计算 fisheye 缩放：`distNorm = abs((i+0.5)/N - 0.5) * 2`（0=中心，1=边缘）→ `scale = lerp(1.0, 0.45, distNorm)`
-- 应用 `scaleX`/`scaleY` 但**不修改 alpha**（保持 1.0）——边缘 chip 横向被压缩但仍清晰可见
-- `pivotX = cw/2, pivotY = ch/2` 让 chip 朝自己中心缩小（不是朝 viewport 中心）
-- 所有 N 个 chip 强制 fit 到屏幕宽度内，无论多少个
+**方案 1：chip 变窄**
+- `item_motion_chip.xml`：padding 10dp/5dp → 4dp/2dp，margin 4dp → 1dp，textSize 11sp → 9sp
+- `RecordingsDialog.kt`：chip label 从 "HH:mm:ss · Ns" → "HH:mm"（秒和时长作为 skim 噪音去掉）
+- `FisheyeChipScroller.minScale`：0.45 → 0.6（边缘可读 + 间隙清晰）
 
-**方案 2：布局 4 段垂直 LinearLayout**
-```
-videoContainer (FrameLayout)
-└─ LinearLayout (vertical)
-   ├─ playerHostFrame (200dp, top) — playerView + btnPlaybackSpeed + btnFullscreen + progressPlayer
-   ├─ dayScrubBarContainer (wrap_content, 紧贴 playerHostFrame 下方) — SeekBar + AlertRangeOverlay
-   ├─ motionChipScroller (layout_weight=1, 中部剩余空间)
-   └─ btnBack (wrap, 底部 center_horizontal, marginBottom 16dp)
-```
-进度条从 v1.6.3 的"底部"上移到"播放器下方"，btnBack 从 v1.6.3 的"播放器内底部"下移到"整个布局的底部"。
+**方案 2：倍速菜单 ListPopupWindow**
+- 从 `MaterialAlertDialogBuilder` 改回下拉样式
+- 用 `ListPopupWindow`（不是 `PopupMenu`，因 PopupMenu 在 Android < 29 上回退到 4.x 外观）
+- `anchorView = btnPlaybackSpeed`，从按钮向下"drop down"
+- `width = measureListPopupWidth(...)` 按最长 label + 48dp padding 测量
+- `ArrayAdapter` 用 `simple_list_item_1`（48dp 行高、14sp 文字、主题感知颜色）
+- 点击即应用 `PlaybackParameters(speed)` 并 dismiss
 
-**方案 3：倍速菜单 MaterialAlertDialogBuilder**
-- `attachSpeedButton` 从 `PopupMenu` 改为 `MaterialAlertDialogBuilder`
-- `setTitle("播放速度")` + `setSingleChoiceItems(labels, checkedIdx) { dialog, which -> ... }`
-- Material 3 默认圆角 28dp、淡入+缩放动画、主题感知颜色
-- 点击即应用 `PlaybackParameters(speed)` 并 dismiss，无需 OK 按钮
-- 保留 `formatSpeed` 修复（1.5f → "1.5x" 而非 "1x"）
+**方案 3：全屏按钮移到 bottom|end**
+- `dialog_recordings.xml` 中 `btnFullscreen`：`layout_gravity` 从 `top|end`（marginTop 54dp）改为 `bottom|end`（margin 6dp）
+- 位置匹配 YouTube / B 站等视频 app 的右下角肌肉记忆
 
-**保留 v1.6.4 rev1 的功能**：
-- `PlayerFullscreenHelper.controllerSyncViews: List<View>` 参数
-- `controllerOverlayVisible` 布尔 latch 字段
-- `playerView.setOnClickListener` 全屏 toggle
-- `playerHostFrame` 作为 `secondaryPlayerView`
-- AlertsDialog 不传 `controllerSyncViews`，行为不变
+**保留 v1.6.4 rev2 的功能**：
+- `FisheyeChipScroller` 不滚动 ViewGroup + fit-to-screen + fisheye scale（minScale 提到 0.6）
+- `PlayerFullscreenHelper.controllerSyncViews` + `controllerOverlayVisible` latch
+- 4 段垂直布局：player → scrub bar → chip scroller → btnBack
+- `playerHostFrame` 作为 `secondaryPlayerView` 全屏时 MATCH_PARENT
+- `formatSpeed` 修复 1.5f → "1.5x"
 
 **报警推送精确跳转**：`AlertsFragment.onJumpCamera` / `DashboardFragment.jumpToCamerasWithAlert` 现在直接 `startActivity(CameraDetailActivity)`，Intent extra `EXTRA_INITIAL_TIMESTAMP = alert.startTime.toLong()`。流程：
 1. `CameraDetailActivity.onCreate` 检测到 `EXTRA_INITIAL_TIMESTAMP > 0`，`binding.root.post { showRecordings(initialTs) }`（post 是为了让 `startPlayback()` 的直播流先初始化完成，避免 surface 冲突）。
