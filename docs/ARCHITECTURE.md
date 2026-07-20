@@ -633,34 +633,39 @@ AlertRangeOverlay 优化（辅助 chip 列表）：
 - 客户端：chip 解析 + 渲染 200 个 < 50ms，seek 命中 binarySearch O(log n)
 - 内存：每个 chip ~1KB（TextView），200 个 chip 总计 ~200KB
 
-#### v1.6.4 rev3：chip 变窄 + 倍速改下拉 + 全屏按钮右下角
+#### v1.6.4 rev4：chip 稀疏化 + 全屏按钮放大 + app 图标放大
 
-**问题诊断**：v1.6.4 rev2 用户反馈三点：
-1. "这个看起来是一坨，他们现在连成一片了"——根因：chip 内容"HH:mm:ss · Ns"太长，padding 10dp/5dp 太大，fisheye minScale=0.45 让边缘 chip 文字几乎不可读。
-2. "倍速菜单还是下拉样式好"——rev2 的 Material AlertDialog 居中模态感太重。
-3. "全屏按钮放到播放器右下角"——rev2 的 top|end 位置不符合视频 app 肌肉记忆。
+**问题诊断**：v1.6.4 rev3 用户反馈三点：
+1. "chip 还是太多了，靠边的就不用带字了吧，一直压缩为细线"——rev3 的边缘 chip 仍显示文字，60+ chip 时仍然拥挤。
+2. "全屏图标在靠近右下一些，并放大一点"——rev3 的 6dp margin + 24dp iconSize 不够。
+3. "app 图标放大一些（源文件在 D:\Projects\Android\home.png）"——图标视觉占比偏小。
 
-**方案 1：chip 变窄**
-- `item_motion_chip.xml`：padding 10dp/5dp → 4dp/2dp，margin 4dp → 1dp，textSize 11sp → 9sp
-- `RecordingsDialog.kt`：chip label 从 "HH:mm:ss · Ns" → "HH:mm"（秒和时长作为 skim 噪音去掉）
-- `FisheyeChipScroller.minScale`：0.45 → 0.6（边缘可读 + 间隙清晰）
+**方案 1：chip 数量减半 + 边缘压缩为细线**
+- `RecordingsDialog.populateMotionChips`：cap 从 200 → 60（按 `motion_score` 取 top 60）
+- `FisheyeChipScroller` 增加 `textThreshold = 0.7f`：
+  - 当 `scale < 0.7` 时，`tv.text = ""`（清空文字）+ `cw = thinBarWidthPx`（宽度强制为 3dp）
+  - chip 的 label 通过 `tv.tag = label` 保存，在 `scale >= 0.7` 时还原 `tv.text = label`
+  - alpha 保持 1.0 不淡化（符合"而不是隐藏"）
+  - 边缘 chip 变成无文字的彩色细条（仅显示背景色），中心 chip 仍显示"HH:mm"标签
 
-**方案 2：倍速菜单 ListPopupWindow**
-- 从 `MaterialAlertDialogBuilder` 改回下拉样式
-- 用 `ListPopupWindow`（不是 `PopupMenu`，因 PopupMenu 在 Android < 29 上回退到 4.x 外观）
-- `anchorView = btnPlaybackSpeed`，从按钮向下"drop down"
-- `width = measureListPopupWidth(...)` 按最长 label + 48dp padding 测量
-- `ArrayAdapter` 用 `simple_list_item_1`（48dp 行高、14sp 文字、主题感知颜色）
-- 点击即应用 `PlaybackParameters(speed)` 并 dismiss
+**方案 2：全屏按钮靠右下 + 放大**
+- `dialog_recordings.xml` 中 `btnFullscreen`：
+  - `marginEnd/marginBottom`：6dp → 2dp（更靠右下角）
+  - `iconSize`：默认 24dp → 36dp（显式指定放大）
+  - `padding`：8dp → 12dp（点击区域也增大）
 
-**方案 3：全屏按钮移到 bottom|end**
-- `dialog_recordings.xml` 中 `btnFullscreen`：`layout_gravity` 从 `top|end`（marginTop 54dp）改为 `bottom|end`（margin 6dp）
-- 位置匹配 YouTube / B 站等视频 app 的右下角肌肉记忆
+**方案 3：app 图标放大**
+- `scripts/generate_app_icon.ps1` 自动检测 `home.png` 的内容边界（实际内容 477×434 在 1024×1024 画布中，原本有 ~50% 透明边距）
+- 裁剪到内容 bbox，然后放到 8% padding 的目标画布上（v.s. 之前直接缩放保留 ~15% padding）
+- 视觉放大约 15%
+- 生成 5 密度 × 2 形状 = 10 个 PNG，分别覆盖 mipmap-mdpi/hdpi/xhdpi/xxhdpi/xxxhdpi
 
-**保留 v1.6.4 rev2 的功能**：
-- `FisheyeChipScroller` 不滚动 ViewGroup + fit-to-screen + fisheye scale（minScale 提到 0.6）
-- `PlayerFullscreenHelper.controllerSyncViews` + `controllerOverlayVisible` latch
-- 4 段垂直布局：player → scrub bar → chip scroller → btnBack
+**保留 v1.6.4 rev3 的功能**：
+- chip 变窄（padding 4dp/2dp、margin 1dp、textSize 9sp）
+- chip label "HH:mm"（去掉秒和时长）
+- 倍速菜单 `ListPopupWindow` 下拉样式
+- `FisheyeChipScroller` 不滚动 ViewGroup + fit-to-screen + minScale=0.6
+- `PlayerFullscreenHelper.controllerSyncViews` + tap-to-toggle
 - `playerHostFrame` 作为 `secondaryPlayerView` 全屏时 MATCH_PARENT
 - `formatSpeed` 修复 1.5f → "1.5x"
 

@@ -910,12 +910,19 @@ class RecordingsDialog(
             binding.motionChipScroller.visibility = View.GONE
             return
         }
-        // v1.6.3: cap chip count. Sort by motion_score desc, take top 200,
+        // v1.6.3: cap chip count. Sort by motion_score desc, take top N,
         // then re-sort by start time asc for display. This keeps the
         // most significant motion events while preventing pathological
         // days from slowing the UI.
-        val sorted = if (chips.size > 200) {
-            chips.sortedByDescending { it.motionScore }.take(200).sortedBy { it.startRelativeMs }
+        // v1.6.4 rev4: reduced from 200 -> 60. With 109 segments/24h,
+        // 200 meant no filtering. 60 keeps the top events so the
+        // fisheye scroller has room to show "HH:mm" labels without
+        // chips piling on top of each other. Edge chips are further
+        // compressed to thin colored bars by FisheyeChipScroller when
+        // their scale drops below [textThreshold].
+        val cap = 60
+        val sorted = if (chips.size > cap) {
+            chips.sortedByDescending { it.motionScore }.take(cap).sortedBy { it.startRelativeMs }
         } else {
             chips.sortedBy { it.startRelativeMs }
         }
@@ -940,6 +947,13 @@ class RecordingsDialog(
             // chips even on a busy day.
             val label = fmt.format(Date(chip.startUnixSec * 1000L))
             tv.text = label
+            // v1.6.4 rev4: stash the label as a tag so FisheyeChipScroller
+            // can hide/restore text based on scale (edge chips collapse
+            // to thin colored bars without text — "靠边的就不用带字了
+            // 吧，一直压缩为细线"). Without this tag, the scroller
+            // would have no way to restore the label when the chip
+            // scrolls back into the expanded zone.
+            tv.tag = label
             // Color by score (low/mid/high) — AI-detected (peak>0) overrides.
             val bgRes = when {
                 chip.peakObjects > 0 -> R.drawable.bg_chip_motion_alert

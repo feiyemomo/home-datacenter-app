@@ -5,6 +5,7 @@ import android.util.AttributeSet
 import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
+import android.widget.TextView
 import kotlin.math.abs
 
 /**
@@ -66,6 +67,28 @@ class FisheyeChipScroller @JvmOverloads constructor(
     private val minScale = 0.6f
 
     /**
+     * v1.6.4 rev4: scale threshold below which chip text is hidden
+     * and the chip collapses to a thin colored bar. The user said
+     * "靠边的就不用带字了吧，一直压缩为细线". When scale < 0.7:
+     *  - text is set to "" (transparent pill, no label)
+     *  - chip's measured width is forced to 3dp (thin bar)
+     *  - alpha stays 1.0 (still visible as a colored marker)
+     *  - background pill remains (so color tier is still visible)
+     * This gives the "fish-eye compression to thin line" effect
+     * the user described — center chips show full "HH:mm" labels,
+     * edge chips are just colored ticks.
+     */
+    private val textThreshold = 0.7f
+
+    /**
+     * v1.6.4 rev4: width (in dp) of a chip when collapsed to thin
+     * bar mode (scale < [textThreshold]). 3dp is the minimum that
+     * still reads as a colored marker on a 1080p screen — below
+     * this it becomes a single sub-pixel stripe that disappears.
+     */
+    private val thinBarWidthDp = 3f
+
+    /**
      * The actual child container — v1.6.3 used a LinearLayout named
      * `motionChipContainer` as the only child of the scroller, and
      * chips were added to that LinearLayout. We keep that layout
@@ -122,31 +145,53 @@ class FisheyeChipScroller @JvmOverloads constructor(
         // viewport width. This is the key "see the whole day at once"
         // behavior: no scrolling needed.
         val slotWidth = w.toFloat() / n
+        val density = resources.displayMetrics.density
+        val thinBarWidthPx = (thinBarWidthDp * density).toInt()
         // Layout the wrapper LinearLayout to fill us so its children
         // can be positioned within our coordinate space.
         container.layout(0, 0, w, h)
         for (i in 0 until n) {
             val child = container.getChildAt(i)
-            val cw = child.measuredWidth
-            val ch = child.measuredHeight
-            // Chip center X within viewport: each slot is slotWidth
-            // wide; this chip's center is at (i + 0.5) * slotWidth.
-            val centerX = (i + 0.5f) * slotWidth
             // Distance from viewport center, normalized to [0, 1]:
             // 0 at exact center chip, 1 at extreme edge chip.
             val distNorm = abs((i + 0.5f) / n - 0.5f) * 2f
             // Fisheye scale: 1.0 at center, minScale at edge.
-            // Linear interpolation keeps the gradient predictable
-            // (no sudden drop-off the user might find jarring).
             val scale = lerp(1.0f, minScale, distNorm)
+            // v1.6.4 rev4: collapse edge chips to thin colored bars.
+            // When scale < textThreshold, hide text and force a thin
+            // width so the chip reads as a "tick" marker rather than
+            // a tiny unreadable label. The user said "靠边的就不用带
+            // 字了吧，一直压缩为细线".
+            val collapsed = scale < textThreshold
+            if (child is TextView) {
+                // Tag is set by RecordingsDialog.populateMotionChips
+                // to the chip's "HH:mm" label. We toggle the visible
+                // text based on collapse state — when collapsed, set
+                // text to "" so the chip's background pill shows as
+                // a colored bar without any label overlap.
+                val label = child.tag as? String ?: ""
+                val currentText = child.text?.toString() ?: ""
+                if (collapsed && currentText.isNotEmpty()) {
+                    child.text = ""
+                } else if (!collapsed && currentText != label) {
+                    child.text = label
+                }
+            }
+            // Effective chip dimensions: collapsed chips use thinBarWidthPx,
+            // expanded chips use their measured width.
+            val cw = if (collapsed) thinBarWidthPx else child.measuredWidth
+            val ch = child.measuredHeight
+            // Chip center X within viewport.
+            val centerX = (i + 0.5f) * slotWidth
             // Pivot center for scale — chip shrinks toward its own
-            // center, not toward viewport center. This makes the
-            // compression look like "the chip itself is smaller",
-            // not "the chip is being pushed off-screen".
+            // center, not toward viewport center.
             child.pivotX = cw / 2f
             child.pivotY = ch / 2f
-            child.scaleX = scale
-            child.scaleY = scale
+            // Collapsed chips skip scale transform — they're already
+            // narrow via [cw]. Scaling them again would make them
+            // sub-pixel. Expanded chips get the fisheye scale.
+            child.scaleX = if (collapsed) 1.0f else scale
+            child.scaleY = if (collapsed) 1.0f else scale
             // v1.6.4 rev2: alpha stays 1.0. v1.6.4 rev1 dimmed edge
             // chips to 0.5 which made them look "hidden" — the user
             // explicitly said "而不是隐藏". Keeping alpha at 1.0
