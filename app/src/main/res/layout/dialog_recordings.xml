@@ -76,6 +76,76 @@
                 app:resize_mode="fit"
                 app:show_timeout="0" />
 
+            <!-- v1.5.11: Big scrub bar for full-day playback. Hidden
+                 by default; shown only when playDayAsPlaylist() is
+                 active. Spans the full width at the bottom of the
+                 video container, above the back button. Shows the
+                 current wall-clock position within the 24h window
+                 and lets the user drag to jump to any minute.
+
+                 The built-in ExoPlayer controller's progress bar
+                 only reflects the CURRENT 60s clip — it can't
+                 span across the 1440-item playlist. We provide a
+                 separate SeekBar whose max = 24*60*60*1000 ms and
+                 whose progress = (currentWindowIndex * 60000) +
+                 player.currentPosition. Seeking sets ExoPlayer to
+                 the matching window + position via
+                 player.seekTo(windowIndex, positionMs). -->
+            <LinearLayout
+                android:id="@+id/dayScrubBarContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom"
+                android:orientation="vertical"
+                android:background="#CC000000"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp"
+                android:paddingTop="6dp"
+                android:paddingBottom="6dp"
+                android:visibility="gone">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginBottom="4dp">
+
+                    <TextView
+                        android:id="@+id/tvDayPosition"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="00:00:00"
+                        android:textColor="@android:color/white"
+                        android:textSize="12sp"
+                        android:textStyle="bold"
+                        android:fontFamily="monospace" />
+
+                    <View
+                        android:layout_width="0dp"
+                        android:layout_height="0dp"
+                        android:layout_weight="1" />
+
+                    <TextView
+                        android:id="@+id/tvDayDuration"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="24:00:00"
+                        android:textColor="@android:color/white"
+                        android:textSize="12sp"
+                        android:fontFamily="monospace" />
+                </LinearLayout>
+
+                <SeekBar
+                    android:id="@+id/daySeekBar"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:maxHeight="4dp"
+                    android:progressTint="@android:color/white"
+                    android:progressBackgroundTint="#66FFFFFF"
+                    android:thumbTint="@android:color/white" />
+            </LinearLayout>
+
             <!-- Standalone playback speed button. v1.5.3: moved out
                  of the player's settings (gear) menu — the user wanted
                  speed control exposed directly. Tapping opens a popup
