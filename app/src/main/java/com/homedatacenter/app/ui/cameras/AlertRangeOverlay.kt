@@ -66,16 +66,37 @@ class AlertRangeOverlay @JvmOverloads constructor(
         super.onDraw(canvas)
         if (alertRanges.isEmpty() || width <= 0 || height <= 0) return
         val h = height.toFloat()
-        // Draw the bar height as a slim 4dp band at the top of the
-        // overlay so it doesn't obscure the SeekBar's thumb.
-        val barH = 4f * resources.displayMetrics.density
+        // v1.5.14: draw the red bar at the FULL height of the overlay
+        // (was 4dp) so the alert segment is as tall as the SeekBar's
+        // progress track — much more visible against the white track.
+        // The overlay sits ON TOP of the SeekBar (FrameLayout stacking
+        // in dialog_recordings.xml) so it occludes the progress at
+        // alert time positions, which is exactly what the user wants:
+        // "alert happened here" stamped in red on the timeline.
+        val barH = h
+        // v1.5.15: minimum visible width for short alerts. Motion
+        // detection events are often only 3-10 seconds long, which
+        // on a 24-hour timeline at 720px maps to <0.1 pixels —
+        // completely invisible. The previous code skipped anything
+        // < 1px (the `continue` check), which meant ALL short alerts
+        // were silently dropped, producing an empty overlay even
+        // though logcat showed "7 ranges for camera 1". Now each
+        // range is drawn with at least minW pixels so even a 5s
+        // alert shows up as a visible thin red line on the timeline.
+        val minW = 4f
         for ((startMs, endMs) in alertRanges) {
             val startRatio = (startMs.toFloat() / maxMs).coerceIn(0f, 1f)
             val endRatio = (endMs.toFloat() / maxMs).coerceIn(0f, 1f)
             val left = startRatio * width
             val right = endRatio * width
-            if (right - left < 1f) continue  // skip sub-pixel ranges
-            canvas.drawRect(left, 0f, right, barH, alertPaint)
+            // Expand sub-pixel ranges to minW so they're visible.
+            // Center the expansion on the alert's midpoint.
+            if (right - left < minW) {
+                val center = (left + right) / 2f
+                canvas.drawRect(center - minW / 2f, 0f, center + minW / 2f, barH, alertPaint)
+            } else {
+                canvas.drawRect(left, 0f, right, barH, alertPaint)
+            }
         }
     }
 }
