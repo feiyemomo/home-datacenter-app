@@ -136,18 +136,24 @@
                          右下角". The bottom-right placement is the
                          conventional video player fullscreen button
                          location (matches YouTube, Bilibili, etc.) so
-                         the user's muscle memory carries over. -->
+                         the user's muscle memory carries over.
+                         v1.6.4 rev4: moved closer to corner (margin 6dp
+                         -> 2dp) and enlarged (iconSize 24dp -> 36dp,
+                         padding 8dp -> 12dp) per user request "全屏图标
+                         在靠近右下一些，并放大一点". -->
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnFullscreen"
                         style="@style/Widget.Material3.Button.IconButton"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_gravity="bottom|end"
-                        android:layout_margin="6dp"
+                        android:layout_marginEnd="2dp"
+                        android:layout_marginBottom="2dp"
                         android:background="#80000000"
                         android:minWidth="0dp"
                         android:minHeight="0dp"
-                        android:padding="8dp"
+                        android:padding="12dp"
+                        app:iconSize="36dp"
                         android:visibility="gone"
                         app:icon="@drawable/ic_fullscreen"
                         app:iconTint="@android:color/white" />
