@@ -444,17 +444,23 @@ class RecordingsDialog(
      * (start_time, end_time) into a day-relative (startMs, endMs)
      * pair that [AlertRangeOverlay] can render.
      *
+     * v1.5.13 FIX: previously we filtered by `alert.camera_id == camId`
+     * only. The backend's `alertEntry.CameraID` uses `omitempty` —
+     * when `LookupByFrigateSlug` fails (slug mismatch), the JSON
+     * response drops the field entirely and Android parses it as
+     * null. So matching by id alone missed all alerts whose Frigate
+     * slug doesn't match the current camera's streamName.
+     *
+     * New strategy: match by EITHER camera_id OR camera_slug (the
+     * slug derived from camera.streamName via the same slugifyName
+     * algorithm the backend uses). camera_slug is always present in
+     * the JSON (no omitempty) so this is the more reliable signal.
+     *
      * Threading:
      *  - Network call on Dispatchers.IO
      *  - UI update (setAlertRanges) on Dispatchers.Main
      *
-     * Failure: silently leaves the overlay empty — the day playback
-     * still works, just without red alert markers. Better UX than
-     * showing an error toast (the user can see the day's recording
-     * regardless of whether alert metadata loads).
-     *
-     * @param dayStartLocalMillis Day boundary in LOCAL time
-     *     (00:00:00 local) as UTC-anchored millis.
+     * @param dayStartLocalMillis Day boundary in LOCAL time.
      * @param dayEndLocalMillis Day boundary + 24h in LOCAL time.
      */
     private fun loadAlertRangesForDay(
@@ -482,13 +488,24 @@ class RecordingsDialog(
                 val decoded = resp.decodeData<
                     com.homedatacenter.app.data.model.AlertListData>()
                 val alerts = decoded?.alerts ?: emptyList()
-                // Filter: this camera (by id — backend populates
-                // camera_id via LookupByFrigateSlug) + falls within
-                // the user's selected LOCAL day window.
+
+                // v1.5.13: derive the expected Frigate slug from
+                // the camera's streamName using the same algorithm
+                // the backend uses (slugifyName in registry.go:
+                // keep [a-zA-Z0-9_-], replace others with _).
+                // Camera.streamName is nested in streamConfig but
+                // the backend's FrigateSlug uses streamName —
+                // for cameras without explicit streamName we fall
+                // back to camera.name which is what the user typed
+                // in RegisterCameraDialog.
                 val camId = camera.id
+                val expectedSlug = slugifyName(camera.name)
+
                 val dayRanges = alerts
                     .filter { alert ->
-                        val camMatch = alert.cameraId == camId
+                        val camMatch = alert.cameraId == camId ||
+                            (alert.cameraSlug.isNotEmpty() &&
+                                alert.cameraSlug == expectedSlug)
                         if (!camMatch) return@filter false
                         val startMs = (alert.startTime * 1000).toLong()
                         startMs in dayStartLocalMillis until dayEndLocalMillis
@@ -508,7 +525,8 @@ class RecordingsDialog(
                     .filter { (s, e) -> e > s }  // skip degenerate ranges
 
                 android.util.Log.d("RecordingsDialog",
-                    "Alert overlay: ${dayRanges.size} ranges for camera ${camera.id}")
+                    "Alert overlay: ${dayRanges.size} ranges for camera ${camera.id} " +
+                    "(slug=$expectedSlug, name=${camera.name})")
                 withContext(Dispatchers.Main) {
                     binding.alertOverlay.setAlertRanges(dayRanges)
                 }
@@ -517,6 +535,29 @@ class RecordingsDialog(
                     "Failed to load alert ranges: ${e.message}")
             }
         }
+    }
+
+    /**
+     * v1.5.13: replicates the backend's `slugifyName` algorithm
+     * (see home-datacenter/services/api/internal/camera/registry.go).
+     * Used to match alerts by camera_slug — the backend's
+     * `alertEntry.CameraID` uses `omitempty` and is missing when
+     * `LookupByFrigateSlug` fails, so we can't rely on camera_id
+     * alone.
+     *
+     * Algorithm: keep [a-zA-Z0-9_-], replace any other character
+     * with underscore, no case conversion.
+     */
+    private fun slugifyName(name: String): String {
+        if (name.isEmpty()) return ""
+        val sb = StringBuilder(name.length)
+        for (c in name) {
+            sb.append(
+                if (c in 'a'..'z' || c in 'A'..'Z' ||
+                    c in '0'..'9' || c == '_' || c == '-') c else '_'
+            )
+        }
+        return sb.toString()
     }
 
     private fun playRecording(recording: Recording) {
