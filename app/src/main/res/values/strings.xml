@@ -116,6 +116,11 @@
     <string name="detection_label_cat">猫</string>
     <string name="detection_label_bird">鸟</string>
 
+    <!-- Alert jump to camera (v1.6.0) -->
+    <string name="not_logged_in">未登录，请先登录</string>
+    <string name="alert_jump_camera_not_found">未找到对应摄像头，请手动选择</string>
+    <string name="alert_jump_failed">跳转失败，请重试</string>
+
     <!-- Camera detail / control page -->
     <string name="camera_detail_title">摄像头控制</string>
     <string name="camera_video_section">实时视频</string>

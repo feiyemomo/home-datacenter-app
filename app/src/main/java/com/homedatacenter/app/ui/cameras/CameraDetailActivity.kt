@@ -147,6 +147,19 @@ class CameraDetailActivity : AppCompatActivity() {
         // backend issue (default rtspURL strips audio via #audio=0),
         // not a permission issue.
         startPlayback()
+
+        // v1.6.0: if launched with an initial timestamp (alert click
+        // "查看录像"), auto-open the RecordingsDialog at that moment
+        // so the user lands at the alert's exact time without manual
+        // scrubbing. We post to the main looper so onCreate finishes
+        // first — otherwise showRecordings can race with the live
+        // stream's startPlayback() and trigger overlapping surfaces.
+        val initialTs = intent.getLongExtra(EXTRA_INITIAL_TIMESTAMP, 0L)
+        if (initialTs > 0L) {
+            binding.root.post {
+                if (!isFinishing) showRecordings(initialTs)
+            }
+        }
     }
 
     override fun onPause() {
@@ -559,10 +572,19 @@ class CameraDetailActivity : AppCompatActivity() {
         setupWebRtcControls()
     }
 
-    private fun showRecordings() {
+    private fun showRecordings(initialTimestamp: Long = 0L) {
         val cam = camera ?: return
         recordingsDialog?.dismiss()
-        recordingsDialog = RecordingsDialog(this, cam, container).apply { show() }
+        // v1.6.0: pass [initialTimestamp] (unix seconds) so the
+        // RecordingsDialog can auto-open the right day and seek to
+        // the alert's exact moment. Zero (default) means "open the
+        // dialog normally with no auto-seek".
+        recordingsDialog = RecordingsDialog(
+            context = this,
+            camera = cam,
+            container = container,
+            initialTimestamp = initialTimestamp,
+        ).apply { show() }
     }
 
     private fun showAlerts() {
@@ -1083,5 +1105,11 @@ class CameraDetailActivity : AppCompatActivity() {
     companion object {
         private const val TAG = "CameraDetailActivity"
         const val EXTRA_CAMERA_JSON = "camera_json"
+        // v1.6.0: optional initial playback position as a unix
+        // timestamp (seconds). When present (passed by the alerts
+        // fragment when the user taps "查看录像" on an alert), the
+        // activity auto-opens the RecordingsDialog with this timestamp
+        // so playback starts at the alert's exact moment.
+        const val EXTRA_INITIAL_TIMESTAMP = "initial_timestamp"
     }
 }
