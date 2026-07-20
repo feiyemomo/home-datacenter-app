@@ -362,13 +362,14 @@
                         android:layout_marginStart="8dp"
                         android:visibility="gone" />
 
-                    <!-- Current backend path (LAN vs Remote) chip.
-                         Populated by DashboardFragment.updateBackendPath()
-                         from BaseUrlResolver.current(). Shows which
-                         endpoint the app is currently routing API
-                         calls through, so the user can see at a
-                         glance whether they're on the fast home-LAN
-                         path or the slower Cloudflare Tunnel path. -->
+                    <!-- Backend path chip removed in v1.5.3: it
+                         duplicated the tvNetworkStrategy text on the
+                         left, both showing "局域网/远程" from
+                         BaseUrlResolver. Now tvNetworkStrategy carries
+                         the path label alone, and the backend's own
+                         strategy (P2P/Relay/IPv6) is shown in the
+                         network detail page to avoid the contradictory
+                         "P2P + 局域网" pair the user reported. -->
                     <LinearLayout
                         android:id="@+id/pathChip"
                         android:layout_width="wrap_content"
@@ -376,6 +377,7 @@
                         android:orientation="horizontal"
                         android:gravity="center_vertical"
                         android:layout_marginStart="10dp"
+                        android:visibility="gone"
                         android:background="@drawable/bg_status_pill"
                         android:paddingStart="8dp"
                         android:paddingEnd="8dp"

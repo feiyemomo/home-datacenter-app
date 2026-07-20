@@ -425,29 +425,49 @@ container.alertEvents
 [点击播放按钮]
     │
     ▼
-[startInlinePlayback]
-    │  resolveMp4Url, resolveHlsUrl
+[startPlayback] (v1.5.3：WebRTC 优先 → MP4 → HLS)
     │
-    ├── MP4 URL 存在 → preparePlayback(useMp4 = true)
+    ├── 摄像头在线 + WebRtcClient 可用
     │       │
     │       ▼
-    │   [ProgressiveMediaSource + DefaultLoadControl]
+    │   [startWebRtcStream]
+    │       │  ensureWebRtcClient → init SurfaceViewRenderer
+    │       │  fetchIceConfig → POST /api/v1/cameras/{id}/webrtc
     │       │
-    │       ├── onPlaybackStateChanged(READY) → 显示画面
+    │       ├── onConnected → 显示 SurfaceViewRenderer (sub-second 延迟)
     │       │
-    │       └── onPlayerError → fallback
-    │               │
-    │               ▼
-    │           preparePlayback(useMp4 = false)  (HLS fallback)
-    │               │
-    │               └── onPlayerError → stopInlinePlayback
+    │       └── onError → startMp4Playback (fallback)
     │
-    └── MP4 不存在但 HLS 存在 → preparePlayback(useMp4 = false)
+    └── 摄像头离线 / WebRTC 不可用
             │
-            └── onPlayerError → stopInlinePlayback
+            ▼
+        [startMp4Playback]
+            │  resolveMp4Url, resolveHlsUrl
+            │
+            ├── MP4 URL 存在 → preparePlayback(useMp4 = true)
+            │       │
+            │       ▼
+            │   [ProgressiveMediaSource + DefaultLoadControl]
+            │       │
+            │       ├── onPlaybackStateChanged(READY) → 显示画面
+            │       │
+            │       └── onPlayerError → fallback
+            │               │
+            │               ▼
+            │           preparePlayback(useMp4 = false)  (HLS fallback)
+            │               │
+            │               └── onPlayerError → 显示错误占位图
+            │
+            └── MP4 不存在但 HLS 存在 → preparePlayback(useMp4 = false)
+                    │
+                    └── onPlayerError → 显示错误占位图
 ```
 
-**为什么 MP4 优先**（早期版本曾用 HLS 优先，后来倒回来）：
+**为什么 v1.5.3 引入 WebRTC 作为主路径**：
+
+用户反馈 MP4 / HLS 在 LAN 上仍能感知到 ~3s 的端到端延迟（ExoPlayer 缓冲 + go2rtc 转码 + HTTP 报文分片）。WebRTC 直接走 RTP，无 HTTP 包装，理论延迟可压到 100-300ms（host candidate LAN）。go2rtc 同时暴露 WHEP 信令端点 `POST /api/v1/cameras/{id}/webrtc`，后端转发 SDP offer 给 go2rtc 的 `/api/v1/webrtc` 并原样返回 SDP answer。客户端用 `io.getstream:stream-webrtc-android:1.1.0`（Google `org.webrtc:google-webrtc` 的维护后继）创建 recvonly PeerConnection + UNIFIED_PLAN + GATHER_ONCE，等待 ICE gathering 完成后 POST 完整 SDP（non-trickle ICE）。失败场景（远程、UDP 被防火墙阻断）会自动 fallback 到 MP4 / HLS。
+
+**为什么保留 MP4 作为 ExoPlayer 主路径**（早期版本曾用 HLS 优先，后来倒回来）：
 
 go2rtc 的 HLS `Init()` helper（`internal/hls/session.go`）只等 3 秒（60 × 50ms）让 consumer 产出第二个 packet，否则返回 nil → `handlerInit` 响应 404。冷流（go2rtc 刚启动 RTSP 取流）或 HEVC→H.264 转码路径下 3 秒可能不够，ExoPlayer 又不会重试 init.mp4 请求，会把 404 直接上报为 Source error。hls.js 会自动重试，但 ExoPlayer 不会。MP4 stream 是连续 fMP4，不需要 init.mp4，ExoPlayer 的 `ProgressiveMediaSource` 能稳定处理。
 
@@ -790,6 +810,39 @@ binding.cardNetwork.setOnClickListener {
 - **ExoPlayerRendererFactory**：模拟器过滤 c2.goldfish.h264.decoder（初始化成功但每帧报错），真机启用 software-decoder fallback
 - **认证**：`Authorization: Bearer <token>` + `Cookie: home_token=<token>` 双 header（同时满足 home-api JWT 校验和 go2rtc cookie 透传）
 - **生命周期**：`onPause` 释放 player（避免后台占用 MediaCodec），用户回到详情页时点击"重新加载"恢复播放——而非自动恢复，避免通知栏下拉等短暂遮挡触发 buffering 循环
+
+### v1.5.3：WebRTC 直播主路径
+
+`CameraDetailActivity.setupVideo()` 中新增 `WebRtcClient`（[util/WebRtcClient.kt](../app/src/main/java/com/homedatacenter/app/util/WebRtcClient.kt)）：
+
+- **PeerConnectionFactory 初始化**：使用 `io.getstream:stream-webrtc-android:1.1.0`（Google `org.webrtc:google-webrtc` 的维护后继），创建 `EglBase` + `JavaAudioDeviceModule` + H264 硬件编解码器
+- **PeerConnection 配置**：`UNIFIED_PLAN` + `GATHER_ONCE`（non-trickle ICE，等待所有 candidate 收集完成再 POST）
+- **SDP 信令**：`POST /api/v1/cameras/{id}/webrtc`，Content-Type: `application/sdp`（原始 SDP 文本，非 JSON），后端返回 SDP answer
+- **ICE 配置**：`GET /api/v1/cameras/ice` 返回 `{ice_servers, webrtc_base}`，缓存复用
+- **recvonly 方向**：`RtpTransceiverDirection.RECV_ONLY`，音频 + 视频各一
+- **认证**：`Authorization: Bearer <token>` + `Cookie: home_token=<token>` 双 header
+- **SurfaceViewRenderer**：与 ExoPlayer `StyledPlayerView` 并列于 `videoContainer`，初始 `visibility=gone`，WebRTC 模式下显示并隐藏 `StyledPlayerView`
+- **Fallback 链路**：WebRTC → MP4 → HLS → 错误占位图，每一步失败自动切到下一步
+- **生命周期**：`onCreate` 中 `webRtcClient.init()`，`onDestroy` 中先 `surfaceRenderer.release()` 再 `webRtcClient.shutdown()`（EGL 释放顺序）
+
+### v1.5.3：播放器全屏 + 播放速度独立按钮
+
+- `PlayerFullscreenHelper`（[util/PlayerFullscreenHelper.kt](../app/src/main/java/com/homedatacenter/app/util/PlayerFullscreenHelper.kt)）统一处理三个播放器宿主（`CameraDetailActivity`、`RecordingsDialog`、`AlertsDialog`）的横屏全屏：
+  - 调用 `setFullscreenButtonClickListener` 让 ExoPlayer 2.x `StyledPlayerView` 的内置全屏按钮显示
+  - `secondaryPlayerView` 参数：可选的次播放器视图（WebRTC 的 `SurfaceViewRenderer`），在全屏时同样展开到 `MATCH_PARENT`
+  - `fullscreenButton` 参数：独立的 overlay 全屏按钮，用于 WebRTC 模式（`StyledPlayerView` GONE 时内置按钮不可达）以及录像/报警 dialog（避免重写 controller 布局）
+  - `toggleFullscreen()`：外部按钮调用，切换 `isFullscreen` 并 `applyFullscreenState()`
+  - `configChanges=orientation|screenSize|keyboardHidden|screenLayout` 已在 `CameraDetailActivity` 的 manifest 中声明，转屏不重建 Activity，ExoPlayer 不被销毁
+- 录像 / 报警 dialog 新增 `btnPlaybackSpeed` overlay（`PopupMenu` 0.5x / 1x / 1.5x / 2x），从播放器齿轮设置菜单中移出
+- `resize_mode="fit"`（信箱模式），避免之前 `resize_mode="zoom"` 裁切画面导致"图像大小与手机屏幕不适应"
+
+### v1.5.3：状态栏间距 + Dashboard 卡片等高 + Frigate 录像状态
+
+- `activity_camera_detail.xml` 根 `ScrollView` 加 `android:fitsSystemWindows="true"`，整个布局推到状态栏下方，避免 MaterialToolbar 被时间/电池/icon 遮挡
+- `item_stat_card.xml` 重写：`FrameLayout` 固定 120dp 高度，`tvValue` 用 `weight=1 + gravity=bottom|start` 强制 4 张状态卡片（设备 / MQTT / 摄像头 / 运行时长）等高对齐
+- `DashboardFragment.formatUptime()` 改为紧凑格式：`30d 5h` / `5h 23m` / `12m 30s`（替代中文 "30天 5小时"），避免运行时间显示不全
+- `Camera.isRecordingEnabled` 扩展属性：从 `camera.meta["recording"]` 解析 `{enabled, retention_days, segment_seconds}`，不再硬编码 `false`（Frigate 实际已开启持续录像）
+- `DashboardFragment.updateNetworkStatus()`：`tvNetworkStrategy` 改为读 `BaseUrlResolver.current()` 显示"局域网/远程"，与之前的 `status.strategy`（P2P/Relay）冲突；同时隐藏 `pathChip` 冗余显示
 
 ### PTZ 控制图标统一
 

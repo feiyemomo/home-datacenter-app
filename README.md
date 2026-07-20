@@ -1,9 +1,9 @@
 # Home Datacenter App
 
-家庭数据中心 Android 客户端 — 一个用 **Kotlin + Jetpack Compose + ExoPlayer** 实现的家庭 NVR / IoT 控制台，配合 [home-datacenter](https://github.com/feiyemomo/home-datacenter) 后端使用，提供摄像头预览、HLS 直播（含音频）、录像回放、报警查看、设备状态、天气信息、局域网/远程自动切换和实时 WebSocket 推送。
+家庭数据中心 Android 客户端 — 一个用 **Kotlin + Jetpack Compose + ExoPlayer + WebRTC** 实现的家庭 NVR / IoT 控制台，配合 [home-datacenter](https://github.com/feiyemomo/home-datacenter) 后端使用，提供摄像头预览、WebRTC/MP4/HLS 直播（含音频）、录像回放、报警查看、设备状态、天气信息、局域网/远程自动切换和实时 WebSocket 推送。
 
 > 服务端项目：<https://github.com/feiyemomo/home-datacenter>
-> 当前版本：**v1.5.2**（versionCode 22）
+> 当前版本：**v1.5.3**（versionCode 23）
 
 ---
 
@@ -35,7 +35,7 @@
 | Compile SDK | 36 |
 | Java / Kotlin | 17 / 2.0 |
 | AGP | 9.2.1 |
-| 当前版本 | 1.5.2 (versionCode 22) |
+| 当前版本 | 1.5.3 (versionCode 23) |
 | 默认服务器 | `https://api.feiyemomo.top/`（远程） / `http://192.168.31.234:8088/`（局域网，自动探测） |
 
 App 通过 `(user_id, access_key)` 换取 JWT 后访问 `home-datacenter` 的 REST API 与 WebSocket。**BaseUrlResolver** 在启动时通过后台守护线程异步探测局域网 `http://192.168.31.234:8088/` 是否可达（TTFB ~10ms vs Cloudflare Tunnel 1.4s+），可达则切到局域网，否则走远程 Cloudflare Tunnel。启动调度采用指数退避重试（1.5s → 4s → 9s → 16s），覆盖真机「WiFi connected but not validated」窗口；同时附加 TCP socket 直连探测作为 OkHttp cleartext 拒绝时的兜底。NetworkChangeMonitor 注册 ConnectivityManager.NetworkCallback，在 WiFi/移动网络切换时立即触发 re-probe，无需等 5 分钟 TTL。摄像头直播走 go2rtc 暴露的 MP4（主）+ HLS（备），后端根据摄像头 `capabilities.audio` 在 go2rtc 流 URL 上自动追加 `#audio=aac` 启用音频转码，前端通过 ExoPlayer `volume` 控制静音/取消静音。
@@ -45,7 +45,7 @@ App 通过 `(user_id, access_key)` 换取 JWT 后访问 `home-datacenter` 的 RE
 ## 功能特性
 
 - **首页（Dashboard）**：天气卡片 + 系统状态网格（MQTT / 设备 / 摄像头 / 运行时长） + 网络质量卡片（含**当前路径标签**：局域网=绿点 / 远程=琥珀点，每 5s 刷新） + 最近报警列表 + 实时检测 WS 横幅。
-- **摄像头（Cameras）**（v1.5.2 重构）：列表改为**紧凑缩略图卡片**（128×72 缩略图 + 名称 / 厂商 / codec 徽章），点击整卡进入 `CameraDetailActivity`；详情页顶部为 **StyledPlayerView 直播区**（MP4 优先、HLS 容错，surface-before-prepare 模式避免 BAD_INDEX），下方为三按钮动作区——`查看录像`、`报警记录`、`重新加载`——分别打开 `RecordingsDialog`、`AlertsDialog`、重启直播流。`CameraDetailActivity` 同时承载 PTZ / 预设位 / 音频开关 / 录制开关 / H264 切换 / 删除（管理员）。`CamerasFragment` 列表不再持有 ExoPlayer 实例，滚动只解码缩略图位图（LRU 16 条缓存），翻页/复用零 MediaCodec 开销。**注册 FAB 移到顶部右上**（mini size + `ic_add`），不再与底部导航冲突。
+- **摄像头（Cameras）**（v1.5.2 重构，v1.5.3 加入 WebRTC 直播）：列表改为**紧凑缩略图卡片**（128×72 缩略图 + 名称 / 厂商 / codec 徽章），点击整卡进入 `CameraDetailActivity`；详情页顶部为 **WebRTC 优先直播区**（v1.5.3：`WebRtcClient` 通过 `POST /api/v1/cameras/{id}/webrtc` 走 WHEP 信令，sub-second 延迟；失败自动 fallback 到 MP4 → HLS），下方为三按钮动作区——`查看录像`、`报警记录`、`重新加载`——分别打开 `RecordingsDialog`、`AlertsDialog`、重启直播流。`CameraDetailActivity` 同时承载 PTZ / 预设位 / 音频开关 / **Frigate 持续录像开关（v1.5.3：从 `camera.meta["recording"]` 解析实际状态，不再硬编码 false）** / H264 切换 / 删除（管理员）。`CamerasFragment` 列表不再持有 ExoPlayer 实例，滚动只解码缩略图位图（LRU 16 条缓存），翻页/复用零 MediaCodec 开销。**注册 FAB 移到顶部右上**（mini size + `ic_add`），不再与底部导航冲突。**v1.5.3：状态栏间距由根 ScrollView `fitsSystemWindows=true` 推到状态栏下方；播放器全屏按钮强制横屏，独立 `btnFullscreen` overlay 兼容 WebRTC 与 ExoPlayer 模式**。
 - **报警（Alerts）**（v1.5.2 精简）：报警项布局重写——删除"截图"按钮、删除可展开详情、删除大图模态；保留缩略图 + 标签 + 摄像头名 + 时间 + **"查看录像"** Chip，点击跳转摄像头 tab。修复"前门"等长摄像头名截断、按钮文字溢出问题。
 - **设备（Devices）**：所有已绑定设备的状态卡片，支持撤销设备。
 - **设置（Settings）**：**个人资料卡片**（用户名 / 角色 / JWT user_id / device_id / 签发与到期时间 / 剩余天数） + **管理员分区**（仅 `prefsManager.isAdmin=true` 时显示，入口跳转 `UsersActivity`） + 主题切换（明 / 暗 / 跟随系统） + 退出登录 + 版本号。
@@ -396,14 +396,14 @@ versionName = "1.4.3"
 | DELETE | `/api/v1/cameras/{id}/presets/{alias}` | 删除预置位 |
 | POST | `/api/v1/cameras/{id}/preset/{alias}` | 跳转预置位 |
 
-### WebRTC（仅 LAN 可用）
+### WebRTC（v1.5.3 主路径，跨 LAN / 远程）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/v1/cameras/ice` | ICE 配置 |
-| POST | `/api/v1/cameras/{id}/webrtc` | SDP offer/answer |
+| POST | `/api/v1/cameras/{id}/webrtc` | WHEP SDP offer/answer（Content-Type: application/sdp） |
 
-> Cloudflare Tunnel 不转发 UDP，所以 WebRTC 在移动网络上不可用。客户端以 HLS 为主。
+> v1.5.3：客户端通过 `WebRtcClient`（[io.getstream:stream-webrtc-android:1.1.0](https://github.com/getstream/stream-webrtc-android)）发起 recvonly PeerConnection，等待 ICE gathering 完成后 POST 完整 SDP offer（non-trickle ICE），后端返回 SDP answer 即开始 sub-second 直播。失败自动 fallback 到 MP4 → HLS。Cloudflare Tunnel 不转发 UDP，因此远程场景下 WebRTC 通常会失败并自动切到 MP4。
 
 ### 标准响应包络
 
@@ -417,18 +417,31 @@ versionName = "1.4.3"
 
 ## 视频播放策略
 
-### 直播（inline 播放）
+### 直播（v1.5.3：WebRTC 优先，MP4/HLS 备用）
 
-[CameraAdapter.kt](app/src/main/java/com/homedatacenter/app/ui/cameras/CameraAdapter.kt) 中的 `startInlinePlayback` 按以下顺序尝试：
+[CameraDetailActivity.kt](app/src/main/java/com/homedatacenter/app/ui/cameras/CameraDetailActivity.kt) 中的 `startPlayback` 按以下顺序尝试：
 
-1. **MP4（主）** — `${base}/api/v1/cameras/{id}/stream.mp4`（home-api 代理 go2rtc 的 fMP4 流）
+1. **WebRTC（主，v1.5.3）** — `POST ${base}/api/v1/cameras/{id}/webrtc`
+   - `WebRtcClient`（`io.getstream:stream-webrtc-android:1.1.0`）创建 recvonly PeerConnection，等待 ICE gathering 完成（`GATHER_ONCE` + 轮询 `iceGatheringState()`，超时 5s）后 POST 完整 SDP offer 到 WHEP 端点。
+   - ICE 配置来自 `GET /api/v1/cameras/ice`（缓存复用），LAN 场景下通常为空（host candidate 足够）。
+   - 视频通过 `SurfaceViewRenderer` 渲染（与 ExoPlayer `StyledPlayerView` 并列于 `videoContainer`，初始 `visibility=gone`），音频通过 `JavaAudioDeviceModule` 走系统媒体流。
+   - **延迟**：LAN host-candidate ~100-300ms，远程 STUN/TURN 500ms-2s。Cloudflare Tunnel 不转发 UDP，远程场景下 ICE 通常 FAILED → 自动 fallback。
+2. **MP4（备 1）** — `${base}/api/v1/cameras/{id}/stream.mp4`（home-api 代理 go2rtc 的 fMP4 流）
    - ExoPlayer `ProgressiveMediaSource`
-   - 之所以改回 MP4 优先：go2rtc 的 HLS `Init()` helper（`internal/hls/session.go`）只等 3 秒（60 × 50ms）让 consumer 产出第二个 packet，否则返回 nil → `handlerInit` 404。冷流 / 转码路径下 3 秒可能不够，ExoPlayer 又不会重试 init.mp4，会直接把 404 上报为 Source error。hls.js 会自动重试，但 ExoPlayer 不会，所以 MP4-first 更稳。
-2. **HLS（备）** — `camera.stream.hls_url` 或 `${base}/api/stream.m3u8?src=<name>`
+   - 之所以保留 MP4 作为 ExoPlayer 主路径：go2rtc 的 HLS `Init()` helper（`internal/hls/session.go`）只等 3 秒（60 × 50ms）让 consumer 产出第二个 packet，否则返回 nil → `handlerInit` 404。冷流 / 转码路径下 3 秒可能不够，ExoPlayer 又不会重试 init.mp4，会直接把 404 上报为 Source error。hls.js 会自动重试，但 ExoPlayer 不会，所以 MP4-first 更稳。
+3. **HLS（备 2）** — `camera.stream.hls_url` 或 `${base}/api/stream.m3u8?src=<name>`
    - ExoPlayer `HlsMediaSource`
    - `MediaItem.LiveConfiguration`：`targetOffsetMs=3000`, `maxOffsetMs=10000`, `minOffsetMs=1000`（目标 ~3s 端到端延迟）
    - 低延迟 `DefaultLoadControl`：`minBufferMs=2000`, `maxBufferMs=5000`, `bufferForPlaybackMs=1000`, `bufferForPlaybackAfterRebufferMs=1500`
-3. **失败** — 显示错误占位图
+4. **失败** — 显示错误占位图，点击重试
+
+### 录像 / 报警片段回放
+
+`RecordingsDialog` / `AlertsDialog` 通过 ExoPlayer `ProgressiveMediaSource` 播放后端拼接的 MP4 片段。v1.5.3：
+- `resize_mode="fit"`（信箱模式，避免裁切）
+- 独立 `btnPlaybackSpeed` overlay（0.5x / 1x / 1.5x / 2x，从设置菜单移出）
+- 独立 `btnFullscreen` overlay（强制横屏，与 `PlayerFullscreenHelper` 配合）
+- 错误处理：失败显示 `tvVideoError`，不自动 fallback（录像为单文件，无备选路径）
 
 ### Surface 时序
 

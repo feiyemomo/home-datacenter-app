@@ -16,8 +16,8 @@ android {
         applicationId = "com.homedatacenter.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = 22
-        versionName = "1.5.2"
+        versionCode = 23
+        versionName = "1.5.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -101,6 +101,14 @@ dependencies {
     implementation("com.google.android.exoplayer:exoplayer-core:2.19.1")
     implementation("com.google.android.exoplayer:exoplayer-hls:2.19.1")
     implementation("com.google.android.exoplayer:exoplayer-ui:2.19.1")
+
+    // WebRTC — used for sub-second live streams via go2rtc's /api/v1/webrtc
+    // endpoint. Stream's Android WebRTC build is the maintained successor
+    // to Google's deprecated org.webrtc:google-webrtc; ships arm64-v8a +
+    // armeabi-v7a + x86_64 + x86 ABIs. Used as the primary live transport
+    // in v1.5.3 (MP4 + HLS kept as fallback when WebRTC fails or when
+    // the backend doesn't expose go2rtc's WebRTC route).
+    implementation("io.getstream:stream-webrtc-android:1.1.0")
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

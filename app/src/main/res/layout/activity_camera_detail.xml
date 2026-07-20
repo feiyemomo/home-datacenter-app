@@ -1,9 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- v1.5.3: fitsSystemWindows=true on root ScrollView pushes the
+     whole layout below the status bar so the MaterialToolbar isn't
+     clipped under the time/battery/icons. -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:fillViewport="true"
+    android:fitsSystemWindows="true"
     android:background="@color/bg_primary">
 
     <LinearLayout
@@ -41,6 +45,34 @@
                 app:show_buffering="when_playing"
                 app:show_timeout="0" />
 
+            <!-- WebRTC surface: shown when the live stream is delivered
+                 via WebRtcClient (v1.5.3 primary path). Hidden when the
+                 ExoPlayer MP4/HLS fallback is active. -->
+            <org.webrtc.SurfaceViewRenderer
+                android:id="@+id/surfaceRenderer"
+                android:layout_width="match_parent"
+                android:layout_height="200dp"
+                android:visibility="gone" />
+
+            <!-- Fullscreen button overlay for WebRTC mode. The
+                 StyledPlayerView's built-in fullscreen button isn't
+                 visible when playerView is GONE, so we provide a
+                 standalone overlay that calls into the same
+                 PlayerFullscreenHelper. -->
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnWebRtcFullscreen"
+                style="@style/Widget.Material3.Button.IconButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="top|end"
+                android:layout_margin="4dp"
+                android:background="@android:color/transparent"
+                android:contentDescription="@string/camera_detail_title"
+                android:elevation="8dp"
+                android:visibility="gone"
+                app:icon="@drawable/ic_fullscreen"
+                app:iconTint="@android:color/white" />
+
             <ProgressBar
                 android:id="@+id/progressVideo"
                 android:layout_width="wrap_content"
@@ -68,6 +100,7 @@
 
             <!-- Quick actions row -->
             <LinearLayout
+                android:id="@+id/actionButtonsRow"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"

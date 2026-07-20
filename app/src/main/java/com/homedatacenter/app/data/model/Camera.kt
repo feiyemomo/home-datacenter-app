@@ -66,6 +66,30 @@ data class Camera(
      */
     val hasMotion: Boolean
         get() = capabilities["motion"] == true
+
+    /**
+     * True when Frigate continuous recording is enabled for this
+     * camera. The recording plan is surfaced by the backend via
+     * the Camera.meta map under the "recording" key, shaped as
+     * `{enabled: bool, retention_days: int, segment_seconds: int}`.
+     * Defaults to false when the field is missing or malformed
+     * (older backends don't populate meta.recording).
+     */
+    val isRecordingEnabled: Boolean
+        get() {
+            val element = meta["recording"] ?: return false
+            // The recording value can be either a JsonObject
+            // ({enabled: true, ...}) or a bare Boolean (legacy).
+            return try {
+                when (element) {
+                    is kotlinx.serialization.json.JsonObject ->
+                        element["enabled"]?.toString()?.toBooleanStrictOrNull() == true
+                    else -> element.toString().toBooleanStrictOrNull() == true
+                }
+            } catch (_: Exception) {
+                false
+            }
+        }
 }
 
 @Serializable

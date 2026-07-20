@@ -377,14 +377,18 @@ class DashboardFragment : Fragment() {
 
     /** Format a duration in seconds as "X天 Y小时" / "X小时 Y分" / "X分 Y秒". */
     private fun formatUptime(seconds: Long): String {
+        // Compact format: 30d 5h / 5h 12m / 12m 30s / 45s
+        // (previously used full Chinese strings like "30天 5小时"
+        // which broke the 4-card grid alignment on narrow phones
+        // because the long string overflowed the value TextView).
         val s = seconds.coerceAtLeast(0)
         val days = s / 86_400
         val hours = (s % 86_400) / 3_600
         val mins = (s % 3_600) / 60
         return when {
-            days >= 1 -> getString(R.string.uptime_format_dh, days, hours)
-            hours >= 1 -> getString(R.string.uptime_format_hm, hours, mins)
-            else -> getString(R.string.uptime_format_ms, mins, s % 60)
+            days >= 1 -> "${days}d ${hours}h"
+            hours >= 1 -> "${hours}h ${mins}m"
+            else -> "${mins}m ${s % 60}s"
         }
     }
 
@@ -426,26 +430,27 @@ class DashboardFragment : Fragment() {
             iv.setImageResource(if (idx < q) R.drawable.ic_star_on else R.drawable.ic_star_off)
         }
 
-        // Strategy text — show the ACTUAL strategy the system is
-        // currently using (status.strategy), not the initial one.
-        // The initial path is the safe default the system boots with
-        // (usually "relay"); the actual strategy reflects what the
-        // probing found reachable (e.g. "p2p" or "ipv6_direct").
-        // Showing the actual current path is what the user wants to
-        // see at a glance — "当前路径: P2P" is clearer than a bare
-        // "Relay" word with no context.
-        val actualLabel = when (status.strategy) {
-            "ipv6_direct" -> "IPv6 直连"
-            "p2p" -> "P2P"
-            "relay" -> getString(R.string.network_relay)
-            else -> status.strategy.ifBlank { getString(R.string.network_unknown) }
-        }
-        binding.tvNetworkStrategy.text = actualLabel
+        // The "当前路径" label shows the ACTUAL client-side path used
+        // to reach the backend — read from BaseUrlResolver, not from
+        // the backend's `status.strategy` field. The backend's strategy
+        // field reflects what the backend probed as reachable FROM THE
+        // SERVER'S perspective (P2P / Relay / IPv6 direct), which is
+        // independent of how this client is reaching the backend
+        // (LAN vs Cloudflare Tunnel). The previous version conflated
+        // these two and showed contradictory "P2P + 局域网" pairs.
+        // Backend strategy detail has moved to NetworkDetailActivity
+        // for users who want to inspect it.
+        val mainActivity = activity as? MainActivity
+        val currentUrl = mainActivity?.container?.baseUrlResolver?.current().orEmpty()
+        val isLan = currentUrl.contains("192.168.") || currentUrl.startsWith("http://")
+        val pathLabel = if (isLan) "局域网" else "远程"
+        binding.tvNetworkStrategy.text = pathLabel
 
-        // Upgrade hint: when the initial path is better than the
-        // current strategy (e.g. system is on relay but P2P is
-        // available as the initial target), show an upgrade arrow.
-        // This mirrors the web dashboard's "↑ upgradable to P2P" hint.
+        // The "↑ upgradable to X" hint still uses the backend's
+        // strategy vs initial comparison — that signal is about the
+        // backend's reachability, useful as a "you could have better
+        // server-side connectivity" hint even when the client is on
+        // a fast LAN path.
         val canUpgrade = status.initial != status.strategy &&
             status.initial != "relay" && status.initial.isNotBlank()
         if (canUpgrade) {
