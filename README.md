@@ -3,7 +3,7 @@
 家庭数据中心 Android 客户端 — 一个用 **Kotlin + Jetpack Compose + ExoPlayer + WebRTC** 实现的家庭 NVR / IoT 控制台，配合 [home-datacenter](https://github.com/feiyemomo/home-datacenter) 后端使用，提供摄像头预览、WebRTC/MP4/HLS 直播（含音频）、录像回放、报警查看、设备状态、天气信息、局域网/远程自动切换和实时 WebSocket 推送。
 
 > 服务端项目：<https://github.com/feiyemomo/home-datacenter>
-> 当前版本：**v1.5.3**（versionCode 23）
+> 当前版本：**v1.5.4**（versionCode 24）
 
 ---
 
@@ -35,7 +35,7 @@
 | Compile SDK | 36 |
 | Java / Kotlin | 17 / 2.0 |
 | AGP | 9.2.1 |
-| 当前版本 | 1.5.3 (versionCode 23) |
+| 当前版本 | 1.5.4 (versionCode 24) |
 | 默认服务器 | `https://api.feiyemomo.top/`（远程） / `http://192.168.31.234:8088/`（局域网，自动探测） |
 
 App 通过 `(user_id, access_key)` 换取 JWT 后访问 `home-datacenter` 的 REST API 与 WebSocket。**BaseUrlResolver** 在启动时通过后台守护线程异步探测局域网 `http://192.168.31.234:8088/` 是否可达（TTFB ~10ms vs Cloudflare Tunnel 1.4s+），可达则切到局域网，否则走远程 Cloudflare Tunnel。启动调度采用指数退避重试（1.5s → 4s → 9s → 16s），覆盖真机「WiFi connected but not validated」窗口；同时附加 TCP socket 直连探测作为 OkHttp cleartext 拒绝时的兜底。NetworkChangeMonitor 注册 ConnectivityManager.NetworkCallback，在 WiFi/移动网络切换时立即触发 re-probe，无需等 5 分钟 TTL。摄像头直播走 go2rtc 暴露的 MP4（主）+ HLS（备），后端根据摄像头 `capabilities.audio` 在 go2rtc 流 URL 上自动追加 `#audio=aac` 启用音频转码，前端通过 ExoPlayer `volume` 控制静音/取消静音。
@@ -403,7 +403,7 @@ versionName = "1.4.3"
 | GET | `/api/v1/cameras/ice` | ICE 配置 |
 | POST | `/api/v1/cameras/{id}/webrtc` | WHEP SDP offer/answer（Content-Type: application/sdp） |
 
-> v1.5.3：客户端通过 `WebRtcClient`（[io.getstream:stream-webrtc-android:1.1.0](https://github.com/getstream/stream-webrtc-android)）发起 recvonly PeerConnection，等待 ICE gathering 完成后 POST 完整 SDP offer（non-trickle ICE），后端返回 SDP answer 即开始 sub-second 直播。失败自动 fallback 到 MP4 → HLS。Cloudflare Tunnel 不转发 UDP，因此远程场景下 WebRTC 通常会失败并自动切到 MP4。
+> v1.5.3：客户端通过 `WebRtcClient`（[io.getstream:stream-webrtc-android:1.3.10](https://github.com/getstream/stream-webrtc-android)，v1.5.4 升级以支持 Android 15+ 16KB page size）发起 recvonly PeerConnection，等待 ICE gathering 完成后 POST 完整 SDP offer（non-trickle ICE），后端返回 SDP answer 即开始 sub-second 直播。失败自动 fallback 到 MP4 → HLS。Cloudflare Tunnel 不转发 UDP，因此远程场景下 WebRTC 通常会失败并自动切到 MP4。
 
 ### 标准响应包络
 

@@ -24,7 +24,7 @@ fragmentKtx = "1.8.2"
 swiperefreshlayout = "1.1.0"
 webkit = "1.11.0"
 gridlayout = "1.0.0"
-composeBom = "2024.09.00"
+composeBom = "2025.06.00"
 activityCompose = "1.9.0"
 lifecycleRuntimeCompose = "2.8.4"
 
