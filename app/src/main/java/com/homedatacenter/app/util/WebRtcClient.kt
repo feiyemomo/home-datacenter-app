@@ -237,7 +237,12 @@ class WebRtcClient(
                 }
             }
             override fun onTrack(transceiver: RtpTransceiver?) {
-                val track = transceiver?.receiver?.track() ?: return
+                val track = transceiver?.receiver?.track() ?: run {
+                    android.util.Log.w(TAG, "onTrack: transceiver.receiver.track() = null")
+                    return
+                }
+                android.util.Log.d(TAG, "onTrack: kind=${track.kind()} " +
+                    "direction=${transceiver?.direction}")
                 when (track.kind()) {
                     MediaStreamTrack.VIDEO_TRACK_KIND -> {
                         val vt = track as VideoTrack
@@ -250,18 +255,20 @@ class WebRtcClient(
                         // v1.5.8: capture the audio track so the
                         // control bar's mute button can toggle it.
                         // v1.5.9: explicitly enable + max volume.
-                        // Some go2rtc SDP answers ship the audio
-                        // track in a "disabled" state — without
-                        // these calls the user sees video but no
-                        // audio. setEnabled(true) starts playout
-                        // through the AudioDeviceModule; setVolume
-                        // ensures the gain isn't zero (some
-                        // hardware defaults to 0 on recvonly
-                        // tracks until told otherwise).
+                        // v1.5.13: add diagnostic logging. The user
+                        // reported "no sound" — if this branch never
+                        // fires it confirms the backend strips
+                        // audio (default rtspURL uses #audio=0 when
+                        // Capabilities["audio"] is not true).
                         val at = track as AudioTrack
                         audioTrack = at
+                        android.util.Log.d(TAG, "onTrack: audio track received, " +
+                            "enabled=${at.enabled()}")
                         at.setEnabled(true)
-                        at.setVolume(1.0)
+                        runCatching { at.setVolume(1.0) }
+                    }
+                    else -> {
+                        android.util.Log.w(TAG, "onTrack: unknown track kind=${track.kind()}")
                     }
                 }
             }

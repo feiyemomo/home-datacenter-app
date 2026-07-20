@@ -1,8 +1,6 @@
 package com.homedatacenter.app.ui.cameras
 
-import android.Manifest
 import android.app.AlertDialog
-import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.view.LayoutInflater
@@ -13,9 +11,7 @@ import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -107,25 +103,6 @@ class CameraDetailActivity : AppCompatActivity() {
     // Cached ICE config from /api/v1/cameras/ice — fetched once
     // per activity instance (re-fetched on retry if null).
     private var cachedIceConfig: IceConfig? = null
-    // v1.5.12: RECORD_AUDIO runtime permission state. WebRTC's
-    // JavaAudioDeviceModule requires RECORD_AUDIO (a dangerous
-    // permission) to initialize its AudioRecord + AudioTrack
-    // pipeline — even for recvonly streams. Without it the
-    // audioTrack is captured but playout silently fails (no
-    // AudioFocus + no AudioTrack output device).
-    private var hasRecordAudioPermission = false
-    private val requestRecordAudioLauncher =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            hasRecordAudioPermission = granted
-            if (granted) {
-                android.util.Log.d(TAG, "RECORD_AUDIO granted — starting playback")
-                startPlayback()
-            } else {
-                android.util.Log.w(TAG, "RECORD_AUDIO denied — starting playback without audio")
-                Toast.makeText(this, "未授予录音权限，直播将无声音", Toast.LENGTH_LONG).show()
-                startPlayback()
-            }
-        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -162,31 +139,14 @@ class CameraDetailActivity : AppCompatActivity() {
 
         loadPresets()
 
-        // v1.5.12: ensure RECORD_AUDIO is granted before starting
-        // playback. WebRTC's JavaAudioDeviceModule needs it even
-        // for recvonly streams (audioTrack playout silently fails
-        // without it). Without permission we'd see onTrack fire +
-        // setEnabled(true) + setVolume(1.0) called but the user
-        // would still hear nothing.
-        ensureRecordAudioThenStart()
-    }
-
-    /**
-     * v1.5.12: checks RECORD_AUDIO permission; if granted, starts
-     * playback immediately. If not, requests it via the launcher
-     * — playback starts in the callback once the user responds
-     * (granted or denied). If denied, the user is warned but
-     * playback still proceeds (video without audio).
-     */
-    private fun ensureRecordAudioThenStart() {
-        hasRecordAudioPermission = ContextCompat.checkSelfPermission(
-            this, Manifest.permission.RECORD_AUDIO
-        ) == PackageManager.PERMISSION_GRANTED
-        if (hasRecordAudioPermission) {
-            startPlayback()
-        } else {
-            requestRecordAudioLauncher.launch(Manifest.permission.RECORD_AUDIO)
-        }
+        // v1.5.13: revert the v1.5.12 RECORD_AUDIO permission
+        // request. WebRTC recvonly doesn't call AudioRecord.startRecording()
+        // so RECORD_AUDIO isn't required; only MODIFY_AUDIO_SETTINGS
+        // (a normal permission declared in AndroidManifest.xml) is
+        // needed for AudioTrack playout. The "no sound" issue is a
+        // backend issue (default rtspURL strips audio via #audio=0),
+        // not a permission issue.
+        startPlayback()
     }
 
     override fun onPause() {
