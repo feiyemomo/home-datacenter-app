@@ -990,15 +990,38 @@ class CameraDetailActivity : AppCompatActivity() {
             return
         }
         binding.tvVideoError.visibility = View.GONE
+        // v1.6.18: skip MP4 on remote networks, fall straight to HLS.
+        // The dashboard's fallback ladder is WebRTC → HLS (no MP4
+        // middle tier). MP4 is an infinite fragmented-MP4 stream
+        // served by go2rtc through Cloudflare Tunnel — on remote
+        // networks the combination of 1.4s+ TTFB + tunnel buffer
+        // flushing + ExoPlayer's ProgressiveMediaSource (which has
+        // no segment-retry logic) causes frequent connection resets
+        // that surface as PlaybackException. HLS, by contrast,
+        // fetches discrete .ts segments with per-segment retry,
+        // making it far more resilient on flaky links.
+        //
+        // LAN keeps MP4 as the first fallback because go2rtc's fMP4
+        // stream starts in ~1-2s on LAN vs 3-5s for HLS (HLS needs
+        // to generate the init segment + first .ts segment).
+        val isLan = container.baseUrlResolver.isLan()
+        // v1.6.18: on remote, prefer HLS over MP4 (see comment above).
+        // If HLS URL is missing on remote, fall back to MP4 rather
+        // than erroring out — better to try MP4 than show a black screen.
+        val useMp4 = when {
+            isLan -> mp4Url.isNotBlank()
+            hlsUrl.isNotBlank() -> false
+            else -> mp4Url.isNotBlank() // remote but no HLS — try MP4
+        }
         // v1.5.9: show "MP4" or "HLS" depending on which URL we're
         // about to feed ExoPlayer. preparePlayback() will further
         // update the badge when it falls back from MP4 to HLS.
-        updateStreamStrategy(if (!mp4Url.isBlank()) "MP4" else "HLS")
+        updateStreamStrategy(if (useMp4) "MP4" else "HLS")
         // MP4 (fMP4 stream via home-api proxy) is the primary
-        // ExoPlayer transport — HLS Init() on go2rtc can 404 on
+        // ExoPlayer transport on LAN — HLS Init() on go2rtc can 404 on
         // cold streams. See the inline-playback comment in the
         // previous CameraAdapter for the full rationale.
-        preparePlayback(mp4Url, hlsUrl, useMp4 = !mp4Url.isBlank())
+        preparePlayback(mp4Url, hlsUrl, useMp4 = useMp4)
     }
 
     private fun preparePlayback(mp4Url: String, hlsUrl: String, useMp4: Boolean) {
