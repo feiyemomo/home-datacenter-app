@@ -1305,27 +1305,27 @@ class CameraDetailActivity : AppCompatActivity() {
         }
         lastIpv6CheckMs = now
 
-        // v1.6.21: two-stage detection.
+        // v1.6.22: simplified to single-stage detection.
         //
-        // Stage 1 (instant): Ask Android's ConnectivityManager whether
-        // the active network has a global IPv6 address. This is the
-        // authoritative source — Android tracks link properties per
-        // network and exposes them via getLinkProperties(). If the
-        // active network's linkProperties has any Inet6Address that is
-        // not link-local (fe80::) and not loopback (::1), the phone
-        // has IPv6 internet connectivity.
+        // v1.6.21 used a two-stage approach: (1) ConnectivityManager
+        // link-address check, (2) TCP probe to NAS IPv6:8555. Stage 2
+        // was too strict — TCP 8555 may be blocked by the carrier or
+        // the NAS firewall while UDP 8555 (which WebRTC actually uses)
+        // is reachable. This caused the probe to return false even when
+        // the phone had working IPv6, so WebRTC was never tried and
+        // the user always fell back to HLS.
         //
-        // Stage 2 (only if stage 1 passes): TCP probe to NAS IPv6:8555
-        // to verify end-to-end reachability (some carriers assign IPv6
-        // but filter certain ranges). 4s timeout — first IPv6 route
-        // on cellular can take 1-2s to establish (NDP resolution).
-        //
-        // The previous v1.6.20 code skipped stage 1 and went straight
-        // to a TCP probe with java.net.Socket(), which on Android
-        // defaults to IPv4 even for IPv6 literals — causing the probe
-        // to always fail even when the phone has working IPv6.
-
-        // Stage 1: check active network's IPv6 link properties.
+        // v1.6.22: trust stage 1 only. If the active network has a
+        // global IPv6 address, attempt WebRTC — the WebRTC ICE check
+        // itself will fail fast (~1-2s) if IPv6 routing is broken,
+        // and we fall back to HLS via the existing 10s app-level
+        // timeout. This is more reliable than probing TCP because:
+        //   1. WebRTC uses UDP, not TCP — TCP reachability is not
+        //      predictive of UDP reachability.
+        //   2. Stage 1's ConnectivityManager check is the same source
+        //      of truth Android itself uses for IPv6 routing decisions.
+        //   3. Failing fast and falling back is better UX than never
+        //      trying WebRTC at all.
         val cm = getSystemService(android.content.Context.CONNECTIVITY_SERVICE)
             as android.net.ConnectivityManager
         val activeNet = cm.activeNetwork
@@ -1337,52 +1337,10 @@ class CameraDetailActivity : AppCompatActivity() {
                 !ip.isLoopbackAddress
         } ?: false
 
-        android.util.Log.d(TAG, "IPv6 probe stage 1: hasGlobalIpv6=$hasGlobalIpv6 " +
-            "(activeNet=$activeNet, lp=${lp?.interfaceName})")
-        if (!hasGlobalIpv6) {
-            cachedIpv6Available = false
-            return false
-        }
-
-        // Stage 2: TCP probe to NAS IPv6:8555 with explicit Inet6Address.
-        val nasIpv6 = "2409:8a70:37a0:63f0:62be:b4ff:fe08:bd09"
-        val port = 8555
-        val latch = java.util.concurrent.CountDownLatch(1)
-        Thread {
-            var success = false
-            var error: String? = null
-            try {
-                val addr = java.net.InetAddress.getByName(nasIpv6)
-                if (addr !is java.net.Inet6Address) {
-                    error = "resolved to non-IPv6: ${addr.javaClass.simpleName}"
-                } else {
-                    // SocketChannel with InetSocketAddress(Inet6Address, port)
-                    // forces AF_INET6 socket family.
-                    val channel = java.nio.channels.SocketChannel.open()
-                    channel.configureBlocking(false)
-                    val isa = java.net.InetSocketAddress(addr, port)
-                    val connected = channel.connect(isa)
-                    if (!connected) {
-                        val finishStart = System.currentTimeMillis()
-                        while (!channel.finishConnect()) {
-                            if (System.currentTimeMillis() - finishStart > 4_000) {
-                                error = "connect timeout after 4s"
-                                break
-                            }
-                            Thread.sleep(50)
-                        }
-                    }
-                    channel.close()
-                    if (error == null) success = true
-                }
-            } catch (e: Exception) {
-                error = "${e.javaClass.simpleName}: ${e.message}"
-            }
-            cachedIpv6Available = success
-            android.util.Log.d(TAG, "IPv6 probe stage 2: success=$success error=$error")
-            latch.countDown()
-        }.also { it.isDaemon = true; it.name = "Ipv6Probe" }.start()
-        latch.await(4_500, java.util.concurrent.TimeUnit.MILLISECONDS)
+        cachedIpv6Available = hasGlobalIpv6
+        android.util.Log.d(TAG, "IPv6 probe: hasGlobalIpv6=$hasGlobalIpv6 " +
+            "(activeNet=$activeNet, iface=${lp?.interfaceName}, " +
+            "addrs=${lp?.linkAddresses?.map { it.address.javaClass.simpleName }})")
         return cachedIpv6Available
     }
 
