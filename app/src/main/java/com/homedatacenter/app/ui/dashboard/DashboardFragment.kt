@@ -318,20 +318,23 @@ class DashboardFragment : Fragment() {
     private fun updateStats(status: SystemStatus) {
         latestSystemStatus = status
 
-        // v1.6.10: icon tint must use setImageTintList (NOT
-        // setColorFilter). setColorFilter tints the ENTIRE ImageView
-        // including the bg_icon_circle background — the icon and
-        // background become the same color so the icon "disappears".
-        // setImageTintList only tints the foreground drawable (the
-        // icon), leaving the peach background circle intact. This is
-        // what the user reported as "图标没加载出来".
+        // v1.6.12: stat card icons use WHITE tint (not primary/online/etc).
+        // The bg_icon_circle background is @color/primary (warm peach
+        // #FF8A65). Previously each card used a different tint color
+        // (primary for devices, online for mqtt, etc) — but the devices
+        // card's tint was ALSO primary, making foreground + background
+        // the same color so the icon "disappeared". Unified to white
+        // for all four cards: high contrast against the peach circle
+        // in both light and dark mode, and visually consistent across
+        // the grid. setImageTintList (NOT setColorFilter) only tints
+        // the foreground drawable, leaving the bg_icon_circle intact.
         val devicesCard = ItemStatCardBinding.bind(binding.cardDevices.root)
         devicesCard.tvLabel.text = getString(R.string.stat_devices)
         devicesCard.tvValue.text = status.onlineDeviceCount.toString()
         devicesCard.ivIcon.setImageResource(R.drawable.ic_devices)
         devicesCard.ivIcon.imageTintList =
             android.content.res.ColorStateList.valueOf(
-                resources.getColor(R.color.primary, null))
+                resources.getColor(R.color.white, null))
         // Status dot: green if any devices online, gray otherwise.
         applyStatCardDot(devicesCard.statusDot, status.onlineDeviceCount > 0)
 
@@ -342,7 +345,7 @@ class DashboardFragment : Fragment() {
         mqttCard.ivIcon.setImageResource(R.drawable.ic_mqtt)
         mqttCard.ivIcon.imageTintList =
             android.content.res.ColorStateList.valueOf(
-                resources.getColor(R.color.online, null))
+                resources.getColor(R.color.white, null))
         applyStatCardDot(mqttCard.statusDot, status.mqttConnected)
 
         val wsCard = ItemStatCardBinding.bind(binding.cardWs.root)
@@ -351,7 +354,7 @@ class DashboardFragment : Fragment() {
         wsCard.ivIcon.setImageResource(R.drawable.ic_ws)
         wsCard.ivIcon.imageTintList =
             android.content.res.ColorStateList.valueOf(
-                resources.getColor(R.color.secondary, null))
+                resources.getColor(R.color.white, null))
         // WS clients dot: green if >0 clients, gray otherwise.
         applyStatCardDot(wsCard.statusDot, status.wsClients > 0)
 
@@ -361,7 +364,7 @@ class DashboardFragment : Fragment() {
         uptimeCard.ivIcon.setImageResource(R.drawable.ic_dashboard)
         uptimeCard.ivIcon.imageTintList =
             android.content.res.ColorStateList.valueOf(
-                resources.getColor(R.color.accent, null))
+                resources.getColor(R.color.white, null))
         // Uptime dot: green if uptime > 1h, yellow otherwise (recently started).
         applyStatCardDot(uptimeCard.statusDot, on = status.uptimeSeconds >= 3_600,
             warning = status.uptimeSeconds in 1 until 3_600)

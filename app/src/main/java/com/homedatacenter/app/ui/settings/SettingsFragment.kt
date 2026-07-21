@@ -11,6 +11,7 @@ import android.widget.RadioGroup
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.homedatacenter.app.R
+import com.homedatacenter.app.databinding.DialogUpdateAvailableBinding
 import com.homedatacenter.app.databinding.FragmentSettingsBinding
 import com.homedatacenter.app.ui.admin.UsersActivity
 import com.homedatacenter.app.ui.main.MainActivity
@@ -238,12 +239,23 @@ class SettingsFragment : Fragment() {
     }
 
     /**
-     * Show the "new version available" dialog with current version,
-     * new version, APK size, and a Download+Install button. On
-     * confirm, kicks off ApkInstaller.downloadAndInstall which
-     * streams the APK to private storage and launches the system
-     * PackageInstaller.
+     * v1.6.12: Show the "new version available" dialog using a custom
+     * layout (dialog_update_available.xml) instead of the bare
+     * AlertDialog.Builder.setMessage(). The custom layout shows:
+     *   - Version transition pill (current → new) with visual contrast
+     *   - APK size row
+     *   - Scrollable release notes section (版本特点) — only shown
+     *     when the backend returned non-empty release_notes
+     *   - Download progress bar (hidden until download starts)
+     *   - Cancel + Download-and-install buttons
+     *
+     * The dialog reference is kept in [updateDialogBinding] so the
+     * download progress callback can update the progress bar in place
+     * without dismissing/recreating the dialog.
      */
+    private var updateDialogBinding: DialogUpdateAvailableBinding? = null
+    private var updateAlertDialog: AlertDialog? = null
+
     private fun showUpdateAvailableDialog(info: com.homedatacenter.app.data.model.UpdateInfo) {
         val context = context ?: return
         val mainActivity = activity as? MainActivity ?: return
@@ -251,35 +263,75 @@ class SettingsFragment : Fragment() {
         val currentVersion = ApkInstaller.installedVersionName(context)
         val sizeStr = formatSize(info.size_bytes)
 
-        AlertDialog.Builder(context)
-            .setTitle(R.string.update_available_title)
-            .setMessage(getString(
-                R.string.update_available_message_format,
-                currentVersion, info.version_name, sizeStr
-            ))
-            .setPositiveButton(R.string.btn_download_install) { _, _ ->
-                startApkDownload(info)
-            }
-            .setNegativeButton(R.string.btn_cancel) { _, _ ->
-                // Re-render the cached status (still shows "new
-                // version available" so the user can come back).
-                renderCachedUpdateStatus()
-            }
-            .show()
+        val dialogBinding = DialogUpdateAvailableBinding.inflate(
+            LayoutInflater.from(context), null, false
+        )
+        updateDialogBinding = dialogBinding
+
+        dialogBinding.tvCurrentVersion.text = currentVersion.ifBlank { "?" }
+        dialogBinding.tvNewVersion.text = info.version_name
+        dialogBinding.tvUpdateSize.text = sizeStr
+
+        // Release notes section — only show when non-empty. The
+        // backend reads release-notes-v{version}.txt from the
+        // releases directory; missing file = empty string.
+        val notes = info.release_notes.trim()
+        if (notes.isNotEmpty()) {
+            dialogBinding.tvReleaseNotesLabel.visibility = View.VISIBLE
+            dialogBinding.scrollReleaseNotes.visibility = View.VISIBLE
+            dialogBinding.tvReleaseNotes.text = notes
+        } else {
+            dialogBinding.tvReleaseNotesLabel.visibility = View.GONE
+            dialogBinding.scrollReleaseNotes.visibility = View.GONE
+        }
+
+        val dialog = AlertDialog.Builder(context)
+            .setView(dialogBinding.root)
+            .setCancelable(true)
+            .create()
+        updateAlertDialog = dialog
+
+        dialogBinding.btnCancel.setOnClickListener {
+            dialog.dismiss()
+            // Re-render the cached status (still shows "new
+            // version available" so the user can come back).
+            renderCachedUpdateStatus()
+        }
+        dialogBinding.btnDownloadInstall.setOnClickListener {
+            // Hide buttons + show progress bar before starting download.
+            dialogBinding.btnCancel.isEnabled = false
+            dialogBinding.btnDownloadInstall.isEnabled = false
+            dialogBinding.btnDownloadInstall.text = getString(R.string.update_download_in_progress)
+            dialogBinding.progressDownload.visibility = View.VISIBLE
+            dialogBinding.tvProgressPercent.visibility = View.VISIBLE
+            startApkDownload(info, dialogBinding)
+        }
+
+        dialog.setOnDismissListener {
+            updateDialogBinding = null
+            updateAlertDialog = null
+        }
+        dialog.show()
     }
 
     /**
      * Stream the APK to disk and launch the installer. Updates
-     * tvUpdateStatus with download progress (0..100%). On failure
-     * shows an error message — the user can retry by tapping
-     * "Check for updates" again.
+     * the in-dialog progress bar (if the dialog is still showing)
+     * with download progress (0..100%). On failure shows an error
+     * message — the user can retry by tapping "Check for updates"
+     * again.
      */
-    private fun startApkDownload(info: com.homedatacenter.app.data.model.UpdateInfo) {
+    private fun startApkDownload(
+        info: com.homedatacenter.app.data.model.UpdateInfo,
+        dialogBinding: DialogUpdateAvailableBinding,
+    ) {
         val mainActivity = activity as? MainActivity ?: return
         val container = mainActivity.container
         val token = container.prefsManager.token ?: return
         val activity = activity ?: return
 
+        // Also keep tvUpdateStatus on the settings page in sync so
+        // if the user dismisses the dialog they still see progress.
         binding.btnCheckUpdate.isEnabled = false
         binding.tvUpdateStatus.text = getString(R.string.update_download_in_progress)
 
@@ -290,9 +342,13 @@ class SettingsFragment : Fragment() {
                 token = token,
                 info = info,
                 onProgress = { percent ->
-                    // onProgress fires from the IO dispatcher — hop
-                    // back to main to update the TextView safely.
                     if (isAdded) {
+                        // Update the in-dialog progress bar.
+                        dialogBinding.progressDownload.progress = percent
+                        dialogBinding.tvProgressPercent.text = getString(
+                            R.string.update_download_progress_format, percent
+                        )
+                        // Also update the settings page status text.
                         binding.tvUpdateStatus.text = getString(
                             R.string.update_download_progress_format, percent
                         )
@@ -307,6 +363,17 @@ class SettingsFragment : Fragment() {
                     binding.tvUpdateStatus.setTextColor(
                         requireContext().getColor(R.color.error)
                     )
+                    // Update dialog UI to show failure + re-enable buttons.
+                    dialogBinding.btnCancel.isEnabled = true
+                    dialogBinding.btnDownloadInstall.isEnabled = true
+                    dialogBinding.btnDownloadInstall.text = getString(R.string.btn_download_install)
+                    dialogBinding.progressDownload.visibility = View.GONE
+                    dialogBinding.tvProgressPercent.visibility = View.GONE
+                    dialogBinding.tvProgressPercent.text = getString(R.string.update_download_failed)
+                    dialogBinding.tvProgressPercent.setTextColor(
+                        requireContext().getColor(R.color.error)
+                    )
+                    dialogBinding.tvProgressPercent.visibility = View.VISIBLE
                 }
                 // If success, the system PackageInstaller is now
                 // showing the install confirmation screen. When the
