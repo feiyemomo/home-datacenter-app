@@ -1,0 +1,24 @@
+﻿v1.6.24 — Tunnel 路径尝试 WebRTC + HLS 延迟提示
+
+【改动背景】
+之前 v1.6.23 在 CameraDetailActivity.startPlayback() 中通过 isDirectPath() 闸门，仅在 LAN / IPv6 直连路径下尝试 WebRTC，Tunnel 路径直接跳到 MP4 / HLS。但实际网络环境中，即使 API 走 Cloudflare Tunnel，WebRTC 仍可能通过 STUN-based P2P、公网 IPv4、IPv6 直连等场景成功建立——直接跳过意味着放弃潜在的亚秒级低延迟直播。
+
+同时，当回退到 HLS 时延迟可达 1.5s+，用户却没有任何视觉提示，容易误以为是实时画面卡顿。
+
+【Android 修复】
+1. CameraDetailActivity.startPlayback() 移除 isDirectPath() 闸门：
+   - 所有路径 (LAN / IPv6 直连 / Tunnel) 都会先尝试 WebRTC
+   - Tunnel 路径下 WebRtcClient 自动启用 5s ICE 超时 + 6s 连接超时 + TCP 候选 ENABLED
+   - 失败时通过 onError 回调自动降级到现有的 MP4 → HLS 阶梯
+   - 用户无感知：成功则享受亚秒级延迟，失败则照旧走 HLS
+
+2. HLS 延迟提示 (与 dashboard v1.8.3 保持一致)：
+   - 新增 bg_hls_notice.xml drawable：暖色液态玻璃 (#F2FFFFFF) + 桃红边框 (#66FFD4B8)，与 CameraCard.kt 调色板一致
+   - 新增 tvHlsNotice TextView in activity_camera_detail.xml：右上角小徽标，默认 GONE
+   - updateStreamStrategy() 在 strategy == "HLS" 时显示「网络质量差，延迟较大」，其他策略隐藏
+
+【预期效果】
+- Tunnel 路径下 WebRTC 成功时：直播延迟从 HLS 的 1.5s+ 降到亚秒级 (~200ms)
+- Tunnel 路径下 WebRTC 失败时：自动降级到 MP4/HLS，最坏情况与之前一致 (6s 超时)
+- HLS 激活时：用户可见明确提示，不再误判为画面卡顿
+- 与 dashboard v1.8.3 的 HLS 提示文案、风格保持一致

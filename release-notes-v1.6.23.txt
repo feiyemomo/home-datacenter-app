@@ -1,0 +1,43 @@
+v1.6.23 — IPv6 直连 API + LAN→远程切换优化
+
+【根因分析】
+通过 SSH 检查 NAS 发现：
+- 宿主机 /proc/net/udp6 中 :216B (8555) 监听正常 — docker-proxy 已在 IPv6 上转发 WebRTC 端口
+- 但 /proc/net/tcp6 中 :1F98 (8088) 没有监听 — home-web 容器的端口映射 "0.0.0.0:8088:80" 只绑定了 IPv4！
+- IPv6 直连 API 测试 (curl http://[NAS_IPV6]:8088/) 返回 HTTP 000 (连接失败)
+
+这就是远程加载慢的根本原因：即使手机和 NAS 都有 IPv6，API 调用也必须走 Cloudflare Tunnel (1.4s TTFB)。
+
+【后端修复】
+1. compose.yaml: home-web 端口映射从 "0.0.0.0:8088:80" 改为双栈 ["0.0.0.0:8088:80", "[::]:8088:80"]
+   - docker-proxy 自动处理 IPv6→IPv4 转发到容器内部 0.0.0.0:80
+   - nginx 无需修改配置
+   - 手机有 IPv6 时可通过 http://[NAS_IPV6]:8088/ 直连 API，TTFB 从 ~1.4s 降到 ~50ms
+
+【Android 修复】
+1. BaseUrlResolver.kt 重写为三层探测：
+   - LAN (192.168.31.234:8088) — TTFB ~10ms
+   - IPv6 直连 (http://[NAS_IPV6]:8088/) — TTFB ~50ms，绕过 Cloudflare Tunnel
+   - Cloudflare Tunnel (api.feiyemomo.top) — TTFB ~1.4s，最后兜底
+   - 新增 onNetworkLost() 方法：网络丢失时立即切换到安全默认 (IPv6 直连如果之前可用，否则 Tunnel)，然后后台探测
+   - 新增 isDirectPath() / isIpv6Direct() 方法
+   - Tunnel 探测超时 8s → 4s
+
+2. NetworkChangeMonitor.kt: onLost() 回调改为调用 onNetworkLost() 而非 forceProbe()
+   - 修复 LAN→远程切换慢：之前每个 API 调用都要等 1.5s LAN 超时，现在立即切换到 IPv6 直连/Tunnel
+
+3. WebRtcClient.kt:
+   - ICE 候选日志增加 IPv4/IPv6 地址族识别 (检测 "::" 判断 IPv6)
+   - 远程连接超时 10s → 6s，让 HLS 回退更快
+
+4. CameraDetailActivity.kt:
+   - startPlayback() 使用 isDirectPath() 代替 isLan() || checkPhoneIpv6Connectivity()
+   - startWebRtcStream() 传递 isLan=isDirectPath (IPv6 直连也跳过 STUN/TURN)
+   - startMp4Playback() IPv6 直连时使用 LAN 策略 (MP4 优先)
+   - 删除 checkPhoneIpv6Connectivity() 方法及相关缓存字段 (BaseUrlResolver 已接管 IPv6 探测)
+
+【预期效果】
+- LAN→远程切换：从 ~1.5s+ 降到 ~0ms (立即切换到 IPv6 直连)
+- 远程 API 加载：从 ~1.4s TTFB 降到 ~50ms (IPv6 直连绕过 Tunnel)
+- WebRTC 失败回退：从 10s 降到 6s (更快回退到 HLS)
+- ICE 候选日志：可区分 IPv4/IPv6 候选，便于诊断 WebRTC over IPv6 问题
