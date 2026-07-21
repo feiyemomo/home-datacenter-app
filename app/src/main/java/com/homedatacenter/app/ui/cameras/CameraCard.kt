@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -43,9 +44,23 @@ import com.homedatacenter.app.data.model.Camera
 // surface (CardBackground via the Card's containerColor) over the
 // warm bg_primary sheet of fragment_cameras.xml — the 95% white
 // over warm cream produces the frosted-glass look.
-private val CardBackground = Color(0xF2FFFFFF)     // 95% warm white
-private val CardBorder    = Color(0x66FFD4B8)      // warm peach edge
-private val TextPrimary   = Color(0xFF2D3748)      // deep slate (warm-toned)
+//
+// v1.6.14: add dark-mode variants. The light palette (warm cream +
+// peach edge + slate text) is unchanged, but in dark mode the card
+// switches to a deep slate-blue surface with a soft white edge and
+// off-white text so it doesn't glare against the dark background.
+// Previously the card stayed bright white in dark mode because the
+// constants below were the only code path — Compose doesn't see the
+// values-night/colors.xml resource overrides that the XML drawables
+// use, so the dark values must be declared explicitly here.
+private val CardBackgroundLight = Color(0xF2FFFFFF)     // 95% warm white
+private val CardBorderLight    = Color(0x66FFD4B8)      // warm peach edge
+private val TextPrimaryLight   = Color(0xFF2D3748)      // deep slate (warm-toned)
+
+private val CardBackgroundDark  = Color(0xFF1E293B)     // slate-800
+private val CardBorderDark      = Color(0x33FFFFFF)     // 20% white edge
+private val TextPrimaryDark     = Color(0xFFE2E8F0)     // slate-200
+
 private val OnlineColor   = Color(0xFF35C98A)
 private val OfflineColor  = Color(0xFFE05B65)
 private val AccentColor   = Color(0xFFFF8A65)      // coral — matches the app's primary
@@ -93,14 +108,22 @@ fun CameraCard(
     val thumbWidth = dimensionResource(R.dimen.camera_card_thumb_width)
     val thumbHeight = dimensionResource(R.dimen.camera_card_thumb_height)
 
+    // v1.6.14: pick the palette based on system theme. Compose
+    // doesn't auto-respect values-night/colors.xml — the @Composable
+    // must explicitly call isSystemInDarkTheme() and branch.
+    val isDark = isSystemInDarkTheme()
+    val cardBackground = if (isDark) CardBackgroundDark else CardBackgroundLight
+    val cardBorder = if (isDark) CardBorderDark else CardBorderLight
+    val textPrimary = if (isDark) TextPrimaryDark else TextPrimaryLight
+
     Card(
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 14.dp, vertical = 8.dp)
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(containerColor = CardBackground),
-        border = androidx.compose.foundation.BorderStroke(1.2.dp, CardBorder),
+        colors = CardDefaults.cardColors(containerColor = cardBackground),
+        border = androidx.compose.foundation.BorderStroke(1.2.dp, cardBorder),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
     ) {
         // v1.6.4 rev6: horizontal layout — bigger thumbnail on the
@@ -184,7 +207,7 @@ fun CameraCard(
             ) {
                 Text(
                     text = camera.name,
-                    color = TextPrimary,
+                    color = textPrimary,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 15.sp,
                     maxLines = 1,

@@ -374,11 +374,23 @@ class SettingsFragment : Fragment() {
                         requireContext().getColor(R.color.error)
                     )
                     dialogBinding.tvProgressPercent.visibility = View.VISIBLE
+                } else {
+                    // v1.6.14: dismiss the dialog as soon as the
+                    // install Intent is launched. Previously the
+                    // dialog stayed open with both buttons disabled
+                    // and the progress bar stuck at 100% — if the
+                    // user canceled the system install and returned
+                    // to the app, the modal dialog looked frozen
+                    // (buttons disabled, no way out except Back).
+                    // Dismissing here means the user returns to the
+                    // settings page, where they can re-trigger the
+                    // check if they want to retry.
+                    updateAlertDialog?.dismiss()
+                    binding.tvUpdateStatus.text = getString(R.string.update_download_complete)
+                    binding.tvUpdateStatus.setTextColor(
+                        requireContext().getColor(R.color.online)
+                    )
                 }
-                // If success, the system PackageInstaller is now
-                // showing the install confirmation screen. When the
-                // user finishes the install, the app process is
-                // killed and restarted — no need to update UI here.
             }
         }
     }
