@@ -1,0 +1,31 @@
+v1.6.22 — 三项修复
+
+## 1. 修复"发现新版"面板尺寸异常
+- ScrollView 从 layout_weight=1（撑满父容器）改为 wrap_content + maxHeight=180dp
+- Dialog window 设置 width = min(90% screen, 480dp)，避免在手机上撑满屏幕
+
+## 2. 修复 dashboard IPv6 支持情况显示不更新
+根因：home-api 容器在 home-net 桥接网络上没有 IPv6 子网，容器内 CheckIPv6() 的 TCP6 拨测永远失败；即使拨测目标从 Cloudflare 改为国内 IPv6 端点也无济于事。
+
+修复：
+- compose.yaml 给 home-api 加 NAS_IPV6_ADDRESS 环境变量（默认值为 NAS 当前公网 IPv6）
+- ipv6.go 的 CheckIPv6() 优先读 NAS_IPV6_ADDRESS 环境变量，设置后直接返回 enabled+reachable=true
+- fallback 拨测目标从 Cloudflare（被国内运营商屏蔽）改为多目标列表：AliDNS + TUNA + Cloudflare
+
+## 3. 修复远程连接看不到 WebRTC
+根因：v1.6.21 的 IPv6 检测 stage 2 用 TCP 探测 NAS IPv6:8555，但 TCP 8555 可能被运营商或防火墙屏蔽，而 WebRTC 实际用的是 UDP。TCP 不通不代表 UDP 不通，导致 IPv6 检测误判为 false，WebRTC 根本没被尝试。
+
+修复：
+- 简化为单阶段检测：只用 ConnectivityManager.getLinkProperties() 检查活动网络是否有全局 IPv6 地址
+- 只要手机有 IPv6 就尝试 WebRTC，WebRTC ICE check 本身会快速失败（1-2s）并 fallback 到 HLS
+- 这比 TCP 探测更可靠，因为 WebRTC 用 UDP，TCP 可达性不预测 UDP 可达性
+
+## 修改文件
+- Android:
+  - app/src/main/res/layout/dialog_update_available.xml (ScrollView 高度)
+  - app/src/main/java/com/homedatacenter/app/ui/settings/SettingsFragment.kt (Dialog width)
+  - app/src/main/java/com/homedatacenter/app/ui/cameras/CameraDetailActivity.kt (IPv6 检测简化)
+  - app/build.gradle.kts (versionCode 65, versionName 1.6.22)
+- Backend:
+  - services/api/internal/network/ipv6.go (NAS_IPV6_ADDRESS 环境变量 + 国内 IPv6 端点)
+  - compose.yaml (home-api 加 NAS_IPV6_ADDRESS 环境变量)

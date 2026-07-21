@@ -300,6 +300,16 @@ class SettingsFragment : Fragment() {
         dialog.setCancelable(true)
         // Match AlertDialog's default dim-behind behavior.
         dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        // v1.6.22: constrain dialog width to 90% of screen + max 480dp.
+        // Without this the dialog stretches to full screen width on phones
+        // and looks oversized. The root LinearLayout's wrap_content height
+        // + ScrollView maxHeight=180dp keeps the height reasonable.
+        dialog.window?.let { w ->
+            val dm = resources.displayMetrics
+            val maxWidthPx = (480 * dm.density).toInt().coerceAtMost(dm.widthPixels)
+            val targetWidth = (dm.widthPixels * 0.9).toInt().coerceAtMost(maxWidthPx)
+            w.setLayout(targetWidth, ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
         updateAlertDialog = dialog
 
         dialogBinding.btnCancel.setOnClickListener {

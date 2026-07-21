@@ -134,7 +134,11 @@
             android:textColor="@color/text_primary" />
     </LinearLayout>
 
-    <!-- Release notes section (版本特点) — only shown when non-empty -->
+    <!-- Release notes section (版本特点) — only shown when non-empty.
+         v1.6.22: fixed ScrollView height. Previously used layout_weight=1
+         inside a wrap_content parent, which made the dialog grow to fill
+         the screen. Now constrained to a fixed 180dp max height — enough
+         for ~10 lines of release notes, with scroll for longer content. -->
     <TextView
         android:id="@+id/tvReleaseNotesLabel"
         android:layout_width="wrap_content"
@@ -149,8 +153,8 @@
     <ScrollView
         android:id="@+id/scrollReleaseNotes"
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
+        android:layout_height="wrap_content"
+        android:maxHeight="180dp"
         android:background="@drawable/bg_glass_card"
         android:padding="10dp"
         android:layout_marginBottom="16dp"
