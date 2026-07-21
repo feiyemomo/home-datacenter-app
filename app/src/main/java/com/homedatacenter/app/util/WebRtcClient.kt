@@ -98,6 +98,13 @@ class WebRtcClient(
     private var audioTrack: AudioTrack? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var signalingJob: Job? = null
+    // v1.6.13: latched true once the listener has received onConnected
+    // OR onError for the current stream. Used by the app-level
+    // connection timeout to avoid firing after the stream has
+    // already settled. Reset to false at the start of each
+    // startStreamInternal call.
+    @Volatile
+    private var connectedOrFailed: Boolean = false
 
     /**
      * v1.5.8: Toggle video track enabled state. Used by the
@@ -167,18 +174,28 @@ class WebRtcClient(
      *     passing it in).
      * @param iceServers ICE server config from /api/v1/cameras/ice.
      *     Empty list is OK — host candidates will be used.
+     * @param isLan v1.6.13: hint from the caller (BaseUrlResolver.isLan())
+     *     that controls candidate-filtering policy. On LAN we disable
+     *     TCP candidates (saves 100-300ms of pointless TCP
+     *     host-candidate gathering) and use a short ICE gathering
+     *     timeout (host candidates appear in <100ms). On remote we
+     *     ENABLE TCP candidates (go2rtc exposes 8555 TCP, this is a
+     *     critical fallback when UDP is blocked by carrier NAT or
+     *     firewall) and use a longer ICE gathering timeout so STUN
+     *     round-trips on cellular have time to complete.
      * @param listener Callbacks for connect/error/state events.
      */
     fun startStream(
         cameraId: Long,
         surfaceRenderer: SurfaceViewRenderer,
         iceServers: List<PeerConnection.IceServer>,
+        isLan: Boolean,
         listener: Listener,
     ) {
         signalingJob?.cancel()
         signalingJob = scope.launch {
             try {
-                startStreamInternal(cameraId, surfaceRenderer, iceServers, listener)
+                startStreamInternal(cameraId, surfaceRenderer, iceServers, isLan, listener)
             } catch (e: Exception) {
                 Log.e(TAG, "WebRTC signaling failed: ${e.message}", e)
                 listener.onError(e.message ?: "unknown")
@@ -190,12 +207,17 @@ class WebRtcClient(
         cameraId: Long,
         surfaceRenderer: SurfaceViewRenderer,
         iceServers: List<PeerConnection.IceServer>,
+        isLan: Boolean,
         listener: Listener,
     ) {
         val pcFactory = factory ?: run {
             listener.onError("factory not initialized")
             return
         }
+        // v1.6.13: reset the connection-settled latch for this
+        // attempt. The app-level connection timeout checks this
+        // flag to know whether to fire onError("connection timeout").
+        connectedOrFailed = false
         // Tear down any previous PeerConnection so we can start fresh
         // on a reload. removeSink detaches the previous
         // SurfaceViewRenderer sink before the track is disposed.
@@ -227,9 +249,14 @@ class WebRtcClient(
                     when (nonNullState) {
                         PeerConnection.IceConnectionState.CONNECTED,
                         PeerConnection.IceConnectionState.COMPLETED -> {
+                            // v1.6.13: latch the settled state so the
+                            // app-level connection timeout knows not
+                            // to fire.
+                            connectedOrFailed = true
                             scope.launch { listener.onConnected() }
                         }
                         PeerConnection.IceConnectionState.FAILED -> {
+                            connectedOrFailed = true
                             scope.launch { listener.onError("ICE failed") }
                         }
                         else -> {}
@@ -295,18 +322,23 @@ class WebRtcClient(
             // firing onIceGatheringChange(COMPLETE).
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_ONCE
-            // v1.5.8: optimize ICE gathering for LAN.
-            // - tcpCandidatePolicy = DISABLED: TCP candidate gathering
-            //   adds 100-300ms on LAN (tries to connect to TCP 80/443
-            //   on the gateway which never answers). LAN streaming
-            //   uses UDP host candidates only.
-            // - rtcpMuxPolicy = REQUIRE: only gather RTCP on the same
-            //   port as RTP (modern default, avoids a second candidate
-            //   pair round).
-            // The user research report pointed out that go2rtc also
-            // restricts candidate types in its FilterCandidate
-            // function for the same reason.
-            tcpCandidatePolicy = PeerConnection.TcpCandidatePolicy.DISABLED
+            // v1.6.13: TCP candidate policy is now conditional on isLan.
+            // - LAN: DISABLED — TCP candidate gathering adds 100-300ms
+            //   (tries to connect to TCP 80/443 on the gateway which
+            //   never answers). LAN streaming uses UDP host candidates
+            //   only.
+            // - Remote: ENABLED — go2rtc exposes 8555 TCP, and TCP
+            //   candidates are a critical fallback when UDP is blocked
+            //   by carrier-grade NAT, symmetric NAT, or firewall. The
+            //   previous global DISABLED setting was a major cause of
+            //   the "~20s and falls back to MP4" bug on external
+            //   networks: the Android client couldn't use go2rtc's TCP
+            //   candidate, so ICE had no working pair when UDP failed.
+            tcpCandidatePolicy = if (isLan) {
+                PeerConnection.TcpCandidatePolicy.DISABLED
+            } else {
+                PeerConnection.TcpCandidatePolicy.ENABLED
+            }
             rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE
         }
 
@@ -368,7 +400,21 @@ class WebRtcClient(
         // completes in <100ms — drop the timeout to 800ms so a
         // stuck gather fails 1.2s faster. With STUN/TURN (remote
         // mode), keep 2s to allow STUN round-trips to complete.
-        val iceTimeoutMs = if (iceServers.isEmpty()) 800L else 2_000L
+        // v1.6.13: remote-mode timeout bumped 2s -> 5s. Cellular
+        // STUN round-trips to Google/Cloudflare can take 1-3s on
+        // flaky mobile networks; the previous 2s timeout was
+        // cutting off STUN-reflexive candidate gathering before
+        // it completed, leaving the offer with only unreachable
+        // host candidates. The browser (which has a 3s timeout)
+        // was succeeding where Android was failing. The decision
+        // is now based on isLan (passed in by the caller) instead
+        // of iceServers.isEmpty() — those usually agree but
+        // iceServers could be empty even in remote mode if the
+        // backend returns an empty list, in which case we still
+        // want the longer timeout (host candidates on cellular
+        // are unreachable from the home server, so we want any
+        // late-arriving candidate to make it into the offer).
+        val iceTimeoutMs = if (isLan) 800L else 5_000L
         val gatheringComplete = withContext(Dispatchers.IO) {
             waitForIceGathering(pc, timeoutMs = iceTimeoutMs)
         }
@@ -396,6 +442,38 @@ class WebRtcClient(
         val remote = SessionDescription(SessionDescription.Type.ANSWER, answerSdp)
         withContext(Dispatchers.IO) {
             setRemoteDescriptionSuspend(pc, remote)
+        }
+
+        // v1.6.13: app-level connection timeout. Without this, a
+        // stuck ICE state (CHECKING forever, never CONNECTED or
+        // FAILED) leaves the user staring at the loading spinner
+        // for the WebRTC library's internal ~20-30s ICE FAILED
+        // timeout. The user reports ~20s before falling back to
+        // MP4 on external network — this is the WebRTC library
+        // exhausting its candidate-pair retry sequence before
+        // finally firing IceConnectionState.FAILED.
+        //
+        // 10s is the cap: ICE on a healthy remote link completes
+        // in 1-4s (STUN + DTLS handshake). On a broken link we
+        // want to bail out at 10s, not 20-30s, so MP4 fallback
+        // kicks in fast enough to feel responsive. The timeout
+        // fires only if the listener hasn't already received
+        // onConnected or onError — `connectedOrFailed` is set by
+        // the PeerConnection.Observer callbacks (which we route
+        // through `scope.launch` to the main-thread scope).
+        //
+        // LAN mode gets a shorter 5s timeout because host-candidate
+        // ICE completes in <500ms; any longer than 5s on LAN means
+        // something is genuinely wrong.
+        if (!connectedOrFailed) {
+            val connectTimeoutMs = if (isLan) 5_000L else 10_000L
+            scope.launch {
+                delay(connectTimeoutMs)
+                if (!connectedOrFailed) {
+                    Log.w(TAG, "WebRTC connection timed out after ${connectTimeoutMs}ms — falling back to MP4")
+                    listener.onError("connection timeout")
+                }
+            }
         }
         // From here, async events drive the Listener callbacks.
     }

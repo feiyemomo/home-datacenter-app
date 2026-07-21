@@ -43,7 +43,17 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        setupFragments(savedInstanceState)
+        // v1.6.13: pass null savedInstanceState to setupFragments so the
+        // else-branch never reads bottomNav.selectedItemId during onCreate
+        // — at this point BottomNavigationView's saved state hasn't been
+        // restored yet (restoration happens in onRestoreInstanceState,
+        // which runs AFTER onCreate). Reading selectedItemId here returns
+        // the menu's default (nav_dashboard), which desyncs the indicator
+        // from the actually-shown fragment after a config change / process
+        // death recovery. We now ALWAYS start with the dashboard + a
+        // hidden set of other fragments, and onRestoreInstanceState
+        // re-syncs the active fragment to the user's last tab.
+        setupFragments(null)
         setupNavigation()
         updateMenuByPermission()
         // Kick off a LAN probe on UI entry. By the time MainActivity
@@ -78,6 +88,41 @@ class MainActivity : AppCompatActivity() {
         refreshRole()
     }
 
+    // v1.6.13: re-sync the active fragment to the BottomNavigationView's
+    // restored selected item. onRestoreInstanceState runs AFTER
+    // BottomNavigationView's state has been restored (super.onRestoreInstanceState
+    // dispatches view-state restoration to children), so reading
+    // selectedItemId here returns the user's actual last tab — not the
+    // menu default we'd see during onCreate.
+    //
+    // Without this override, the bottom nav indicator points at (say)
+    // nav_cameras after a process-death recovery, but the actually-shown
+    // fragment is dashboardFragment (because setupFragments in onCreate
+    // always adds dashboard as the visible one). The user clicks the
+    // nav_cameras tab again to "fix" it but our showFragment early-returns
+    // because fragment === activeFragment is true for cameras — wait,
+    // activeFragment is dashboardFragment, not cameras, so the click WOULD
+    // work. The real pain is the visual mismatch: indicator on cameras,
+    // screen showing dashboard, until the user clicks something.
+    override fun onRestoreInstanceState(savedInstanceState: Bundle) {
+        super.onRestoreInstanceState(savedInstanceState)
+        val target = when (binding.bottomNav.selectedItemId) {
+            R.id.nav_cameras -> camerasFragment
+            R.id.nav_alerts -> alertsFragment
+            R.id.nav_devices -> devicesFragment
+            R.id.nav_settings -> settingsFragment
+            else -> dashboardFragment
+        }
+        if (target !== activeFragment) {
+            supportFragmentManager.commit {
+                setCustomAnimations(R.anim.fade_in, R.anim.fade_out)
+                hide(activeFragment ?: return@commit)
+                show(target)
+            }
+            activeFragment = target
+        }
+    }
+
     private fun refreshRole() {
         val token = container.prefsManager.token ?: return
         lifecycleScope.launch {
@@ -102,32 +147,20 @@ class MainActivity : AppCompatActivity() {
         devicesFragment = fm.findFragmentByTag("devices") ?: DevicesFragment()
         settingsFragment = fm.findFragmentByTag("settings") ?: SettingsFragment()
 
-        if (savedInstanceState == null) {
-            fm.commit {
-                add(R.id.nav_host_fragment, settingsFragment, "settings").hide(settingsFragment)
-                add(R.id.nav_host_fragment, devicesFragment, "devices").hide(devicesFragment)
-                add(R.id.nav_host_fragment, alertsFragment, "alerts").hide(alertsFragment)
-                add(R.id.nav_host_fragment, camerasFragment, "cameras").hide(camerasFragment)
-                add(R.id.nav_host_fragment, dashboardFragment, "dashboard")
-            }
-            activeFragment = dashboardFragment
-        } else {
-            activeFragment = when (binding.bottomNav.selectedItemId) {
-                R.id.nav_cameras -> camerasFragment
-                R.id.nav_alerts -> alertsFragment
-                R.id.nav_devices -> devicesFragment
-                R.id.nav_settings -> settingsFragment
-                else -> dashboardFragment
-            }
-            fm.commit {
-                hide(dashboardFragment)
-                hide(camerasFragment)
-                hide(alertsFragment)
-                hide(devicesFragment)
-                hide(settingsFragment)
-                show(activeFragment!!)
-            }
+        // v1.6.13: always add the dashboard as the initially-visible
+        // fragment. onRestoreInstanceState (if there's saved state)
+        // re-syncs the active fragment to the user's last tab once
+        // BottomNavigationView's selection has been restored. Reading
+        // selectedItemId here is wrong — view state hasn't been
+        // restored yet at onCreate time.
+        fm.commit {
+            add(R.id.nav_host_fragment, settingsFragment, "settings").hide(settingsFragment)
+            add(R.id.nav_host_fragment, devicesFragment, "devices").hide(devicesFragment)
+            add(R.id.nav_host_fragment, alertsFragment, "alerts").hide(alertsFragment)
+            add(R.id.nav_host_fragment, camerasFragment, "cameras").hide(camerasFragment)
+            add(R.id.nav_host_fragment, dashboardFragment, "dashboard")
         }
+        activeFragment = dashboardFragment
     }
 
     private fun updateMenuByPermission() {
