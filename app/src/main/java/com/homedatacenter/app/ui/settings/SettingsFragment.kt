@@ -1,12 +1,14 @@
 package com.homedatacenter.app.ui.settings
 
 import android.app.AlertDialog
+import android.app.Dialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.view.Window
 import android.widget.RadioGroup
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
@@ -254,7 +256,7 @@ class SettingsFragment : Fragment() {
      * without dismissing/recreating the dialog.
      */
     private var updateDialogBinding: DialogUpdateAvailableBinding? = null
-    private var updateAlertDialog: AlertDialog? = null
+    private var updateAlertDialog: Dialog? = null
 
     private fun showUpdateAvailableDialog(info: com.homedatacenter.app.data.model.UpdateInfo) {
         val context = context ?: return
@@ -285,10 +287,19 @@ class SettingsFragment : Fragment() {
             dialogBinding.scrollReleaseNotes.visibility = View.GONE
         }
 
-        val dialog = AlertDialog.Builder(context)
-            .setView(dialogBinding.root)
-            .setCancelable(true)
-            .create()
+        val dialog = Dialog(context)
+        // v1.6.15: use a plain Dialog instead of AlertDialog. AlertDialog's
+        // window decor (title bar, button panel container) was intercepting
+        // the first 1-2 touch events on the MaterialButton inside our custom
+        // view, so the user had to tap "下载并安装" 3 times before the click
+        // actually fired. A plain Dialog with requestFeature(FEATURE_NO_TITLE)
+        // puts our custom view directly in the content frame with no decor
+        // interception — the button responds on the first tap.
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        dialog.setContentView(dialogBinding.root)
+        dialog.setCancelable(true)
+        // Match AlertDialog's default dim-behind behavior.
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
         updateAlertDialog = dialog
 
         dialogBinding.btnCancel.setOnClickListener {

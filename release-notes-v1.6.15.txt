@@ -1,0 +1,6 @@
+v1.6.15 更新内容
+
+【Bug 修复】
+1. 更新对话框"下载并安装"按钮需要点击三次才能响应：
+   原因：使用 AlertDialog.Builder(context).setView(customView) 时，AlertDialog 的 window decor（标题栏、按钮面板容器）会拦截 MaterialButton 的前 1-2 次 touch 事件，导致按钮的 setOnClickListener 不立即触发。
+   修复：改用 android.app.Dialog 替代 AlertDialog，并通过 requestWindowFeature(FEATURE_NO_TITLE) 去掉所有 window 装饰。自定义 view 直接放在 content frame 中，没有装饰层拦截点击事件，按钮第一次点击就响应。
