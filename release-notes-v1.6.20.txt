@@ -1,0 +1,46 @@
+v1.6.20 — IPv6 P2P 直连（绕过 CGNAT）
+
+## 背景
+v1.6.19 远程下默认走 HLS（~2-3s 首帧），因为双 CGNAT 下 WebRTC IPv4 STUN 穿透不可能。
+但诊断发现：
+- NAS 有公网 IPv6 地址（2409:8a70:37a0:63f0::/64，中国移动）
+- NAS IPv6 出站完全正常（ping6 AliDNS 21ms，curl TUNA 200 OK）
+- IPv6 没有 NAT，如果手机也有 IPv6，可以直接 P2P
+
+## 修复内容
+
+### 1. go2rtc 添加 NAS 公网 IPv6 candidate
+- config.yml webrtc.candidates 加 [2409:8a70:37a0:63f0:62be:b4ff:fe08:bd09]:8555
+- go2rtc 在 SDP answer 里会同时给出 IPv4 和 IPv6 host candidate
+- STUN 服务器不支持 IPv6 AAAA，所以必须静态配置（NAS SLAAC EUI-64 地址稳定，只有前缀可能变）
+
+### 2. Android 客户端 IPv6 可达性检测
+- 新增 checkPhoneIpv6Connectivity() 方法
+- 通过 TCP 连接 NAS IPv6:8555 检测手机是否有 IPv6 且能路由到 NAS
+- 2s 超时，60s 缓存
+- 远程下：有 IPv6 → 尝试 WebRTC（IPv6 P2P，~100-300ms）；无 IPv6 → 走 HLS（~2-3s）
+
+### 3. docker-proxy 已绑定 [::]:8555
+- compose.yaml 的 "8555:8555" 和 "8555:8555/udp" 自动绑定 IPv4+IPv6
+- 容器内不需要 IPv6 地址，docker-proxy 做转发
+- 不需要改 docker 网络 IPv6 配置
+
+## 预期效果
+
+| 场景 | v1.6.19 | v1.6.20 |
+|------|---------|---------|
+| LAN 首帧 | ~50ms (WebRTC) | ~50ms (不变) |
+| 远程 + 手机有 IPv6 | ~2-3s (HLS) | **~100-300ms (WebRTC IPv6 P2P)** |
+| 远程 + 手机无 IPv6 | ~2-3s (HLS) | ~2-3s (HLS，不变) |
+
+## 验证方法
+1. 升级到 v1.6.20
+2. 在手机 4G/5G 下打开摄像头详情页
+3. adb logcat -s CameraDetailActivity，看 "IPv6 probe: cachedIpv6Available=true/false"
+4. 如果 true，看 "WebRTC connected" 日志和首帧时间
+5. 如果 false，会直接走 HLS（v1.6.19 行为）
+
+## 修改文件
+- deploy/frigate/config.yml (go2rtc IPv6 candidate)
+- app/src/main/java/com/homedatacenter/app/ui/cameras/CameraDetailActivity.kt (IPv6 检测 + WebRTC 策略)
+- app/build.gradle.kts (versionCode 63, versionName 1.6.20)
