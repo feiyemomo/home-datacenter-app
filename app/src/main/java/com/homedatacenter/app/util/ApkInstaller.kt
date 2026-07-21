@@ -207,4 +207,37 @@ object ApkInstaller {
             ""
         }
     }
+
+    /**
+     * v1.6.14: Compare two semantic version strings of the form
+     * "MAJOR.MINOR.PATCH" (e.g. "1.6.13" vs "1.6.12").
+     *
+     * Returns a negative integer if `a` is older, zero if equal,
+     * positive if `a` is newer. Non-numeric components are treated
+     * as 0. Missing components are treated as 0 (so "1.6" == "1.6.0").
+     *
+     * Why this exists: the backend's `/api/v1/release/latest`
+     * endpoint derives `version_code` from the APK filename via
+     * `parseVersionCode("1.6.12") = 1*10000 + 6*100 + 12 = 10612`,
+     * but the Android app's `versionCode` in build.gradle.kts is a
+     * flat integer that increments by 1 per release (e.g. 55, 56).
+     * The two numbering schemes are on completely different scales,
+     * so `info.version_code > installed` is ALWAYS true — the app
+     * keeps prompting to "update" from 1.6.12 to 1.6.12.
+     *
+     * Comparing versionName strings instead sidesteps the
+     * mismatch entirely — both client and server agree on the
+     * "X.Y.Z" naming convention.
+     */
+    fun compareVersions(a: String, b: String): Int {
+        val pa = a.split(".").map { it.toIntOrNull() ?: 0 }
+        val pb = b.split(".").map { it.toIntOrNull() ?: 0 }
+        val n = maxOf(pa.size, pb.size)
+        for (i in 0 until n) {
+            val va = pa.getOrElse(i) { 0 }
+            val vb = pb.getOrElse(i) { 0 }
+            if (va != vb) return va - vb
+        }
+        return 0
+    }
 }

@@ -226,16 +226,24 @@ class AppContainer(private val context: Context) {
         updateCheckJob = warmScope.launch {
             try {
                 val info = getRepository().getLatestRelease(token)
-                val installed = com.homedatacenter.app.util.ApkInstaller
-                    .installedVersionCode(context)
-                if (info.version_code > installed) {
+                // v1.6.14: compare versionName strings, NOT version_code.
+                // Backend derives version_code from the APK filename via
+                // parseVersionCode("1.6.12") = 10612, but the app's
+                // versionCode in build.gradle.kts is a flat integer
+                // (e.g. 55). Different scales — `info.version_code > installed`
+                // was always true, causing perpetual "update available"
+                // prompts even when versions matched.
+                val installedName = com.homedatacenter.app.util.ApkInstaller
+                    .installedVersionName(context)
+                val hasUpdate = com.homedatacenter.app.util.ApkInstaller
+                    .compareVersions(info.version_name, installedName) > 0
+                if (hasUpdate) {
                     cachedUpdateInfo = info
                     Log.d("AppContainer",
-                        "Update available: ${info.version_name} (code=${info.version_code}), " +
-                        "installed=$installed")
+                        "Update available: ${info.version_name} (installed=$installedName)")
                 } else {
                     Log.d("AppContainer",
-                        "App is up-to-date (installed=$installed, latest=${info.version_code})")
+                        "App is up-to-date (installed=$installedName, latest=${info.version_name})")
                 }
             } catch (e: Exception) {
                 updateCheckFailed = true
@@ -265,9 +273,13 @@ class AppContainer(private val context: Context) {
         val token = prefsManager.token ?: return null
         return try {
             val info = getRepository().getLatestRelease(token)
-            val installed = com.homedatacenter.app.util.ApkInstaller
-                .installedVersionCode(context)
-            if (info.version_code > installed) {
+            // v1.6.14: compare versionName strings (see checkUpdateOnStartup
+            // for the version_code scale-mismatch explanation).
+            val installedName = com.homedatacenter.app.util.ApkInstaller
+                .installedVersionName(context)
+            val hasUpdate = com.homedatacenter.app.util.ApkInstaller
+                .compareVersions(info.version_name, installedName) > 0
+            if (hasUpdate) {
                 cachedUpdateInfo = info
                 info
             } else {

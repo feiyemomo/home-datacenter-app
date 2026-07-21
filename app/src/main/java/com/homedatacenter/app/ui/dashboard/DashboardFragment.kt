@@ -12,6 +12,7 @@ import com.homedatacenter.app.R
 import com.homedatacenter.app.data.api.NetworkFactory
 import com.homedatacenter.app.data.model.Alert
 import com.homedatacenter.app.data.model.AlertListData
+import com.homedatacenter.app.data.model.DeviceList
 import com.homedatacenter.app.data.model.NetworkStatus
 import com.homedatacenter.app.data.model.SystemStatus
 import com.homedatacenter.app.data.model.WeatherResponse
@@ -329,8 +330,26 @@ class DashboardFragment : Fragment() {
         // the grid. setImageTintList (NOT setColorFilter) only tints
         // the foreground drawable, leaving the bg_icon_circle intact.
         val devicesCard = ItemStatCardBinding.bind(binding.cardDevices.root)
-        devicesCard.tvLabel.text = getString(R.string.stat_devices)
-        devicesCard.tvValue.text = status.onlineDeviceCount.toString()
+        // v1.6.14: label was "设备总数" but the value shown was
+        // onlineDeviceCount (mismatch). Now the label is "在线设备"
+        // and the value is "online / total" so the user can see at a
+        // glance how many of their registered devices are currently
+        // connected. Total comes from the cached device list in
+        // PrefsManager (no extra network call); if the cache is empty
+        // we fall back to just showing the online count.
+        devicesCard.tvLabel.text = getString(R.string.stat_devices_online)
+        val totalDevices = try {
+            val mainActivity = activity as? com.homedatacenter.app.ui.main.MainActivity
+            val raw = mainActivity?.container?.prefsManager?.cachedDevices
+            if (raw != null) {
+                NetworkFactory.json.decodeFromString<DeviceList>(raw).devices.size
+            } else 0
+        } catch (_: Exception) { 0 }
+        devicesCard.tvValue.text = if (totalDevices > 0) {
+            "${status.onlineDeviceCount} / $totalDevices"
+        } else {
+            status.onlineDeviceCount.toString()
+        }
         devicesCard.ivIcon.setImageResource(R.drawable.ic_devices)
         devicesCard.ivIcon.imageTintList =
             android.content.res.ColorStateList.valueOf(

@@ -1,0 +1,18 @@
+v1.6.14 更新内容
+
+【Bug 修复】
+1. 暗色模式下摄像头卡片仍为亮色样式：
+   原因：CameraCard.kt 是 Compose 实现，硬编码了亮色 Color 常量（#F2FFFFFF 等），不走 values-night/colors.xml 资源系统，所以暗色模式不切换。
+   修复：新增 isSystemInDarkTheme() 判断，暗色模式下使用深色 slate-800 卡片背景 + 20% 白色边框 + slate-200 文字颜色。
+
+2. 相同版本号仍推更新（1.6.12→1.6.12）：
+   根因：服务端 parseVersionCode("1.6.12") 返回 10612（按 X*10000+Y*100+Z 计算），客户端 build.gradle.kts 的 versionCode 是 55（按发布递增）。两者数量级完全不同，info.version_code(10612) > installed(55) 永远为 true。
+   修复：客户端改为比较 versionName 字符串（语义化版本比较 "1.6.12" vs "1.6.13"），不再依赖 versionCode。新增 ApkInstaller.compareVersions() 函数。
+
+3. 下载安装需多次点击 + 取消安装返回后 App 卡死：
+   根因：下载成功后对话框不关闭，两个按钮全部禁用、进度条停在 100%。用户在系统安装器取消安装返回 App 时，模态对话框卡死无法操作。
+   修复：下载成功后立即 dismiss 对话框，回到设置页显示"下载完成"状态，用户可随时再次点击"检查更新"重试。
+
+4. 主页设备在线数判定不合理：
+   问题：卡片标签写"设备总数"但实际显示的是 onlineDeviceCount（在线数），标签与值不一致，且只显示在线数看不出总数。
+   修复：标签改为"在线设备"，值改为"在线 / 总数"格式（如"1 / 3"）。总数从 PrefsManager 缓存的设备列表读取，无需额外网络请求。
