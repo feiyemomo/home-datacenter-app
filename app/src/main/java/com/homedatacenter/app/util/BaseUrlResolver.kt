@@ -10,13 +10,22 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * Picks the fastest reachable backend base URL at runtime.
  *
- * Two candidates are probed in order:
+ * Three candidates are probed in priority order:
  *  1. LAN URL  http://192.168.31.234:8088/   — when the device is on the
  *     home network this is ~10ms TTFB vs the Cloudflare Tunnel's
  *     measured 1.4s TTFB (with 10s+ timeouts on ~1/3 of requests
  *     from China). For live HLS/MP4 streaming this is the difference
  *     between "instant" and "spinner forever".
- *  2. Remote URL https://api.feiyemomo.top/   — Cloudflare Tunnel,
+ *  2. IPv6 direct URL  http://[NAS_IPV6]:8088/  — v1.6.23: when the
+ *     phone has IPv6 and the NAS 8088 port is bound to IPv6
+ *     (compose.yaml dual-stack), this bypasses Cloudflare Tunnel
+ *     entirely. TTFB ~50ms vs Tunnel's ~1.4s. Critical for remote
+ *     viewing on Chinese carriers where CGNAT blocks IPv4 P2P but
+ *     IPv6 routes directly. The NAS IPv6 address is the SLAAC EUI-64
+ *     address (stable across reboots; only the /64 prefix rotates
+ *     on ISP DHCPv6-PD renewal). If the prefix changes, update
+ *     IPV6_DIRECT_URL below AND go2rtc's config.yml webrtc.candidates.
+ *  3. Remote URL https://api.feiyemomo.top/   — Cloudflare Tunnel,
  *     works from any network but slow + lossy from China.
  *
  * Strategy:
@@ -32,6 +41,13 @@ import java.util.concurrent.atomic.AtomicBoolean
  *  - When the resolved URL changes, [onUrlChanged] fires so
  *    AppContainer can invalidate its cached Retrofit/Repository
  *    instances (otherwise the next call would still hit the old URL).
+ *  - v1.6.23: [onNetworkLost] provides an immediate fallback path
+ *    for NetworkChangeMonitor — when the default network drops, we
+ *    switch `resolved` to the best known safe default (IPv6 direct
+ *    if previously reachable, otherwise Tunnel) BEFORE kicking off
+ *    the async probe. This fixes the "LAN → remote switch is slow"
+ *    bug where every API call timed out against the now-unreachable
+ *    LAN URL for 1.5s each while the probe was still running.
  *
  * The probe target is GET /api/v1/system/status on the backend —
  * a JWT-protected endpoint. nginx routes the /api/ prefix to the
@@ -54,6 +70,16 @@ class BaseUrlResolver(
 
     @Volatile
     private var lastProbedAt: Long = 0L
+
+    /**
+     * v1.6.23: cached reachability of the IPv6 direct URL. Set by
+     * probeSync() on every probe. Read by onNetworkLost() to pick the
+     * best safe default when the network drops — if IPv6 was working
+     * before, we switch to it immediately instead of falling all the
+     * way back to the Tunnel.
+     */
+    @Volatile
+    private var ipv6DirectAvailable: Boolean = false
 
     private val probing = AtomicBoolean(false)
 
@@ -83,6 +109,54 @@ class BaseUrlResolver(
      * gathering delay) and to shorten ICE gathering timeout.
      */
     fun isLan(): Boolean = resolved == LAN_URL
+
+    /**
+     * v1.6.23: returns true if the currently resolved URL is the IPv6
+     * direct URL. Used by WebRTC code to decide whether to attempt
+     * IPv6 P2P (skip STUN, gather IPv6 host candidates only) and by
+     * CameraDetailActivity to gate the WebRTC-over-IPv6 path.
+     */
+    fun isIpv6Direct(): Boolean = resolved == IPV6_DIRECT_URL
+
+    /**
+     * v1.6.23: returns true if the resolved URL is a direct path to
+     * the NAS (either LAN or IPv6 direct), bypassing Cloudflare Tunnel.
+     * Used by WebRTC code to decide whether to skip STUN/TURN servers
+     * — direct paths only need host candidates, the Tunnel can't route
+     * WebRTC media anyway.
+     */
+    fun isDirectPath(): Boolean = resolved == LAN_URL || resolved == IPV6_DIRECT_URL
+
+    /**
+     * v1.6.23: immediate fallback for NetworkChangeMonitor.onLost().
+     * Switches `resolved` to the best known safe default BEFORE
+     * kicking off the async probe — fixes the "LAN → remote switch
+     * is slow" bug where every API call timed out against the
+     * now-unreachable LAN URL (1.5s each) while the probe was
+     * still running.
+     *
+     * Safe default selection:
+     *  - If IPv6 direct was reachable on the last probe, switch to
+     *    it immediately (phone likely still has IPv6 on the new
+     *    network — cellular handoff preserves IPv6 in most cases).
+     *  - Otherwise switch to the Cloudflare Tunnel (works from any
+     *    network, just slower).
+     *
+     * After switching, kicks off forceProbe() to re-validate and
+     * potentially switch to LAN if the new network is the home WiFi.
+     */
+    fun onNetworkLost() {
+        val safeDefault = if (ipv6DirectAvailable) IPV6_DIRECT_URL else REMOTE_URL
+        if (resolved != safeDefault) {
+            android.util.Log.i(
+                TAG,
+                "onNetworkLost: switching resolved → $safeDefault (safe default, ipv6Cached=$ipv6DirectAvailable)",
+            )
+            resolved = safeDefault
+            onUrlChanged?.invoke(safeDefault)
+        }
+        forceProbe()
+    }
 
     /**
      * Force a re-probe asynchronously. Use this to react to network
@@ -177,17 +251,25 @@ class BaseUrlResolver(
     }
 
     private fun probeSync() {
-        // Probe LAN first with a short timeout. If it's reachable,
-        // we're almost certainly on the home network — switch to it.
-        // The Cloudflare Tunnel is the fallback for off-LAN access.
+        // v1.6.23: three-tier probe — LAN → IPv6 direct → Tunnel.
         //
-        // Two-pronged probe: HTTP GET (real API reachability check)
-        // plus a raw TCP socket connect (fallback for cases where
-        // OkHttp's HTTP stack rejects cleartext or fails on certain
-        // Android ROMs but the host is actually reachable). Either
-        // succeeding is enough — the next API call will use the
-        // resolved URL, and if HTTP fails at call time the
-        // repository's retry/fallback logic handles it.
+        // LAN probe is a two-pronged check (HTTP GET + raw TCP socket
+        // connect) to work around vendor HTTP policy on some ROMs.
+        // IPv6 direct and Tunnel probes use HTTP GET only — no vendor
+        // policy issues on HTTPS (Tunnel) or IPv6-literal HTTP (the
+        // raw socket fallback was specifically for cleartext HTTP on
+        // LAN where MIUI/ColorOS intercepts).
+        //
+        // Probe order matters: LAN is fastest when available (~10ms),
+        // IPv6 direct is next (~50ms when phone has IPv6), Tunnel is
+        // the always-works fallback (~1.4s TTFB from China).
+        //
+        // We cache the IPv6 direct result in [ipv6DirectAvailable]
+        // so onNetworkLost() can pick it as the safe default without
+        // waiting for a probe — this is what makes the LAN → remote
+        // switch feel instant instead of taking 1.5s+ per API call.
+
+        // 1. LAN probe (two-pronged: HTTP + TCP fallback)
         val lanHttpOk = probeUrl(LAN_URL, LAN_TIMEOUT_MS)
         val lanTcpOk = if (!lanHttpOk) probeTcp(LAN_HOST, LAN_PORT, LAN_TIMEOUT_MS) else false
         val lanAlive = lanHttpOk || lanTcpOk
@@ -195,17 +277,57 @@ class BaseUrlResolver(
             TAG,
             "probeSync: LAN http=$lanHttpOk tcp=$lanTcpOk alive=$lanAlive (resolved=$resolved)",
         )
-        val winner = when {
-            lanAlive -> LAN_URL
-            probeUrl(REMOTE_URL, REMOTE_TIMEOUT_MS) -> REMOTE_URL
-            else -> null
+        if (lanAlive) {
+            switchTo(LAN_URL)
+            // LAN is alive — reset IPv6 cache (we don't need IPv6
+            // when LAN works). Next time network drops, onNetworkLost
+            // will fall back to Tunnel until a probe redetects IPv6.
+            ipv6DirectAvailable = false
+            lastProbedAt = System.currentTimeMillis()
+            return
         }
-        if (winner != null && winner != resolved) {
-            resolved = winner
-            android.util.Log.i(TAG, "probeSync: switching resolved → $winner")
-            onUrlChanged?.invoke(winner)
+
+        // 2. IPv6 direct probe. OkHttp will fail immediately
+        // (NoRouteToHostException / UnknownHostException) if the
+        // phone has no IPv6 connectivity, so this is also an
+        // implicit phone-IPv6 check — no separate ConnectivityManager
+        // probe needed.
+        val ipv6Alive = probeUrl(IPV6_DIRECT_URL, IPV6_TIMEOUT_MS)
+        ipv6DirectAvailable = ipv6Alive
+        android.util.Log.i(
+            TAG,
+            "probeSync: IPv6 direct alive=$ipv6Alive (resolved=$resolved)",
+        )
+        if (ipv6Alive) {
+            switchTo(IPV6_DIRECT_URL)
+            lastProbedAt = System.currentTimeMillis()
+            return
+        }
+
+        // 3. Tunnel fallback. v1.6.23: timeout shortened 8s → 4s.
+        // The Tunnel is the last resort; if it's truly unreachable
+        // the user has bigger problems. 4s is enough for a cold
+        // Cloudflare Tunnel connection (typical 1-2s, worst ~3s on
+        // Chinese cellular). The previous 8s timeout made the
+        // startup probe feel sluggish when both LAN and IPv6 were
+        // unavailable.
+        val tunnelAlive = probeUrl(REMOTE_URL, REMOTE_TIMEOUT_MS)
+        android.util.Log.i(
+            TAG,
+            "probeSync: Tunnel alive=$tunnelAlive (resolved=$resolved)",
+        )
+        if (tunnelAlive) {
+            switchTo(REMOTE_URL)
         }
         lastProbedAt = System.currentTimeMillis()
+    }
+
+    private fun switchTo(url: String) {
+        if (resolved != url) {
+            android.util.Log.i(TAG, "probeSync: switching resolved → $url")
+            resolved = url
+            onUrlChanged?.invoke(url)
+        }
     }
 
     private fun probeUrl(url: String, timeoutMs: Int): Boolean {
@@ -227,6 +349,13 @@ class BaseUrlResolver(
         // routes (verified empirically: HEAD /api/v1/system/status →
         // 404, GET → 401). A GET probe is reliable; HEAD would make us
         // reject both the LAN and remote URLs and never switch.
+        //
+        // v1.6.23: for the IPv6 direct URL, OkHttp connects directly
+        // to the IPv6 literal address (no DNS). If the phone has no
+        // IPv6 route, the connect() fails immediately with
+        // NoRouteToHostException (typically <100ms) — the timeout
+        // never triggers. So the IPv6 probe is also an implicit
+        // phone-IPv6-connectivity check.
         val probeClient = client.newBuilder()
             .callTimeout(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
             .connectTimeout(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
@@ -316,6 +445,38 @@ class BaseUrlResolver(
         const val LAN_HOST = "192.168.31.234"
         const val LAN_PORT = 8088
 
+        // v1.6.23: IPv6 direct URL — bypasses Cloudflare Tunnel when
+        // the phone has IPv6 connectivity. The NAS 8088 port is bound
+        // to both IPv4 and IPv6 via docker-proxy (compose.yaml
+        // dual-stack "0.0.0.0:8088:80" + "[::]:8088:80"). docker-proxy
+        // handles the IPv6→IPv4 translation to the container's
+        // internal 0.0.0.0:80, so nginx needs no IPv6 config.
+        //
+        // The IPv6 address is the NAS's SLAAC EUI-64 address (stable
+        // across reboots; only the /64 prefix rotates on ISP DHCPv6-PD
+        // renewal). If the prefix changes:
+        //   1. Find the new address: ssh fnos-momo@192.168.31.234
+        //      'ip -6 addr show enp4s0 | grep "scope global" |
+        //       grep -v temporary'
+        //   2. Update IPV6_DIRECT_URL here.
+        //   3. Update go2rtc's config.yml webrtc.candidates entry.
+        //   4. Update compose.yaml NAS_IPV6_ADDRESS env var.
+        //   5. Rebuild app + restart frigate container.
+        //
+        // Why http:// (not https://): the NAS doesn't have a valid
+        // TLS certificate for its bare IPv6 address, and acquiring
+        // one isn't possible (Let's Encrypt can't issue certs for
+        // raw IP addresses without DNS-01 challenge + AAAA record).
+        // Cleartext HTTP is acceptable here because:
+        //   - The JWT token is the only sensitive payload, and it's
+        //     already transmitted in cleartext on the LAN URL too.
+        //   - IPv6 traffic is end-to-end (no Cloudflare MITM), so
+        //     it's actually MORE private than the Tunnel path despite
+        //     lacking TLS.
+        //   - The app already has usesCleartextTraffic=true for the
+        //     LAN URL.
+        const val IPV6_DIRECT_URL = "http://[2409:8a70:37a0:63f0:62be:b4ff:fe08:bd09]:8088/"
+
         // Remote URL — Cloudflare Tunnel. Works from anywhere but is
         // slow + lossy from China (TTFB 1.4s average, 10s+ timeouts on
         // ~1/3 of requests through the tunnel).
@@ -333,12 +494,22 @@ class BaseUrlResolver(
         // probe thread doesn't linger when off-LAN.
         private const val LAN_TIMEOUT_MS = 1_500
 
-        // Remote probe timeout. The Cloudflare Tunnel can take a few
-        // seconds on a cold connection, so this is longer than the LAN
-        // probe. We don't want to wait too long — if the remote is
-        // truly unreachable the user has bigger problems than which
-        // URL we picked.
-        private const val REMOTE_TIMEOUT_MS = 8_000
+        // v1.6.23: IPv6 direct probe timeout. OkHttp fails immediately
+        // (NoRouteToHostException) if the phone has no IPv6 route, so
+        // this timeout only fires when the phone HAS IPv6 but the NAS
+        // is unreachable (e.g. NAS offline, prefix rotated). 2s is
+        // enough for a cross-carrier IPv6 TCP handshake (typical
+        // 100-500ms on Chinese cellular IPv6).
+        private const val IPV6_TIMEOUT_MS = 2_000
+
+        // v1.6.23: remote probe timeout shortened 8s → 4s. The Tunnel
+        // is the last-resort fallback; if it's truly unreachable the
+        // user has bigger problems than which URL we picked. 4s is
+        // enough for a cold Cloudflare Tunnel connection (typical
+        // 1-2s, worst ~3s on Chinese cellular). The previous 8s
+        // timeout made the startup probe feel sluggish when both LAN
+        // and IPv6 were unavailable.
+        private const val REMOTE_TIMEOUT_MS = 4_000
 
         // Escalating startup probe delays. Each entry schedules a
         // background probe at the given offset from app launch.
