@@ -866,6 +866,7 @@ class CameraDetailActivity : AppCompatActivity() {
                 cameraId = cam.id,
                 surfaceRenderer = binding.surfaceRenderer,
                 iceServers = iceServers,
+                isLan = isLan,
                 listener = object : WebRtcClient.Listener {
                     override fun onConnected() {
                         webRtcInProgress = false

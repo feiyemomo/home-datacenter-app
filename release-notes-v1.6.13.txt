@@ -1,0 +1,17 @@
+v1.6.13 更新内容
+
+【Bug 修复】
+1. 摄像头/报警/设备 tab 错位：从摄像头详情页等返回 MainActivity 时，底部导航选中位置与实际显示页面不一致。
+   原因：onCreate 中 setupFragments 读取 BottomNavigationView.selectedItemId 时视图状态尚未恢复（onRestoreInstanceState 还没运行），返回的是默认值 nav_dashboard。
+   修复：onCreate 始终以 dashboard 为初始 fragment；新增 onRestoreInstanceState 重写，在视图状态恢复后根据真实 selectedItemId 重新同步 active fragment。
+
+2. 外网直播首帧 ~20s 才出现且降级为 MP4：在同样的 Cloudflare Tunnel 外网下，浏览器 dashboard 首帧约 3.5s，但 Android app 等待 ~20s 才回退到 MP4。
+   根因：
+   - WebRtcClient.kt 中 tcpCandidatePolicy = DISABLED 全局生效，导致外网模式下无法使用 go2rtc 的 8555 TCP 候选（UDP 被 NAT/防火墙拦截时缺少回退路径）。
+   - 远程 ICE gathering 超时仅 2s，蜂窝网络 STUN 往返可能 1-3s，超时切断了 STUN 反射候选的收集。
+   - 没有应用层连接超时，只能等 WebRTC 库内部 ~20-30s 的 ICE FAILED 回调。
+   修复：
+   - tcpCandidatePolicy 改为条件化：LAN 模式 DISABLED（节省 100-300ms），远程模式 ENABLED（允许 8555 TCP 候选作为 UDP 失败时的回退）。
+   - 远程 ICE gathering 超时 2s → 5s，给蜂窝 STUN 充足时间。
+   - 新增应用层连接超时：LAN 5s / 远程 10s，避免卡死等待库内部 20-30s FAILED。
+   - 通过 isLan 参数显式传入网络模式（之前用 iceServers.isEmpty() 推断，iceConfig 异常为空时会误判）。
