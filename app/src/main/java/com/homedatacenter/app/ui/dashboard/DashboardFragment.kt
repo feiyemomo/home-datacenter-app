@@ -152,16 +152,38 @@ class DashboardFragment : Fragment() {
     /**
      * Updates the LAN / Remote chip on the network quality card.
      * Reads [BaseUrlResolver.current] from the AppContainer and
-     * classifies the resolved URL as either "局域网" (LAN — green dot)
-     * or "远程" (Remote — amber dot, indicating the slower Cloudflare
-     * Tunnel path). Called on every refresh so the chip reflects any
-     * path switch made by the resolver's async re-probe.
+     * classifies the resolved URL as "局域网" (LAN — green dot),
+     * "IPv6 直连" (amber dot — IPv6 direct, bypasses Tunnel but
+     * still remote-network), or "远程" (Remote — amber dot, the
+     * slower Cloudflare Tunnel path). Called on every refresh so the
+     * chip reflects any path switch made by the resolver's async
+     * re-probe.
+     *
+     * v1.6.26: previous version used `current.startsWith("http://")`
+     * to detect LAN, which incorrectly classified the IPv6 direct
+     * URL (http://[IPv6]:8088/) as LAN — same cleartext HTTP scheme.
+     * Now uses the resolver's explicit [BaseUrlResolver.isLan] /
+     * [BaseUrlResolver.isIpv6Direct] helpers, and surfaces the
+     * measured RTT next to the label so the user can see at a
+     * glance how fast the current path actually is.
      */
     private fun updateBackendPath() {
         val mainActivity = activity as? MainActivity ?: return
-        val current = mainActivity.container.baseUrlResolver.current()
-        val isLan = current.contains("192.168.") || current.startsWith("http://")
-        binding.tvPath.text = if (isLan) "局域网" else "远程"
+        val resolver = mainActivity.container.baseUrlResolver
+        val isLan = resolver.isLan()
+        val isIpv6 = resolver.isIpv6Direct()
+        val rtt = resolver.currentRttMs()
+        val rttStr = if (rtt >= 0) " (${rtt}ms)" else ""
+        binding.tvPath.text = when {
+            isLan -> "局域网$rttStr"
+            isIpv6 -> "IPv6 直连$rttStr"
+            else -> "远程$rttStr"
+        }
+        // v1.6.26: green dot only for LAN (best path). IPv6 direct
+        // and Tunnel both use the amber "warning" dot — IPv6 is
+        // remote-network (cellular) so it can still be flaky, and
+        // Tunnel is the slow fallback. LAN on the home WiFi is the
+        // only path that's reliably < 50ms.
         binding.pathDot.setBackgroundResource(
             if (isLan) R.drawable.circle_online else R.drawable.circle_warning
         )
@@ -486,26 +508,60 @@ class DashboardFragment : Fragment() {
         // these two and showed contradictory "P2P + 局域网" pairs.
         // Backend strategy detail has moved to NetworkDetailActivity
         // for users who want to inspect it.
+        //
+        // v1.6.26: previous version used `currentUrl.startsWith("http://")`
+        // to detect LAN — that misclassified IPv6 direct (also http://)
+        // as LAN. Now uses the resolver's explicit helpers, and shows
+        // the measured RTT alongside the label.
         val mainActivity = activity as? MainActivity
-        val currentUrl = mainActivity?.container?.baseUrlResolver?.current().orEmpty()
-        val isLan = currentUrl.contains("192.168.") || currentUrl.startsWith("http://")
-        val pathLabel = if (isLan) "局域网" else "远程"
-        binding.tvNetworkStrategy.text = pathLabel
+        val resolver = mainActivity?.container?.baseUrlResolver
+        val isLan = resolver?.isLan() ?: false
+        val isIpv6 = resolver?.isIpv6Direct() ?: false
+        val rtt = resolver?.currentRttMs() ?: -1L
+        val rttStr = if (rtt >= 0) " (${rtt}ms)" else ""
+        binding.tvNetworkStrategy.text = when {
+            isLan -> "局域网$rttStr"
+            isIpv6 -> "IPv6 直连$rttStr"
+            else -> "远程$rttStr"
+        }
 
         // The "↑ upgradable to X" hint still uses the backend's
         // strategy vs initial comparison — that signal is about the
         // backend's reachability, useful as a "you could have better
         // server-side connectivity" hint even when the client is on
         // a fast LAN path.
-        val canUpgrade = status.initial != status.strategy &&
-            status.initial != "relay" && status.initial.isNotBlank()
+        //
+        // v1.6.26: fixed dead-code bug. The previous condition was:
+        //   status.initial != status.strategy &&
+        //   status.initial != "relay" && status.initial.isNotBlank()
+        // — this inspected `status.initial`, but `initial` is the
+        // BACKEND's starting strategy (always "relay" when the server
+        // boots with only Cloudflare Tunnel reachable). It can never
+        // be "ipv6_direct" or "p2p" at startup, so the `when` block
+        // below it never matched anything and the upgrade hint was
+        // never shown. The CORRECT comparison is against
+        // `status.strategy` — the strategy the backend ACTUALLY ended
+        // up on after probing (which CAN be "ipv6_direct" or "p2p"
+        // when those paths are reachable from the server). When
+        // strategy != initial AND strategy != "relay" AND strategy is
+        // non-blank, the backend upgraded to a better path — surface
+        // that as a hint.
+        val canUpgrade = status.strategy != "relay" &&
+            status.strategy.isNotBlank() &&
+            status.strategy != status.initial
         if (canUpgrade) {
             binding.tvNetworkUpgrade.visibility = View.VISIBLE
-            binding.tvNetworkUpgrade.text = when (status.initial) {
+            binding.tvNetworkUpgrade.text = when (status.strategy) {
                 "ipv6_direct" -> "↑ " + getString(R.string.network_upgrade_ipv6)
                 "p2p" -> "↑ " + getString(R.string.network_upgrade_p2p)
                 else -> ""
             }
+            // Hide the chip if the strategy didn't match a known
+            // upgrade label (defensive — shouldn't happen given the
+            // canUpgrade filter above, but avoids a blank visible
+            // chip if the backend adds a new strategy value).
+            binding.tvNetworkUpgrade.visibility =
+                if (binding.tvNetworkUpgrade.text.isNotBlank()) View.VISIBLE else View.GONE
         } else {
             binding.tvNetworkUpgrade.visibility = View.GONE
         }

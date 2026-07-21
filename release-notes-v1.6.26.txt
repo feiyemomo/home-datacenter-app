@@ -1,0 +1,97 @@
+v1.6.26 — 准确判定连接路径 + RTT 测量 + 手动切换网络路径
+
+【根因分析】
+用户反馈：Dashboard 显示"IPv6 直连"但视频加载速度仍像走 Tunnel (Cloudflare) 一样慢。
+
+排查发现两处独立 bug 叠加：
+
+1. Dashboard 路径标签与客户端实际路径不符
+   - DashboardFragment.updateBackendPath() / updateNetworkStatus() 用 `current.startsWith("http://")` 判断是否为局域网
+   - 该判断把 IPv6 直连 URL (http://[2409:...]:8088/) 也归类为"局域网"——同样是明文 http 协议
+   - 真实情况：客户端可能走 LAN、IPv6 直连或 Tunnel 三条路径之一，但 UI 只区分"局域网/远程"两档，且分档依据是 URL scheme 而非 BaseUrlResolver 的实际选择
+   - 同时 NetworkDetailActivity 只显示后端 strategy (P2P/Relay/IPv6 Direct)——这是后端服务器视角的可达性，与客户端实际走的路径无关，两者容易混淆
+
+2. canUpgrade 升级提示从未显示
+   - DashboardFragment.updateNetworkStatus() 用 `status.initial != "relay" && status.initial.isNotBlank()` 判断是否显示"可升级至 IPv6/P2P"提示
+   - 但 `status.initial` 是后端启动时的初始策略——服务器启动时 Cloudflare Tunnel 一定可达，所以 initial 永远是 "relay"，条件永远不成立
+   - 应该判断的是 `status.strategy` (后端探测后的最终策略) 是否优于 "relay"
+   - 结果：即使后端真的升级到 IPv6 Direct 或 P2P，用户也看不到任何提示
+
+【Android 修复】
+
+1. BaseUrlResolver.kt — RTT 测量 + 手动路径偏好
+   - 新增 ProbeResult(alive, rttMs) 数据类，probeUrl() 从返回 Boolean 改为返回 ProbeResult，记录每次探测的 wall-clock 耗时
+   - 新增 NetworkPathPreference 枚举 (AUTO/LAN/IPV6_DIRECT/RELAY)，通过 SharedPreferences ("network_path" prefs 文件) 持久化
+   - 构造函数新增 Context 参数 (AppContainer 传入 application context)，用于初始化 SharedPreferences
+   - 重写 probeSync()：
+     * 每轮同时探测三个候选 (LAN + IPv6 direct + Tunnel)，记录各自的 alive 状态和 RTT
+     * AUTO 偏好：在 alive 候选中选 RTT 最低的；并列时按 LAN > IPv6 > Tunnel 优先级 (利用 minByOrNull 返回首个最小值的特性)
+     * LAN 偏好：强制走 LAN，若 LAN 不可达则降级到 IPv6，再降级到 Tunnel
+     * IPV6_DIRECT 偏好：强制走 IPv6，降级链路同上
+     * RELAY 偏好：始终走 Tunnel (Cloudflare 永远可达)
+     * 仍保留两段式 LAN 探测 (HTTP + TCP fallback) 以兼容 MIUI/ColorOS 的明文 HTTP 拦截
+   - probeTcp() → probeTcpRtt()：返回 TCP 连接耗时 (Long, -1 表示失败)，作为 HTTP 失败但 TCP 成功时的 RTT 代理值
+   - 新增 lastRttMs 字段 + currentRttMs() 公开方法，记录当前路径的最近一次 RTT
+   - 新增 currentMethodLabel()：返回 "局域网 (12ms)" / "IPv6 直连 (45ms)" / "远程 (1400ms)" 形式的可读标签
+   - 新增 setPreference(pref) / getPreference()：用户切换偏好后立即持久化 + 调用 forceProbe() 触发重探测
+   - forceProbe() 新增 pendingProbe 机制：若调用时已有探测在运行，标记 pending，让在跑的探测结束后再跑一轮——确保 setPreference 期间正在跑的探测不会错过新偏好 (否则要等 5 分钟 TTL 才生效)
+
+2. DashboardFragment.kt — 修复 isLan 误判 + canUpgrade 死代码
+   - updateBackendPath()：
+     * 旧：`current.contains("192.168.") || current.startsWith("http://")` → IPv6 直连被误判为局域网
+     * 新：直接调用 resolver.isLan() / isIpv6Direct()，三档显示"局域网 (Xms)"/"IPv6 直连 (Xms)"/"远程 (Xms)"
+     * 路径圆点：仅 LAN 显示绿色 (circle_online)，IPv6 直连与远程都显示琥珀色 (circle_warning)——IPv6 走的是蜂窝网络仍可能波动，只有家庭 WiFi 上的 LAN 才稳定 <50ms
+   - updateNetworkStatus()：
+     * 同上 isLan 修复
+     * canUpgrade 死代码修复：
+       - 旧：`status.initial != "relay" && status.initial.isNotBlank()` (永远为 false，因为后端启动时 initial 总是 "relay")
+       - 新：`status.strategy != "relay" && status.strategy.isNotBlank() && status.strategy != status.initial` (后端真的升级到 IPv6/P2P 时才显示提示)
+       - when 分支也改用 `status.strategy` 而非 `status.initial`
+
+3. NetworkDetailActivity.kt + activity_network_detail.xml — 客户端实际路径展示 + 手动切换 UI
+   - 新增"客户端路径"卡片，包含：
+     * "客户端实际路径"行：显示 BaseUrlResolver.currentMethodLabel() 的当前值 (如 "局域网 (12ms)")，每次 onResume 刷新
+     * "网络路径偏好" MaterialButtonToggleGroup：四个单选按钮 (自动/局域网/IPv6 直连/远程)
+   - onCreate 中调用 setupNetworkPreferenceToggle() 绑定按钮监听
+   - onResume 中调用 syncNetworkPreferenceToggle() + refreshClientPath() 同步 UI 与 resolver 状态
+   - 用户点击按钮 → setPreference(newPref) → 持久化到 SharedPreferences + forceProbe() 立即触发重探测 → refreshClientPath() 显示新值
+   - 监听器只在 isChecked=true 时响应 (MaterialButtonToggleGroup 在 singleSelection 模式下会同时触发 uncheck 旧按钮 + check 新按钮两个回调)
+
+4. AppContainer.kt — 适配 BaseUrlResolver 新构造函数
+   - `BaseUrlResolver(okHttpClient)` → `BaseUrlResolver(okHttpClient, context)`
+   - 传入 AppContainer 已有的 application context (构造函数参数 context.applicationContext)
+
+5. app/build.gradle.kts: versionCode 68 → 69, versionName "1.6.25" → "1.6.26"
+
+【预期效果】
+- Dashboard 路径标签与圆点准确反映客户端实际走的路径 (LAN=绿色/局域网，IPv6=琥珀色/IPv6 直连，Tunnel=琥珀色/远程)，不再把 IPv6 直连误标为"局域网"
+- 路径标签附带 RTT 数值 (如"局域网 (12ms)")，用户一眼可见当前路径的真实延迟
+- 后端真正升级到 IPv6 Direct 或 P2P 时，Dashboard 显示"↑ 可升级至 IPv6 直连"/"↑ 可升级至 P2P"提示 (此前因死代码 bug 从未显示)
+- NetworkDetailActivity 新增"客户端实际路径"行，与后端 strategy 字段独立展示，避免混淆"客户端路径"与"服务器路径"
+- 用户可在 NetworkDetailActivity 手动切换网络路径偏好 (自动/局域网/IPv6 直连/远程)：
+  * 偏好持久化到 SharedPreferences，重启 app 后保留
+  * 切换后立即触发重探测，1-2 秒内生效 (LAN 路径)
+  * AUTO 模式按 RTT 自动选最快的 alive 候选
+  * 强制模式 (LAN/IPv6/Tunnel) 优先走指定路径，不可达时按优先级降级
+- 不影响现有功能：
+  * probeLanOnStartup 启动时的递增重试调度仍正常工作
+  * NetworkChangeMonitor.onLost() 的安全默认切换 (IPv6 cached → Tunnel) 仍正常
+  * WebRTC 代码的 isLan()/isIpv6Direct()/isDirectPath() 调用点不变
+  * AppContainer.onUrlChanged 回调在路径变化时仍触发 resetApi()
+
+【修改文件】
+- Android:
+  - app/src/main/java/com/homedatacenter/app/util/BaseUrlResolver.kt
+    (新增 ProbeResult / NetworkPathPreference；构造函数加 Context；probeUrl 返回 ProbeResult；
+     probeSync 重写为按偏好 + RTT 选择；probeTcp → probeTcpRtt 返回 Long；新增 setPreference /
+     getPreference / currentRttMs / currentMethodLabel；forceProbe 加 pendingProbe 机制)
+  - app/src/main/java/com/homedatacenter/app/di/AppContainer.kt
+    (BaseUrlResolver 构造传入 context)
+  - app/src/main/java/com/homedatacenter/app/ui/dashboard/DashboardFragment.kt
+    (updateBackendPath / updateNetworkStatus 修复 isLan 误判 + canUpgrade 死代码)
+  - app/src/main/java/com/homedatacenter/app/ui/network/NetworkDetailActivity.kt
+    (新增 setupNetworkPreferenceToggle / syncNetworkPreferenceToggle / refreshClientPath；
+     onResume 同步状态)
+  - app/src/main/res/layout/activity_network_detail.xml
+    (新增"客户端路径"卡片：tvClientPath + toggleNetworkPreference + 4 个 Button)
+  - app/build.gradle.kts (versionCode 69, versionName 1.6.26)

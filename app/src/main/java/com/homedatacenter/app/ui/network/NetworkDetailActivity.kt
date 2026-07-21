@@ -5,6 +5,7 @@ import android.view.MenuItem
 import android.view.View
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
+import com.google.android.material.button.MaterialButtonToggleGroup
 import com.homedatacenter.app.HomeCenterApp
 import com.homedatacenter.app.R
 import com.homedatacenter.app.data.model.IPv6Status
@@ -16,6 +17,7 @@ import com.homedatacenter.app.data.model.ServerEndpoint
 import com.homedatacenter.app.data.model.SystemStatus
 import com.homedatacenter.app.databinding.ActivityNetworkDetailBinding
 import com.homedatacenter.app.di.AppContainer
+import com.homedatacenter.app.util.NetworkPathPreference
 import kotlinx.coroutines.launch
 
 /**
@@ -26,6 +28,14 @@ import kotlinx.coroutines.launch
  * strategy), the P2P server endpoint from /api/v1/network/p2p/server-endpoint,
  * and the MQTT / WebSocket status from SystemStatus. Swipe-down or the
  * toolbar refresh icon forces a refresh=true request on both endpoints.
+ *
+ * v1.6.26: also shows the CLIENT's actual path (LAN / IPv6 direct /
+ * Tunnel, read from BaseUrlResolver — independent of the backend's
+ * strategy field which reflects the SERVER's path) plus the measured
+ * RTT, and a 4-way toggle (Auto / LAN / IPv6 / Tunnel) so the user
+ * can manually override the path selection. The preference is
+ * persisted in SharedPreferences by the resolver and honored on the
+ * next probe.
  */
 class NetworkDetailActivity : AppCompatActivity() {
 
@@ -44,9 +54,25 @@ class NetworkDetailActivity : AppCompatActivity() {
 
         binding.swipeRefresh.setOnRefreshListener { loadAll(forceRefresh = true) }
 
+        // v1.6.26: wire the manual path preference toggle. Doing this
+        // in onCreate (not onResume) so the listener is attached once;
+        // the button CHECK state is re-synced in onResume.
+        setupNetworkPreferenceToggle()
+
         // Initial render from cache so the user sees something immediately.
         renderFromCache()
         loadAll(forceRefresh = false)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // v1.6.26: refresh both the toggle selection and the client
+        // path display every time the user returns to this page —
+        // the preference may have been reset elsewhere (or the
+        // resolver may have switched paths due to a network change
+        // while the activity was paused).
+        syncNetworkPreferenceToggle()
+        refreshClientPath()
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
@@ -54,6 +80,11 @@ class NetworkDetailActivity : AppCompatActivity() {
             android.R.id.home -> { finish(); true }
             R.id.action_refresh -> {
                 loadAll(forceRefresh = true)
+                // Also refresh the client path chip — forceProbe is
+                // async, but currentMethodLabel() reads the cached
+                // value immediately and the next onResume will pick
+                // up the post-probe value.
+                refreshClientPath()
                 true
             }
             else -> super.onOptionsItemSelected(item)
@@ -198,6 +229,84 @@ class NetworkDetailActivity : AppCompatActivity() {
             days >= 1 -> "${days}天 ${hours}小时"
             hours >= 1 -> "${hours}小时 ${mins}分"
             else -> "${mins}分"
+        }
+    }
+
+    // --- v1.6.26: client actual path + manual preference toggle ---
+
+    /**
+     * Refresh the "客户端实际路径" row from the resolver's current
+     * state. Reads [BaseUrlResolver.currentMethodLabel] which returns
+     * a string like "局域网 (12ms)" / "IPv6 直连 (45ms)" / "远程 (1400ms)".
+     *
+     * Safe to call from the main thread — currentMethodLabel() just
+     * reads @Volatile fields, no I/O. Called from onResume and after
+     * the user changes the preference (the new preference triggers an
+     * async forceProbe; this call shows the cached pre-probe value
+     * immediately, and the next onResume picks up the post-probe value).
+     */
+    private fun refreshClientPath() {
+        binding.tvClientPath.text = container.baseUrlResolver.currentMethodLabel()
+    }
+
+    /**
+     * Attach the button-click listener for the preference toggle.
+     * Called once from onCreate. The CHECK state of the buttons is
+     * synced separately by [syncNetworkPreferenceToggle] in onResume
+     * — we don't do that here to avoid clobbering the user's
+     * in-progress selection during activity recreation.
+     *
+     * Listener contract: MaterialButtonToggleGroup fires
+     * onButtonChecked for BOTH the button being unchecked AND the
+     * button being checked (because singleSelection=true). We only
+     * act when isChecked=true (the newly-selected button) to avoid
+     * double-applying.
+     */
+    private fun setupNetworkPreferenceToggle() {
+        binding.toggleNetworkPreference.addOnButtonCheckedListener { _, checkedId, isChecked ->
+            if (!isChecked) return@addOnButtonCheckedListener
+            val newPref = when (checkedId) {
+                R.id.btnPrefAuto -> NetworkPathPreference.AUTO
+                R.id.btnPrefLan -> NetworkPathPreference.LAN
+                R.id.btnPrefIpv6 -> NetworkPathPreference.IPV6_DIRECT
+                R.id.btnPrefRelay -> NetworkPathPreference.RELAY
+                else -> return@addOnButtonCheckedListener
+            }
+            // Persist + force a re-probe. The probe runs async (~1-2s
+            // for LAN, longer for Tunnel) so the "客户端实际路径" row
+            // won't update immediately — refreshClientPath() below
+            // shows the cached pre-probe value, and the next onResume
+            // (or pull-to-refresh) picks up the post-probe value.
+            container.baseUrlResolver.setPreference(newPref)
+            refreshClientPath()
+        }
+    }
+
+    /**
+     * Sync the toggle's checked button to match the resolver's current
+     * preference. Called from onResume so the UI reflects any external
+     * preference change (e.g. the user cleared app data, or a future
+     * quick-settings tile changed it).
+     *
+     * Uses [MaterialButtonToggleGroup.check] which both selects the
+     * button AND fires the onButtonChecked listener — but our listener
+     * is a no-op when setPreference is called with the same value (it
+     * early-returns), so there's no infinite loop / spurious re-probe.
+     */
+    private fun syncNetworkPreferenceToggle() {
+        val currentPref = container.baseUrlResolver.getPreference()
+        val btnId = when (currentPref) {
+            NetworkPathPreference.AUTO -> R.id.btnPrefAuto
+            NetworkPathPreference.LAN -> R.id.btnPrefLan
+            NetworkPathPreference.IPV6_DIRECT -> R.id.btnPrefIpv6
+            NetworkPathPreference.RELAY -> R.id.btnPrefRelay
+        }
+        // Only call check() if the button isn't already checked —
+        // otherwise MaterialButtonToggleGroup logs a benign warning
+        // and the listener would fire (and re-persist the same value,
+        // which is harmless but wasteful).
+        if (binding.toggleNetworkPreference.checkedButtonId != btnId) {
+            binding.toggleNetworkPreference.check(btnId)
         }
     }
 }
