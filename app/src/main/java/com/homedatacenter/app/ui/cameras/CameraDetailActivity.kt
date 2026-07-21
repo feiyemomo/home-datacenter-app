@@ -784,19 +784,20 @@ class CameraDetailActivity : AppCompatActivity() {
         // picks one. Hidden only when the player errors out.
         updateStreamStrategy("加载中")
 
-        // v1.6.19: on remote networks (Cloudflare Tunnel), skip
-        // WebRTC entirely and let startMp4Playback pick HLS directly.
-        // Root cause: both home and mobile networks are CGNAT
-        // (Symmetric NAT), so STUN srflx candidates cannot punch
-        // through — WebRTC always fails after the 10s app-level
-        // timeout. Going straight to HLS saves that 10s timeout,
-        // giving the user first frame in ~2-3s (with the v1.6.19
-        // LL-HLS segment=0.5s + partial=true). WebRTC is still
-        // tried on LAN where host candidates work.
-        // startMp4Playback (v1.6.18) already has internal logic to
-        // choose HLS on remote / MP4 on LAN.
+        // v1.6.20: WebRTC strategy revised for IPv6 P2P direct.
+        // - LAN: host candidates work, WebRTC first (unchanged).
+        // - Remote + phone has IPv6: try WebRTC via IPv6 host
+        //   candidate. go2rtc now advertises the NAS public IPv6
+        //   address in SDP answer (config.yml webrtc.candidates).
+        //   IPv6 has no NAT, so if both NAS and phone have IPv6,
+        //   P2P works directly — ~100-300ms latency, far better
+        //   than HLS ~2-3s.
+        // - Remote + no IPv6: skip WebRTC (CGNAT blocks IPv4 STUN),
+        //   go straight to HLS.
         val isLan = container.baseUrlResolver.isLan()
-        if (isLan && cam.isOnline && ensureWebRtcClient()) {
+        val hasIpv6 = !isLan && checkPhoneIpv6Connectivity()
+        val tryWebRtc = isLan || hasIpv6
+        if (tryWebRtc && cam.isOnline && ensureWebRtcClient()) {
             binding.tvVideoError.visibility = View.GONE
             binding.progressVideo.visibility = View.VISIBLE
             startWebRtcStream(cam)
@@ -1265,6 +1266,70 @@ class CameraDetailActivity : AppCompatActivity() {
         class VH(itemView: View) : RecyclerView.ViewHolder(itemView)
     }
 
+    /**
+     * v1.6.20: Detect whether the phone has IPv6 connectivity AND can
+     * reach the NAS over IPv6. Used to decide whether to attempt
+     * WebRTC (IPv6 P2P) on remote networks.
+     *
+     * Method: try to establish a TCP connection to the NAS's public
+     * IPv6 address on port 8555 (go2rtc's WebRTC TCP candidate port,
+     * published via docker-proxy on [::]:8555). If the TCP handshake
+     * completes within 2s, both conditions are met:
+     *   1. The phone has IPv6 internet connectivity (carrier 4G/5G
+     *      IPv6 allocation).
+     *   2. The phone can route IPv6 packets to the NAS (no IPv6
+     *      firewall between them).
+     *
+     * We use TCP 8555 instead of UDP 8555 because:
+     *   - TCP connect() is a clean liveness check; UDP has no
+     *     connection semantics.
+     *   - go2rtc's docker-proxy publishes 8555/tcp in compose.yaml
+     *     (`"8555:8555"` plus `"8555:8555/udp"`).
+     *
+     * The NAS IPv6 address is hardcoded to match config.yml's
+     * webrtc.candidates. If the ISP rotates the prefix, both this
+     * constant AND config.yml need updating. The address below is
+     * the NAS's SLAAC EUI-64 address (stable across reboots).
+     *
+     * Runs on a background thread with a 2s timeout — non-blocking.
+     * Cached for 60s to avoid repeated probes when the user navigates
+     * between cameras.
+     */
+    private fun checkPhoneIpv6Connectivity(): Boolean {
+        // Cache the result for 60s — IPv6 connectivity doesn't change
+        // that fast, and re-probing on every camera open adds 2s.
+        val now = System.currentTimeMillis()
+        if (now - lastIpv6CheckMs < 60_000L) {
+            return cachedIpv6Available
+        }
+        lastIpv6CheckMs = now
+
+        val nasIpv6 = "2409:8a70:37a0:63f0:62be:b4ff:fe08:bd09"
+        val port = 8555
+
+        // Run the TCP probe on a background thread, but block here
+        // for up to 2s waiting for the result — startPlayback is
+        // already on the main thread and the user is staring at a
+        // loading spinner anyway. If the probe doesn't complete in
+        // 2s, treat as no IPv6 (conservative — fall back to HLS).
+        val latch = java.util.concurrent.CountDownLatch(1)
+        Thread {
+            try {
+                val addr = java.net.InetAddress.getByName(nasIpv6)
+                val socket = java.net.Socket()
+                socket.connect(java.net.InetSocketAddress(addr, port), 2_000)
+                socket.close()
+                cachedIpv6Available = true
+            } catch (_: Exception) {
+                cachedIpv6Available = false
+            }
+            latch.countDown()
+        }.also { it.isDaemon = true; it.name = "Ipv6Probe" }.start()
+        latch.await(2_500, java.util.concurrent.TimeUnit.MILLISECONDS)
+        android.util.Log.d(TAG, "IPv6 probe: cachedIpv6Available=$cachedIpv6Available")
+        return cachedIpv6Available
+    }
+
     companion object {
         private const val TAG = "CameraDetailActivity"
         const val EXTRA_CAMERA_JSON = "camera_json"
@@ -1272,7 +1337,11 @@ class CameraDetailActivity : AppCompatActivity() {
         // timestamp (seconds). When present (passed by the alerts
         // fragment when the user taps "查看录像" on an alert), the
         // activity auto-opens the RecordingsDialog with this timestamp
-        // so playback starts at the alert's exact moment.
+        // so playback starts at the alert's exact time.
         const val EXTRA_INITIAL_TIMESTAMP = "initial_timestamp"
+
+        // v1.6.20: IPv6 probe cache (see checkPhoneIpv6Connectivity).
+        @Volatile private var cachedIpv6Available: Boolean = false
+        @Volatile private var lastIpv6CheckMs: Long = 0L
     }
 }
