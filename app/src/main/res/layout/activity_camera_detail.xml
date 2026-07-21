@@ -92,6 +92,30 @@
                 android:visibility="gone"
                 tools:ignore="HardcodedText" />
 
+            <!-- v1.6.24: HLS latency notice. Shows the Chinese text below
+                 when the active transport is HLS. HLS is only selected on
+                 Tunnel path (where WebRTC failed or was skipped) so latency
+                 is 1.5s+ vs WebRTC sub-second. Style matches the CameraCard
+                 warm liquid-glass palette: warm peach border, frosted white
+                 surface, slate text. Hidden when WebRTC or MP4 is active. -->
+            <TextView
+                android:id="@+id/tvHlsNotice"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="top|end"
+                android:layout_margin="6dp"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp"
+                android:background="@drawable/bg_hls_notice"
+                android:text="网络质量差，延迟较大"
+                android:textColor="@color/text_primary"
+                android:textSize="10sp"
+                android:textStyle="bold"
+                android:visibility="gone"
+                tools:ignore="HardcodedText" />
+
             <!-- WebRTC surface: shown when the live stream is delivered
                  via WebRtcClient (v1.5.3 primary path). Hidden when the
                  ExoPlayer MP4/HLS fallback is active. -->

@@ -62,11 +62,20 @@ class NetworkChangeMonitor(
 
         override fun onLost(network: Network) {
             // Default network lost (e.g. WiFi disconnected, no
-            // fallback yet). Re-probe — if LAN was our resolved URL
-            // we want to fall back to remote ASAP so the next API
-            // call doesn't time out against the now-unreachable LAN.
-            Log.i(TAG, "onLost: default network lost, forcing re-probe")
-            container.baseUrlResolver.forceProbe()
+            // fallback yet). v1.6.23: call onNetworkLost() instead of
+            // forceProbe() — onNetworkLost() immediately switches
+            // `resolved` to the best known safe default (IPv6 direct
+            // if previously reachable, otherwise Tunnel) BEFORE
+            // kicking off the async probe. This fixes the "LAN →
+            // remote switch is slow" bug where every API call timed
+            // out against the now-unreachable LAN URL (1.5s each)
+            // while the probe was still running.
+            //
+            // The subsequent forceProbe() inside onNetworkLost() will
+            // re-validate and potentially switch to LAN if the new
+            // network turns out to be the home WiFi.
+            Log.i(TAG, "onLost: default network lost, switching to safe default + re-probe")
+            container.baseUrlResolver.onNetworkLost()
         }
 
         override fun onCapabilitiesChanged(

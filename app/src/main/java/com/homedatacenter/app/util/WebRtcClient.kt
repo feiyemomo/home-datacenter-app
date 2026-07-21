@@ -236,11 +236,29 @@ class WebRtcClient(
                 // always fails on remote" bug. The candidate's
                 // `candidateType()` (host / srflx / relay) tells us
                 // exactly which ICE path go2rtc can use to reach us.
+                //
+                // v1.6.23: parse the candidate SDP to extract address
+                // family (IPv4/IPv6) and candidate type. This is
+                // critical for diagnosing why WebRTC fails on IPv6
+                // direct — if no IPv6 host candidate appears, the
+                // WebRTC library isn't gathering IPv6 candidates and
+                // the IPv6 P2P path can never work.
                 candidate?.let { c ->
-                    val serverUrl = c.serverUrl ?: ""
-                    Log.i(TAG, "ICE candidate: type=${c.sdpMid ?: "?"} " +
-                        "url=$serverUrl " +
-                        "addr=${c.sdp ?: "(no sdp)"}")
+                    val sdp = c.sdp ?: "(no sdp)"
+                    // v1.6.23: detect IPv6 candidates by checking for
+                    // "::" in the address field. ICE candidate SDP
+                    // format: "a=candidate:<id> <proto> <prio> <addr>
+                    // <port> typ <type> ...". IPv6 addresses contain
+                    // "::" (zero-compression); IPv4 never does. This
+                    // tells us whether the WebRTC library is actually
+                    // gathering IPv6 host candidates — if it isn't,
+                    // IPv6 P2P can never work regardless of go2rtc's
+                    // SDP answer.
+                    val addrIsIpv6 = sdp.contains("::")
+                    android.util.Log.i(TAG, "ICE candidate: type=${c.sdpMid ?: "?"} " +
+                        "url=${c.serverUrl ?: ""} " +
+                        "addrFamily=${if (addrIsIpv6) "IPv6" else "IPv4"} " +
+                        "sdp=$sdp")
                 }
             }
             override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
@@ -502,8 +520,16 @@ class WebRtcClient(
         // (see addTransceiver comment above), not the timeout being
         // too short. With the audio m-line removed, ICE completes
         // in ~2-4s on remote, so 10s is plenty of headroom.
+        // v1.6.23: shortened 10s → 6s on remote. The user reported
+        // "webrtc still doesn't load, falls back to HLS" — when
+        // IPv6 P2P fails (carrier blocks UDP, or WebRTC library
+        // doesn't gather IPv6 candidates), 10s is too long to wait
+        // before falling back to HLS. 6s is still 2x the typical
+        // IPv6 ICE completion time (~2-3s) but feels much more
+        // responsive when the path is broken. LAN stays at 5s
+        // (host-candidate ICE completes in <500ms).
         if (!connectedOrFailed) {
-            val connectTimeoutMs = if (isLan) 5_000L else 10_000L
+            val connectTimeoutMs = if (isLan) 5_000L else 6_000L
             scope.launch {
                 delay(connectTimeoutMs)
                 if (!connectedOrFailed) {
