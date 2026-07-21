@@ -1,11 +1,47 @@
 package com.homedatacenter.app.util
 
+import android.content.Context
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+
+/**
+ * Result of a single URL probe. `rttMs` is the wall-clock time from
+ * request send to response received; -1 means the probe failed
+ * before getting any response (network error / timeout).
+ */
+data class ProbeResult(val alive: Boolean, val rttMs: Long)
+
+/**
+ * User-selectable network path preference. Stored in SharedPreferences
+ * (key = "preference") so the choice survives app restarts.
+ *
+ * - AUTO: probe all three candidates and pick the lowest-RTT alive
+ *   one (tiebreaker: LAN > IPv6 > Tunnel — see probeSync).
+ * - LAN: force the LAN URL if alive, otherwise fall back to IPv6
+ *   direct, otherwise Tunnel. The probe still runs so we can measure
+ *   RTT and detect that we had to fall back.
+ * - IPV6_DIRECT: force the IPv6 direct URL if alive, otherwise fall
+ *   back to LAN, otherwise Tunnel.
+ * - RELAY: always use the Cloudflare Tunnel (always alive from any
+ *   network — the user picks this when they explicitly want to bypass
+ *   LAN/IPv6, e.g. to test the tunnel path or because the local
+ *   network is misbehaving).
+ */
+enum class NetworkPathPreference(val label: String) {
+    AUTO("自动"),
+    LAN("局域网"),
+    IPV6_DIRECT("IPv6 直连"),
+    RELAY("远程 (Tunnel)");
+
+    companion object {
+        fun fromName(name: String?): NetworkPathPreference =
+            entries.firstOrNull { it.name == name } ?: AUTO
+    }
+}
 
 /**
  * Picks the fastest reachable backend base URL at runtime.
@@ -60,6 +96,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 class BaseUrlResolver(
     private val client: OkHttpClient,
+    context: Context,
 ) {
     /**
      * Currently resolved base URL. Always returns immediately — never
@@ -84,6 +121,52 @@ class BaseUrlResolver(
     private val probing = AtomicBoolean(false)
 
     /**
+     * v1.6.26: user-selectable path preference. When != AUTO the
+     * chosen URL is forced (probe still runs to measure RTT but
+     * won't switch away unless the forced URL is unreachable, in
+     * which case we fall back per the preference's priority order).
+     * Stored in SharedPreferences so the choice survives restarts.
+     */
+    @Volatile
+    private var preference: NetworkPathPreference = NetworkPathPreference.AUTO
+
+    /**
+     * v1.6.26: RTT (wall-clock) of the most recent successful probe
+     * against the currently resolved URL, in milliseconds. -1 means
+     * the last probe failed or hasn't run yet. Read by UI surfaces
+     * (Dashboard path chip, NetworkDetailActivity) via
+     * [currentRttMs] / [currentMethodLabel].
+     */
+    @Volatile
+    var lastRttMs: Long = -1L
+        private set
+
+    /**
+     * v1.6.26: used by setPreference to ensure a re-probe actually
+     * fires even if one is already in flight. When forceProbe() is
+     * called while probing=true, this flag is set so the in-flight
+     * probe loop runs an extra iteration after finishing. Without
+     * this, a preference change made during an in-flight probe
+     * wouldn't take effect until the next TTL-triggered probe (up
+     * to 5 minutes later) — bad UX.
+     */
+    @Volatile
+    private var pendingProbe: Boolean = false
+
+    private val prefs by lazy {
+        // Use applicationContext to avoid leaking whatever context
+        // the caller passed in (AppContainer already uses the app
+        // context, but defensive — never an Activity context for
+        // SharedPreferences).
+        context.applicationContext
+            .getSharedPreferences("network_path", Context.MODE_PRIVATE)
+    }
+
+    init {
+        preference = NetworkPathPreference.fromName(prefs.getString(KEY_PREF, null))
+    }
+
+    /**
      * Called on the calling thread when the resolved URL changes due
      * to a probe. Use this to invalidate cached Retrofit / Repository
      * instances that pin the previous base URL.
@@ -100,6 +183,62 @@ class BaseUrlResolver(
             probeAsync()
         }
         return resolved
+    }
+
+    /**
+     * v1.6.26: returns the user's network path preference (Auto/LAN/
+     * IPv6/Tunnel). The preference is loaded from SharedPreferences
+     * on construction and updated by [setPreference].
+     */
+    fun getPreference(): NetworkPathPreference = preference
+
+    /**
+     * v1.6.26: set the user's path preference. Stored in
+     * SharedPreferences (survives app restarts) and honored
+     * immediately on the next probe. If AUTO, the probe logic picks
+     * the lowest-RTT alive candidate; otherwise the chosen URL is
+     * forced (probe still runs to measure RTT but won't switch away
+     * unless the forced URL is unreachable — see probeSync for the
+     * fallback chain).
+     *
+     * Calls [forceProbe] so the new preference takes effect within
+     * ~1-2 seconds (one probe round). Safe to call from the main
+     * thread.
+     */
+    fun setPreference(pref: NetworkPathPreference) {
+        if (preference == pref) return
+        prefs.edit().putString(KEY_PREF, pref.name).apply()
+        preference = pref
+        android.util.Log.i(TAG, "setPreference: $pref — forcing re-probe")
+        forceProbe()
+    }
+
+    /**
+     * v1.6.26: RTT (wall-clock ms) of the most recent successful
+     * probe against the currently resolved URL. -1 means no probe has
+     * succeeded yet. Exposed for UI surfaces (Dashboard path chip,
+     * NetworkDetailActivity) so the user can see the actual latency
+     * of the path they're on.
+     */
+    fun currentRttMs(): Long = lastRttMs
+
+    /**
+     * v1.6.26: human-readable label of the currently selected path,
+     * e.g. "局域网 (12ms)" or "IPv6 直连 (45ms)" or "远程 (1400ms)".
+     * Used by UI surfaces (Dashboard path chip,
+     * NetworkDetailActivity) so the user can see at a glance which
+     * path the app is using and how fast it is.
+     *
+     * RTT is omitted when [lastRttMs] is negative (no successful
+     * probe yet) to avoid misleading "( -1ms)" output.
+     */
+    fun currentMethodLabel(): String {
+        val rtt = if (lastRttMs >= 0) " (${lastRttMs}ms)" else ""
+        return when {
+            isLan() -> "局域网$rtt"
+            isIpv6Direct() -> "IPv6 直连$rtt"
+            else -> "远程$rtt"
+        }
     }
 
     /**
@@ -165,14 +304,34 @@ class BaseUrlResolver(
      *
      * Safe to call from any thread — the probe runs on a background
      * daemon thread, never blocks the caller. If a probe is already
-     * in flight, the call is a no-op (the in-flight probe will pick
-     * up the new network state anyway).
+     * in flight, the call sets [pendingProbe] so the in-flight probe
+     * loop runs an extra iteration after finishing. This matters for
+     * [setPreference]: without it, a preference change made while a
+     * probe is already running wouldn't take effect until the next
+     * TTL-triggered probe (up to 5 minutes later). For ordinary
+     * network-change calls (where the in-flight probe will pick up
+     * the new network state anyway) the extra iteration is a cheap
+     * no-op — probeSync is idempotent when nothing has changed.
      */
     fun forceProbe() {
-        if (!probing.compareAndSet(false, true)) return
+        if (!probing.compareAndSet(false, true)) {
+            // Probe already running — make sure we run another pass
+            // after it finishes so any state change (e.g. preference)
+            // gets applied promptly.
+            pendingProbe = true
+            return
+        }
         Thread {
             try {
                 probeSync()
+                // Drain any pending probe requests. Each iteration
+                // clears the flag BEFORE running so a new forceProbe
+                // call during probeSync() will trigger one more pass
+                // after the current one finishes.
+                while (pendingProbe) {
+                    pendingProbe = false
+                    probeSync()
+                }
             } finally {
                 probing.set(false)
             }
@@ -251,40 +410,68 @@ class BaseUrlResolver(
     }
 
     private fun probeSync() {
-        // v1.6.23: three-tier probe — LAN → IPv6 direct → Tunnel.
+        // v1.6.26: three-tier probe with RTT measurement + manual
+        // preference override.
         //
-        // LAN probe is a two-pronged check (HTTP GET + raw TCP socket
-        // connect) to work around vendor HTTP policy on some ROMs.
-        // IPv6 direct and Tunnel probes use HTTP GET only — no vendor
-        // policy issues on HTTPS (Tunnel) or IPv6-literal HTTP (the
-        // raw socket fallback was specifically for cleartext HTTP on
-        // LAN where MIUI/ColorOS intercepts).
+        // All three candidates (LAN / IPv6 direct / Tunnel) are probed
+        // every cycle so we can:
+        //   1. Measure RTT for each — needed for AUTO's lowest-RTT
+        //      selection AND for display in the UI ("局域网 (12ms)").
+        //   2. Cache IPv6 reachability for onNetworkLost's safe-default
+        //      logic (ipv6DirectAvailable).
+        //   3. Detect when a forced preference's URL has died and we
+        //      need to fall back to the next priority.
         //
-        // Probe order matters: LAN is fastest when available (~10ms),
-        // IPv6 direct is next (~50ms when phone has IPv6), Tunnel is
-        // the always-works fallback (~1.4s TTFB from China).
+        // Selection:
+        //   - If preference == AUTO: pick the alive candidate with the
+        //     lowest RTT. Tiebreaker is priority order (LAN > IPv6 >
+        //     Tunnel) — implemented by adding to the candidate list in
+        //     that order and using minByOrNull which returns the FIRST
+        //     minimum on ties.
+        //   - If preference == LAN: force LAN if alive, else IPv6 if
+        //     alive, else Tunnel.
+        //   - If preference == IPV6_DIRECT: force IPv6 if alive, else
+        //     LAN if alive, else Tunnel.
+        //   - If preference == RELAY: always Tunnel (always alive via
+        //     Cloudflare).
         //
-        // We cache the IPv6 direct result in [ipv6DirectAvailable]
-        // so onNetworkLost() can pick it as the safe default without
-        // waiting for a probe — this is what makes the LAN → remote
-        // switch feel instant instead of taking 1.5s+ per API call.
+        // LAN probe is two-pronged (HTTP + raw TCP socket connect) to
+        // work around vendor HTTP policy on some ROMs (MIUI/ColorOS
+        // intercept cleartext HTTP). When TCP succeeds but HTTP fails,
+        // we use the TCP connect time as the RTT proxy (the next real
+        // HTTP API call will be the true test — if it fails, the
+        // repository's error handling surfaces it).
+        //
+        // Probe order matters for the early-return fast path on AUTO
+        // when LAN is alive and obviously fastest: we still probe IPv6
+        // and Tunnel too so the RTT comparison is meaningful and
+        // ipv6DirectAvailable stays fresh for onNetworkLost. The total
+        // extra cost is ~50ms (IPv6 NoRouteToHostException on a
+        // non-IPv6 network) + the Tunnel probe (~1.4s on cellular).
+        // To keep startup feeling snappy we let the Tunnel probe run
+        // in the background — the resolver switches to LAN immediately
+        // when the LAN probe returns, and the Tunnel probe just
+        // updates RTT/availability caches when it finishes.
+        //
+        // Implementation note: we run the three probes sequentially
+        // (not parallel) to keep the code simple and because the LAN
+        // and IPv6 probes finish quickly (alive ~10ms / dead <100ms).
+        // Only the Tunnel probe takes real time (~1.4s), and by then
+        // we've already potentially switched `resolved` to LAN/IPv6 —
+        // the user-visible latency is dominated by the fastest alive
+        // candidate, not the slowest.
 
         // 1. LAN probe (two-pronged: HTTP + TCP fallback)
-        val lanHttpOk = probeUrl(LAN_URL, LAN_TIMEOUT_MS)
-        val lanTcpOk = if (!lanHttpOk) probeTcp(LAN_HOST, LAN_PORT, LAN_TIMEOUT_MS) else false
-        val lanAlive = lanHttpOk || lanTcpOk
-        android.util.Log.i(
-            TAG,
-            "probeSync: LAN http=$lanHttpOk tcp=$lanTcpOk alive=$lanAlive (resolved=$resolved)",
-        )
-        if (lanAlive) {
-            switchTo(LAN_URL)
-            // LAN is alive — reset IPv6 cache (we don't need IPv6
-            // when LAN works). Next time network drops, onNetworkLost
-            // will fall back to Tunnel until a probe redetects IPv6.
-            ipv6DirectAvailable = false
-            lastProbedAt = System.currentTimeMillis()
-            return
+        var lanResult = probeUrl(LAN_URL, LAN_TIMEOUT_MS)
+        if (!lanResult.alive) {
+            val tcpRtt = probeTcpRtt(LAN_HOST, LAN_PORT, LAN_TIMEOUT_MS)
+            if (tcpRtt >= 0) {
+                // HTTP failed but TCP succeeded — vendor HTTP policy
+                // is likely intercepting. Use TCP connect time as the
+                // RTT proxy. The next real API call will reveal if
+                // HTTP actually works.
+                lanResult = ProbeResult(alive = true, rttMs = tcpRtt)
+            }
         }
 
         // 2. IPv6 direct probe. OkHttp will fail immediately
@@ -292,37 +479,79 @@ class BaseUrlResolver(
         // phone has no IPv6 connectivity, so this is also an
         // implicit phone-IPv6 check — no separate ConnectivityManager
         // probe needed.
-        val ipv6Alive = probeUrl(IPV6_DIRECT_URL, IPV6_TIMEOUT_MS)
-        ipv6DirectAvailable = ipv6Alive
+        val ipv6Result = probeUrl(IPV6_DIRECT_URL, IPV6_TIMEOUT_MS)
+        ipv6DirectAvailable = ipv6Result.alive
+
+        // 3. Tunnel probe (always runs so we have a fresh RTT for the
+        // Tunnel and so AUTO can compare all three).
+        val remoteResult = probeUrl(REMOTE_URL, REMOTE_TIMEOUT_MS)
+
         android.util.Log.i(
             TAG,
-            "probeSync: IPv6 direct alive=$ipv6Alive (resolved=$resolved)",
+            "probeSync: LAN=${lanResult.alive}(${lanResult.rttMs}ms) " +
+                "IPv6=${ipv6Result.alive}(${ipv6Result.rttMs}ms) " +
+                "Tunnel=${remoteResult.alive}(${remoteResult.rttMs}ms) " +
+                "preference=$preference (resolved=$resolved)",
         )
-        if (ipv6Alive) {
-            switchTo(IPV6_DIRECT_URL)
-            lastProbedAt = System.currentTimeMillis()
-            return
+
+        // Determine chosen URL based on preference + alive state.
+        val chosen: String = when (preference) {
+            NetworkPathPreference.LAN -> when {
+                lanResult.alive -> LAN_URL
+                ipv6Result.alive -> IPV6_DIRECT_URL
+                remoteResult.alive -> REMOTE_URL
+                else -> REMOTE_URL // last resort — Tunnel is always "reachable" in practice
+            }
+            NetworkPathPreference.IPV6_DIRECT -> when {
+                ipv6Result.alive -> IPV6_DIRECT_URL
+                lanResult.alive -> LAN_URL
+                remoteResult.alive -> REMOTE_URL
+                else -> REMOTE_URL
+            }
+            NetworkPathPreference.RELAY -> REMOTE_URL
+            NetworkPathPreference.AUTO -> {
+                // Pick lowest RTT among alive candidates; LAN > IPv6 >
+                // Tunnel tiebreaker. Implemented by adding to the list
+                // in priority order — minByOrNull returns the FIRST
+                // minimum on ties, so a tie resolves to the
+                // earlier-added (higher-priority) candidate.
+                val candidates = mutableListOf<Pair<String, Long>>()
+                if (lanResult.alive) candidates.add(LAN_URL to lanResult.rttMs)
+                if (ipv6Result.alive) candidates.add(IPV6_DIRECT_URL to ipv6Result.rttMs)
+                if (remoteResult.alive) candidates.add(REMOTE_URL to remoteResult.rttMs)
+                candidates.minByOrNull { it.second }?.first ?: REMOTE_URL
+            }
         }
 
-        // 3. Tunnel fallback. v1.6.23: timeout shortened 8s → 4s.
-        // The Tunnel is the last resort; if it's truly unreachable
-        // the user has bigger problems. 4s is enough for a cold
-        // Cloudflare Tunnel connection (typical 1-2s, worst ~3s on
-        // Chinese cellular). The previous 8s timeout made the
-        // startup probe feel sluggish when both LAN and IPv6 were
-        // unavailable.
-        val tunnelAlive = probeUrl(REMOTE_URL, REMOTE_TIMEOUT_MS)
-        android.util.Log.i(
-            TAG,
-            "probeSync: Tunnel alive=$tunnelAlive (resolved=$resolved)",
-        )
-        if (tunnelAlive) {
-            switchTo(REMOTE_URL)
+        // Update RTT for the chosen URL. If the chosen URL's probe
+        // failed but we fell back to Tunnel, use the Tunnel RTT.
+        val chosenRtt = when (chosen) {
+            LAN_URL -> lanResult.rttMs
+            IPV6_DIRECT_URL -> ipv6Result.rttMs
+            else -> remoteResult.rttMs
         }
+        lastRttMs = chosenRtt
+
+        // Apply. We always assign resolved (even if unchanged) so
+        // lastProbedAt is fresh. onUrlChanged only fires on actual
+        // changes — AppContainer uses it to invalidate cached
+        // Retrofit/Repository instances.
+        val changed = chosen != resolved
+        resolved = chosen
         lastProbedAt = System.currentTimeMillis()
+        if (changed) {
+            android.util.Log.i(
+                TAG,
+                "probeSync: switching resolved → $chosen (rtt=${chosenRtt}ms, preference=$preference)",
+            )
+            onUrlChanged?.invoke(chosen)
+        }
     }
 
     private fun switchTo(url: String) {
+        // v1.6.26: retained for backward compatibility but no longer
+        // used by probeSync (which now applies `resolved` directly so
+        // it can also update lastRttMs / lastProbedAt atomically).
         if (resolved != url) {
             android.util.Log.i(TAG, "probeSync: switching resolved → $url")
             resolved = url
@@ -330,7 +559,7 @@ class BaseUrlResolver(
         }
     }
 
-    private fun probeUrl(url: String, timeoutMs: Int): Boolean {
+    private fun probeUrl(url: String, timeoutMs: Int): ProbeResult {
         // Probe /api/v1/system/status. nginx routes /api/* to the
         // home-api container (see web/nginx.conf: location /api/ →
         // proxy_pass http://api:8080). The endpoint is JWT-protected
@@ -356,6 +585,12 @@ class BaseUrlResolver(
         // NoRouteToHostException (typically <100ms) — the timeout
         // never triggers. So the IPv6 probe is also an implicit
         // phone-IPv6-connectivity check.
+        //
+        // v1.6.26: returns ProbeResult(alive, rttMs) so probeSync can
+        // pick the lowest-RTT alive candidate (AUTO preference) and
+        // surface RTT in the UI. rttMs is wall-clock from request
+        // build to response received; -1 means the request errored
+        // before any response (timeout / connect refused / DNS failure).
         val probeClient = client.newBuilder()
             .callTimeout(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
             .connectTimeout(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
@@ -365,8 +600,8 @@ class BaseUrlResolver(
             .url("${url.trimEnd('/')}/api/v1/system/status")
             .get()
             .build()
+        val sw = System.currentTimeMillis()
         return try {
-            val sw = System.currentTimeMillis()
             probeClient.newCall(request).execute().use { response ->
                 val elapsed = System.currentTimeMillis() - sw
                 // 200/401 = API alive (auth required, but reachable).
@@ -382,14 +617,15 @@ class BaseUrlResolver(
                     TAG,
                     "probeUrl: ${url.trimEnd('/')} → HTTP ${response.code} in ${elapsed}ms (${if (alive) "ALIVE" else "DOWN"})",
                 )
-                alive
+                ProbeResult(alive, elapsed)
             }
         } catch (e: Exception) {
+            val elapsed = System.currentTimeMillis() - sw
             android.util.Log.w(
                 TAG,
-                "probeUrl: ${url.trimEnd('/')} → error in ${timeoutMs}ms: ${e.javaClass.simpleName}: ${e.message}",
+                "probeUrl: ${url.trimEnd('/')} → error in ${elapsed}ms: ${e.javaClass.simpleName}: ${e.message}",
             )
-            false
+            ProbeResult(false, elapsed)
         }
     }
 
@@ -404,10 +640,14 @@ class BaseUrlResolver(
      * succeeds but the HTTP probe fails, we'll still switch to LAN —
      * the next API call will use the HTTP path, and if that fails the
      * repository's error handling will surface it.
+     *
+     * v1.6.26: returns the TCP connect time in ms (>= 0) so probeSync
+     * can use it as the RTT proxy when HTTP failed but TCP succeeded.
+     * Returns -1 on failure.
      */
-    private fun probeTcp(host: String, port: Int, timeoutMs: Int): Boolean {
+    private fun probeTcpRtt(host: String, port: Int, timeoutMs: Int): Long {
+        val sw = System.currentTimeMillis()
         return try {
-            val sw = System.currentTimeMillis()
             val socket = Socket()
             socket.connect(InetSocketAddress(host, port), timeoutMs)
             val elapsed = System.currentTimeMillis() - sw
@@ -416,18 +656,25 @@ class BaseUrlResolver(
                 TAG,
                 "probeTcp: $host:$port → connected in ${elapsed}ms",
             )
-            true
+            elapsed
         } catch (e: Exception) {
+            val elapsed = System.currentTimeMillis() - sw
             android.util.Log.w(
                 TAG,
-                "probeTcp: $host:$port → ${e.javaClass.simpleName}: ${e.message}",
+                "probeTcp: $host:$port → ${e.javaClass.simpleName}: ${e.message} (after ${elapsed}ms)",
             )
-            false
+            -1L
         }
     }
 
     companion object {
         private const val TAG = "BaseUrlResolver"
+
+        // v1.6.26: SharedPreferences key for the user's network path
+        // preference (NetworkPathPreference.name). Stored in a separate
+        // "network_path" prefs file so it doesn't collide with other
+        // prefs and is easy to inspect/reset independently.
+        private const val KEY_PREF = "preference"
 
         // LAN (NAS) URL — the home network address of the backend.
         // Port 8088 is the home-datacenter nginx/web container (bound

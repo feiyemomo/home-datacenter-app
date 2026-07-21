@@ -32,9 +32,15 @@ class AppContainer(private val context: Context) {
      *
      * Call [baseUrlResolver.probeLanOnStartup] once on app launch so
      * the first API call benefits from LAN speed (if available).
+     *
+     * v1.6.26: resolver now takes the application [context] so it can
+     * persist the user's network path preference (Auto/LAN/IPv6/Tunnel)
+     * in a private SharedPreferences file ("network_path"). The
+     * preference is honored on every probe — see BaseUrlResolver for
+     * the selection logic.
      */
     val baseUrlResolver: BaseUrlResolver by lazy {
-        BaseUrlResolver(okHttpClient).also { resolver ->
+        BaseUrlResolver(okHttpClient, context).also { resolver ->
             resolver.onUrlChanged = { _ ->
                 // When the resolved URL changes, invalidate the cached
                 // Retrofit/Repository so the next call builds a new
