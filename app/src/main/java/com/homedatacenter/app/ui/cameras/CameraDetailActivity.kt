@@ -784,19 +784,28 @@ class CameraDetailActivity : AppCompatActivity() {
         // picks one. Hidden only when the player errors out.
         updateStreamStrategy("加载中")
 
-        // WebRTC is the primary live transport (v1.5.3). It only
-        // applies to ONLINE cameras — an offline camera has no
-        // go2rtc stream to offer.
-        if (cam.isOnline && ensureWebRtcClient()) {
+        // v1.6.19: on remote networks (Cloudflare Tunnel), skip
+        // WebRTC entirely and let startMp4Playback pick HLS directly.
+        // Root cause: both home and mobile networks are CGNAT
+        // (Symmetric NAT), so STUN srflx candidates cannot punch
+        // through — WebRTC always fails after the 10s app-level
+        // timeout. Going straight to HLS saves that 10s timeout,
+        // giving the user first frame in ~2-3s (with the v1.6.19
+        // LL-HLS segment=0.5s + partial=true). WebRTC is still
+        // tried on LAN where host candidates work.
+        // startMp4Playback (v1.6.18) already has internal logic to
+        // choose HLS on remote / MP4 on LAN.
+        val isLan = container.baseUrlResolver.isLan()
+        if (isLan && cam.isOnline && ensureWebRtcClient()) {
             binding.tvVideoError.visibility = View.GONE
             binding.progressVideo.visibility = View.VISIBLE
             startWebRtcStream(cam)
             return
         }
 
-        // WebRTC unavailable (offline camera, factory init failed,
-        // or signaling already in progress) — fall straight through
-        // to the ExoPlayer MP4/HLS path.
+        // Remote OR offline camera OR WebRTC factory init failed:
+        // skip WebRTC, let startMp4Playback pick the right ExoPlayer
+        // transport (HLS on remote, MP4 on LAN).
         startMp4Playback(cam)
     }
 
@@ -1067,13 +1076,18 @@ class CameraDetailActivity : AppCompatActivity() {
                 .createMediaSource(MediaItem.fromUri(Uri.parse(url)))
         } else {
             triedHls = true
+            // v1.6.19: tightened live offset for 0.5s LL-HLS segments.
+            // targetOffset=1.5s (3 segments) down from 3s — matches
+            // the new segment size and gets the user closer to live.
+            // minOffset=500ms (1 segment) lets ExoPlayer chase live
+            // aggressively when the playlist advances.
             val mediaItem = MediaItem.Builder()
                 .setUri(Uri.parse(url))
                 .setLiveConfiguration(
                     MediaItem.LiveConfiguration.Builder()
-                        .setTargetOffsetMs(3_000)
-                        .setMaxOffsetMs(10_000)
-                        .setMinOffsetMs(1_000)
+                        .setTargetOffsetMs(1_500)
+                        .setMaxOffsetMs(5_000)
+                        .setMinOffsetMs(500)
                         .build()
                 )
                 .build()
@@ -1081,15 +1095,20 @@ class CameraDetailActivity : AppCompatActivity() {
                 .createMediaSource(mediaItem)
         }
 
-        // Low-latency load control so the first frame appears in
-        // ~1-2s instead of 5-10s. Tuned to satisfy ExoPlayer's
-        // buffer-duration invariants (see DefaultLoadControl).
+        // v1.6.19: tightened LoadControl for the new 0.5s LL-HLS
+        // segments. With segment=0.5s (config.yml), 2 segments = 1s
+        // of content — enough to start playback without stalls on
+        // most networks. bufferForPlayback=500ms lets ExoPlayer
+        // start as soon as one partial segment (~167ms) is buffered,
+        // cutting first-frame from ~3s to ~1.5-2s on remote.
+        // maxBuffer=3s (6 segments) keeps memory bounded while
+        // allowing enough runway to absorb Cloudflare Tunnel jitter.
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                /* minBufferMs= */ 2_000,
-                /* maxBufferMs= */ 5_000,
-                /* bufferForPlaybackMs= */ 1_000,
-                /* bufferForPlaybackAfterRebufferMs= */ 1_500,
+                /* minBufferMs= */ 1_000,
+                /* maxBufferMs= */ 3_000,
+                /* bufferForPlaybackMs= */ 500,
+                /* bufferForPlaybackAfterRebufferMs= */ 1_000,
             )
             .setTargetBufferBytes(DefaultLoadControl.DEFAULT_TARGET_BUFFER_BYTES)
             .setPrioritizeTimeOverSizeThresholds(true)

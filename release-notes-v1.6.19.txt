@@ -1,0 +1,31 @@
+v1.6.19 — 远程直播首帧优化 + HLS 极限低延迟
+
+## 问题背景
+v1.6.18 远程下 WebRTC 始终失败（10s 超时）后才 fallback 到 HLS，用户看到首帧要 15-20s。
+诊断发现：家庭宽度和移动网络都是 CGNAT（Symmetric NAT），STUN srflx candidate 在数学上不可能穿透双 Symmetric NAT，WebRTC 注定失败。
+
+## 修复内容
+
+### 1. 远程默认跳过 WebRTC，直接走 HLS
+- Android (CameraDetailActivity.kt)：startPlayback() 检测到远程网络时跳过 WebRTC，直接调用 startMp4Playback（内部 v1.6.18 逻辑会选 HLS）
+- Dashboard (LiveVideo.tsx)：新增 isRemoteAccess() 检测，无 localStorage 偏好时远程默认 "hls"，LAN 默认 "auto"（WebRTC 优先）
+- 节省 10s WebRTC 超时 + 5s MP4 stall，首帧从 ~15-20s 降到 ~2-3s
+
+### 2. HLS 极限低延迟优化
+- frigate config.yml：segment 1s → 0.5s，window 8 → 6，保留 partial=true（LL-HLS）
+- Android ExoPlayer LoadControl 收紧：minBuffer 2s→1s，bufferForPlayback 1s→500ms，maxBuffer 5s→3s
+- Android HLS LiveConfiguration 收紧：targetOffset 3s→1.5s，minOffset 1s→500ms
+- 首帧时间 ~2-3s（远程），直播延迟 ~1.5-2s（之前 ~5-7s）
+
+### 3. LAN 仍用 WebRTC（不变）
+- LAN 下 host candidate 直接可达，WebRTC ~50ms 出图（v1.6.10 起的共享 PeerConnection 优化）
+
+## IPv6 直连（待启用）
+诊断发现 NAS 有公网 IPv6 地址 (2409:8a70:37a0:63f0::/64) 但出站不通（ping6 网关 100% 丢包）。
+需用户在路由器/fnos 检查 IPv6 防火墙设置。修好后可启用 IPv6 直连（绕过 CGNAT，~100-300ms 延迟）。
+
+## 修改文件
+- deploy/frigate/config.yml (HLS segment/window 优化)
+- app/src/main/java/com/homedatacenter/app/ui/cameras/CameraDetailActivity.kt (远程跳过 WebRTC + LoadControl + LiveConfiguration)
+- web/src/components/LiveVideo.tsx (dashboard 远程默认 HLS)
+- app/build.gradle.kts (versionCode 62, versionName 1.6.19)
