@@ -14,6 +14,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.exoplayer2.ExoPlayer
+import com.google.android.exoplayer2.DefaultLoadControl
 import com.google.android.exoplayer2.MediaItem
 import com.google.android.exoplayer2.PlaybackException
 import com.google.android.exoplayer2.PlaybackParameters
@@ -513,7 +514,25 @@ class RecordingsDialog(
         // playlist session before we (re)build the player.
         daySeekHandler.removeCallbacks(daySeekUpdateRunnable)
         val renderersFactory = ExoPlayerRendererFactory.create(context)
-        player = ExoPlayer.Builder(context, renderersFactory).build().apply {
+        // v1.6.16: low-latency LoadControl for recordings. The default
+        // ExoPlayer LoadControl buffers 15s before starting playback,
+        // which adds ~4-5s to first-frame on remote networks (Cloudflare
+        // Tunnel TTFB ~1.4s + 2.5s buffer-for-playback download time).
+        // Mirroring the live-stream LoadControl (minBuffer=2s,
+        // bufferForPlayback=500ms) cuts first-frame to ~2s on remote.
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                /* minBufferMs= */ 2_000,
+                /* maxBufferMs= */ 10_000,
+                /* bufferForPlaybackMs= */ 500,
+                /* bufferForPlaybackAfterRebufferMs= */ 1_000,
+            )
+            .setTargetBufferBytes(com.google.android.exoplayer2.DefaultLoadControl.DEFAULT_TARGET_BUFFER_BYTES)
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .build()
+        player = ExoPlayer.Builder(context, renderersFactory)
+            .setLoadControl(loadControl)
+            .build().apply {
             setAudioAttributes(
                 com.google.android.exoplayer2.audio.AudioAttributes.Builder()
                     .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
