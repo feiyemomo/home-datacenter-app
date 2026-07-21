@@ -1,0 +1,25 @@
+v1.6.21 — 修复 IPv6 检测误判
+
+## 问题
+v1.6.20 用户反馈：移动端通过 IPv6 检测（浏览器访问 IPv6 测试网站成功），但 app 中判断 IPv6 未启用，导致走 HLS 而非 WebRTC P2P。
+
+## 根因
+v1.6.20 的 checkPhoneIpv6Connectivity() 用 java.net.Socket() 做 TCP 探测。Android 的 Socket() 默认走 IPv4，即使目标地址是 IPv6 字面量也会被强制走 IPv4 网络栈，导致探测始终失败。
+
+## 修复
+两阶段检测：
+
+### Stage 1: ConnectivityManager 查询（瞬时）
+- 查询 Android 系统的 ConnectivityManager.getActiveNetwork() + getLinkProperties()
+- 检查 linkAddresses 是否有非 link-local、非 loopback 的 Inet6Address
+- 这是 Android 系统层面对 IPv6 连通性的权威判断
+- 如果 stage 1 失败，直接返回 false，不进入 stage 2
+
+### Stage 2: TCP 探测 NAS IPv6:8555（4s 超时）
+- 用 SocketChannel + InetSocketAddress(Inet6Address, port) 强制 AF_INET6 socket family
+- 避免 java.net.Socket() 默认走 IPv4 的问题
+- 4s 超时（移动网络首次 IPv6 路由可能需要 1-2s NDP 解析）
+
+## 修改文件
+- app/src/main/java/com/homedatacenter/app/ui/cameras/CameraDetailActivity.kt
+- app/build.gradle.kts (versionCode 64, versionName 1.6.21)
