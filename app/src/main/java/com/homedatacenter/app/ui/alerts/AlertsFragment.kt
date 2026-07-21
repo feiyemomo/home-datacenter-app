@@ -132,6 +132,19 @@ class AlertsFragment : Fragment() {
         }
     }
 
+    // v1.6.12: Fragment.hide/show (used by MainActivity's bottom-nav
+    // tab switching) does NOT re-trigger onResume — fragment lifecycle
+    // follows the host Activity, not visibility. Without this override
+    // the alerts list would only load once on first add and never
+    // refresh when the user switches back to the alerts tab. Now
+    // returning to the tab re-fetches the latest alerts.
+    override fun onHiddenChanged(hidden: Boolean) {
+        super.onHiddenChanged(hidden)
+        if (!hidden && isAdded && this::adapter.isInitialized) {
+            loadAlerts()
+        }
+    }
+
     private fun loadAlerts() {
         val mainActivity = activity as? MainActivity ?: return
         val token = mainActivity.container.prefsManager.token ?: return

@@ -3,11 +3,12 @@
      (@color/bg_surface = #FFFFFF), which read as cold next to the
      warm gradient (bg_gradient = #FFE5D9 → #FFF1E6 → #F0F9FF) and
      the warm glass tiles elsewhere in the app. Now uses warm cream
-     (#FFFCF8) so the dashboard weather card / network card / live
-     alert banner feel like part of the "液态玻璃，温馨" palette.
-     Corners radius 20dp preserved. -->
+     (@color/card_bg, which is #FFFCF8 in light mode and #1E293B in
+     dark mode) so the dashboard weather card / network card / live
+     alert banner feel like part of the "液态玻璃，温馨" palette while
+     also adapting to dark mode. Corners radius 20dp preserved. -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
-    <solid android:color="#FFFCF8" />
+    <solid android:color="@color/card_bg" />
     <corners android:radius="20dp" />
 </shape>

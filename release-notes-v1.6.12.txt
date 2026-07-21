@@ -1,0 +1,22 @@
+v1.6.12 更新内容
+
+【修复】摄像头/报警/设备 tab 切换后不刷新内容的问题
+  - AlertsFragment 和 DevicesFragment 新增 onHiddenChanged 回调
+  - 切换 tab 时自动重新加载最新数据
+
+【修复】主页设备在线数图标看不见的问题
+  - 四个统计卡片的图标统一改为白色 tint
+  - 与橘色背景圆圈形成高对比，浅色/暗色模式均清晰可见
+
+【修复】暗色模式下部分内容仍保持亮色的问题
+  - bg_card_rounded、bg_card、bg_glass_card_warm 改用颜色资源
+  - FullScreenDialog 背景改用 bg_surface 适配暗色模式
+
+【优化】发现新版本对话框重新设计
+  - 自定义布局显示「当前版本 → 新版本」对比
+  - 新增「版本特点」区域展示更新日志
+  - 下载进度条直接内嵌在对话框中
+  - 后端支持 release-notes-vX.Y.Z.txt 自动读取更新说明
+
+【其他】
+  - 检查更新时明确显示当前版本与新版本号对比

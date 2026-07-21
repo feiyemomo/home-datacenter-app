@@ -2,17 +2,17 @@
 <!-- v1.6.8: warmed up the alert/recording card background. Was
      pure white + cold gray border (#E0E0E0), which read as sterile
      next to the warm gradient background of fragment_dashboard and
-     the warm glass tiles of the recordings list. Now uses warm cream
-     (#FFFEFB) + soft peach border (#FFE0CC) so the card visually
-     belongs to the "液态玻璃，温馨" palette while still feeling
-     like a neutral surface (alerts shouldn't be overly warm since
-     they represent urgent events). -->
+     the warm glass tiles of the recordings list. Now uses @color/card_bg
+     (warm cream in light mode, dark slate in dark mode) + soft peach
+     border (@color/card_stroke) so the card visually belongs to the
+     "液态玻璃，温馨" palette while still feeling like a neutral surface
+     (alerts shouldn't be overly warm since they represent urgent events). -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android">
-    <solid android:color="#FFFEFB" />
+    <solid android:color="@color/card_bg" />
     <corners android:radius="16dp" />
     <stroke
         android:width="1dp"
-        android:color="#FFE0CC" />
+        android:color="@color/card_stroke" />
     <padding
         android:bottom="0dp"
         android:left="0dp"

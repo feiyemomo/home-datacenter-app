@@ -55,6 +55,20 @@ class DevicesFragment : Fragment() {
         }
     }
 
+    // v1.6.12: Fragment.hide/show (used by MainActivity's bottom-nav
+    // tab switching) does NOT re-trigger onResume. Without this
+    // override the devices list would only load once on first add
+    // and never refresh when the user switches back to the devices
+    // tab. Now returning to the tab re-fetches the latest device
+    // list + online status snapshot.
+    override fun onHiddenChanged(hidden: Boolean) {
+        super.onHiddenChanged(hidden)
+        if (!hidden && isAdded) {
+            refreshSystemStatus()
+            loadDevices()
+        }
+    }
+
     private fun refreshSystemStatus() {
         val mainActivity = activity as? MainActivity ?: return
         val token = mainActivity.container.prefsManager.token ?: return
