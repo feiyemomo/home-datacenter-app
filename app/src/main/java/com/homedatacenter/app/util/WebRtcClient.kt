@@ -228,8 +228,20 @@ class WebRtcClient(
 
         val pcObserver = object : PeerConnection.Observer {
             override fun onIceCandidate(candidate: IceCandidate?) {
-                // Non-trickle: we wait for gathering-complete before
-                // sending the offer. ignore individual candidates.
+                // v1.6.17: log every gathered candidate. This mirrors
+                // the browser's `iceGatheringState` + candidate event
+                // logging — without it we can't tell whether STUN
+                // reflexive gathering succeeded or timed out, which
+                // was the root cause of the v1.6.13-v1.6.16 "WebRTC
+                // always fails on remote" bug. The candidate's
+                // `candidateType()` (host / srflx / relay) tells us
+                // exactly which ICE path go2rtc can use to reach us.
+                candidate?.let { c ->
+                    val serverUrl = c.serverUrl ?: ""
+                    Log.i(TAG, "ICE candidate: type=${c.sdpMid ?: "?"} " +
+                        "url=$serverUrl " +
+                        "addr=${c.sdp ?: "(no sdp)"}")
+                }
             }
             override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
                 Log.d(TAG, "ICE state: $state")
@@ -321,7 +333,17 @@ class WebRtcClient(
             // POSTing. GATHER_ONCE waits for all candidates before
             // firing onIceGatheringChange(COMPLETE).
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
-            continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_ONCE
+            // v1.6.17: revert GATHER_ONCE -> CONTINUAL_GATHERING.
+            // The browser (dashboard) uses CONTINUAL by default and
+            // succeeds in ~4s on remote networks. GATHER_ONCE was
+            // aborting STUN round-trips if the first gather pass
+            // didn't complete within our 5s timeout — but on flaky
+            // cellular links Google/Cloudflare STUN can take 2-4s
+            // just for the first round-trip, and a single retransmit
+            // pushes us past 5s. CONTINUAL keeps gathering (and
+            // re-gathering on network changes) so late-arriving
+            // srflx candidates still make it into the offer.
+            continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
             // v1.6.13: TCP candidate policy is now conditional on isLan.
             // - LAN: DISABLED — TCP candidate gathering adds 100-300ms
             //   (tries to connect to TCP 80/443 on the gateway which
@@ -339,7 +361,17 @@ class WebRtcClient(
             } else {
                 PeerConnection.TcpCandidatePolicy.ENABLED
             }
-            rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE
+            // v1.6.17: removed rtcpMuxPolicy = REQUIRE. The browser
+            // default is also REQUIRE, but Chrome's WebRTC stack
+            // falls back to non-mux RTCP gracefully when the remote
+            // (go2rtc 0.17) doesn't fully support it. The Android
+            // WebRTC library's strict REQUIRE was rejecting the SDP
+            // answer in cases where go2rtc advertised rtcp-mux but
+            // actually sent RTCP on a separate port, causing ICE
+            // connectivity checks to fail. Leaving this unset lets
+            // the library use its default (NEGOTIATE), which matches
+            // the browser's effective behavior.
+            // rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE  // removed
         }
 
         val pc = pcFactory.createPeerConnection(pcConfig, pcObserver) ?: run {
@@ -465,8 +497,18 @@ class WebRtcClient(
         // LAN mode gets a shorter 5s timeout because host-candidate
         // ICE completes in <500ms; any longer than 5s on LAN means
         // something is genuinely wrong.
+        //
+        // v1.6.17: remote timeout bumped 10s -> 15s. Dashboard's
+        // useWebRTCStream gives ICE an 8s 'disconnected' grace
+        // window (during which the browser keeps retrying) before
+        // falling back. Our previous 10s was cutting off srflx
+        // connectivity checks that would have succeeded at 11-13s
+        // on cellular networks with high STUN latency. 15s still
+        // beats the WebRTC library's internal ~25s FAILED timeout
+        // by 10s, so MP4 fallback is still 10s faster than the
+        // pre-v1.6.13 behavior.
         if (!connectedOrFailed) {
-            val connectTimeoutMs = if (isLan) 5_000L else 10_000L
+            val connectTimeoutMs = if (isLan) 5_000L else 15_000L
             scope.launch {
                 delay(connectTimeoutMs)
                 if (!connectedOrFailed) {

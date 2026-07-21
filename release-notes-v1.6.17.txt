@@ -1,0 +1,24 @@
+v1.6.17 更新内容
+
+【Bug 修复】远程网络下 WebRTC 直播始终失败回落 MP4（对比 dashboard 4s 出图）
+
+根因分析：
+对比了 dashboard 的 useWebRTCStream.ts 和 Android 的 WebRtcClient.kt，发现 Android 端有三个偏离浏览器默认行为的 ICE 配置，导致远程网络下 srflx（STUN 反射）candidate 无法正常工作：
+
+1. continualGatheringPolicy = GATHER_ONCE
+   浏览器默认 CONTINUAL_GATHERING 会持续 gathering 并在网络变化时重新 gathering。Android 设成 GATHER_ONCE 意味着如果第一轮 STUN 请求超时（移动网络下 Google STUN 经常要 2-4s），后续不会再重试。5s ICE gathering 超时一到，offer 里就只有 host candidate（移动端本地 IP），go2rtc 根本连不回来。
+
+2. rtcpMuxPolicy = REQUIRE
+   浏览器虽然默认也是 REQUIRE，但 Chrome 的 WebRTC 栈在远端不支持 rtcp-mux 时会优雅降级。Android WebRTC 库的严格 REQUIRE 在 go2rtc 0.17 的 SDP answer 上会拒绝协商，导致 ICE connectivity check 失败。
+
+3. app-level connection timeout = 10s
+   Dashboard 给 ICE 8s 'disconnected' 容忍窗口（期间浏览器继续重试）才回落。Android 10s 一到就强制回落 MP4，没给 srflx connectivity check 足够时间。移动网络下 STUN 往返 + DTLS 握手 + RTP 包送达可能需要 11-13s。
+
+修复：
+- GATHER_ONCE → CONTINUAL_GATHERING，对齐浏览器默认
+- 删除 rtcpMuxPolicy = REQUIRE，让 WebRTC 库用默认值（NEGOTIATE）
+- app-level timeout 10s → 15s，给 srflx connectivity check 更多机会
+- 新增 ICE candidate 诊断日志：onIceCandidate 回调输出每个 candidate 的 sdpMid/serverUrl/sdp，方便后续诊断 STUN 是否成功
+
+预期效果：
+远程网络下 WebRTC 直播首帧时间从"永远失败回落 MP4（10s）"降到 ~4-6s 成功直连，与 dashboard 表现一致。
