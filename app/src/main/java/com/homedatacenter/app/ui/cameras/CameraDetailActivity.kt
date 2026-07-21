@@ -34,7 +34,9 @@ import com.homedatacenter.app.di.AppContainer
 import com.homedatacenter.app.util.ExoPlayerRendererFactory
 import com.homedatacenter.app.util.PlayerFullscreenHelper
 import com.homedatacenter.app.util.WebRtcClient
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.webrtc.PeerConnection
 import org.webrtc.RendererCommon
 import org.webrtc.SurfaceViewRenderer
@@ -147,6 +149,15 @@ class CameraDetailActivity : AppCompatActivity() {
         // backend issue (default rtspURL strips audio via #audio=0),
         // not a permission issue.
         startPlayback()
+
+        // v1.6.16: load a JPEG preview frame in the background while
+        // WebRTC/MP4 is connecting. This mirrors the web dashboard's
+        // strategy: show a cheap JPEG frame (/api/v1/cameras/:id/frame)
+        // immediately so the user sees content within ~1.5s on remote
+        // networks, instead of staring at a black screen + spinner for
+        // 5-15s while WebRTC ICE gathering + DTLS handshake completes.
+        // The preview is hidden once any video surface becomes visible.
+        loadPreviewFrame()
 
         // v1.6.0: if launched with an initial timestamp (alert click
         // "查看录像"), auto-open the RecordingsDialog at that moment
@@ -709,6 +720,55 @@ class CameraDetailActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * v1.6.16: Fetch a JPEG snapshot from /api/v1/cameras/:id/frame
+     * and display it in [binding.ivPreviewFrame] while the video
+     * stream is connecting. This mirrors the web dashboard's "preview"
+     * mode, which shows a cheap JPEG frame (~1.5s on remote) before
+     * the expensive WebRTC/MP4 cold start (~5-15s on remote).
+     *
+     * The preview is hidden by [hidePreviewFrame] once any video
+     * surface becomes visible (WebRTC onConnected, or ExoPlayer
+     * onPlaybackStateChanged → STATE_READY).
+     */
+    private fun loadPreviewFrame() {
+        val cam = camera ?: return
+        val container = (application as HomeCenterApp).container
+        val baseUrl = container.getApiBaseUrl().ifBlank { return }
+        val token = container.prefsManager.token ?: return
+        val url = "${baseUrl.trimEnd('/')}/api/v1/cameras/${cam.id}/frame"
+
+        lifecycleScope.launch {
+            try {
+                val bitmap = withContext(Dispatchers.IO) {
+                    val connection = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                    connection.connectTimeout = 5_000
+                    connection.readTimeout = 10_000
+                    connection.setRequestProperty("Authorization", "Bearer $token")
+                    connection.inputStream.use {
+                        android.graphics.BitmapFactory.decodeStream(it)
+                    }
+                }
+                if (bitmap != null && !isFinishing) {
+                    binding.ivPreviewFrame.setImageBitmap(bitmap)
+                    binding.ivPreviewFrame.visibility = View.VISIBLE
+                }
+            } catch (e: Exception) {
+                // Preview frame is best-effort; if it fails, the user
+                // just sees the loading spinner as before.
+                android.util.Log.w(TAG, "Preview frame fetch failed: ${e.message}")
+            }
+        }
+    }
+
+    /** Hide the JPEG preview frame once a real video surface is showing. */
+    private fun hidePreviewFrame() {
+        if (binding.ivPreviewFrame.visibility == View.VISIBLE) {
+            binding.ivPreviewFrame.visibility = View.GONE
+            binding.ivPreviewFrame.setImageDrawable(null)
+        }
+    }
+
     private fun startPlayback() {
         val cam = camera ?: return
         // Reset the fallback ladder. The reload button should always
@@ -872,6 +932,9 @@ class CameraDetailActivity : AppCompatActivity() {
                         webRtcInProgress = false
                         binding.progressVideo.visibility = View.GONE
                         binding.tvVideoError.visibility = View.GONE
+                        // v1.6.16: hide the JPEG preview frame once the
+                        // real WebRTC video surface is live.
+                        hidePreviewFrame()
                         // v1.5.9: confirm the active transport once
                         // ICE reaches CONNECTED — the badge was already
                         // "WebRTC" from startWebRtcStream, this just
@@ -1035,6 +1098,9 @@ class CameraDetailActivity : AppCompatActivity() {
                         if (state == Player.STATE_BUFFERING) View.VISIBLE else View.GONE
                     if (state == Player.STATE_READY) {
                         binding.tvVideoError.visibility = View.GONE
+                        // v1.6.16: hide the JPEG preview frame once
+                        // ExoPlayer has its first frame ready.
+                        hidePreviewFrame()
                     }
                     if (state == Player.STATE_IDLE || state == Player.STATE_ENDED) {
                         binding.progressVideo.visibility = View.GONE

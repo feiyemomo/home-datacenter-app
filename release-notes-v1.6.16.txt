@@ -1,0 +1,13 @@
+v1.6.16 更新内容
+
+【Bug 修复】
+1. 设备在线数始终显示 0（用户正在使用 app 也显示 0）：
+   根因：后端 device manager 仅由 MQTT 事件驱动 SetOnline/Heartbeat，而 Android app 不走 MQTT（只用 HTTP+WebSocket+WebRTC），所以永远不会被标记为"在线"。
+   修复：后端在 WebSocket 连接建立时调用 deviceMgr.SetOnline(deviceID, clientIP)；客户端每 30s 发送的 WS heartbeat 消息也会触发 deviceMgr.Heartbeat() 刷新 LastSeen。断开连接不立即标记离线，由 90s sweep loop 自动处理（避免多连接时误判）。
+
+2. 远程网络下直播/录像首帧仍然很慢（对比 web dashboard 3.5s 出首帧）：
+   根因 1：Web dashboard 的"3.5s 首帧"实际是 JPEG 预览图（/api/v1/cameras/:id/frame），不是视频流。Android 进入详情页立即启动 WebRTC（远程 5s ICE + 10s 连接超时），失败后回落 MP4 又叠加 1-2s，用户盯着黑屏+进度圈 5-15s。
+   修复 1：详情页 onCreate 后台加载 JPEG 预览图显示在 ImageView 中，WebRTC onConnected 或 ExoPlayer STATE_READY 时隐藏。用户 ~1.5s 看到画面，而非等 5-15s 视频流冷启动。
+
+   根因 2：录像播放器未配置 LoadControl，使用 ExoPlayer 默认 15s minBuffer + 2.5s bufferForPlayback，首帧需缓冲 2.5s 数据才开始播放。
+   修复 2：录像播放器配置低延迟 LoadControl（minBuffer=2s, bufferForPlayback=500ms），首帧时间从 ~4-5s 降到 ~2s。

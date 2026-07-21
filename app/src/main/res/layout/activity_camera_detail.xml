@@ -54,6 +54,21 @@
                 app:show_buffering="when_playing"
                 app:show_timeout="3000" />
 
+            <!-- v1.6.16: JPEG preview frame shown immediately while
+                 WebRTC/MP4 is connecting. Mirrors the web dashboard's
+                 strategy of showing a cheap JPEG frame (/api/v1/cameras/:id/frame)
+                 before the expensive video stream cold-starts, so the
+                 user sees content within ~1.5s instead of staring at a
+                 black screen + spinner for 5-15s on remote networks.
+                 Hidden once any video surface becomes visible. -->
+            <ImageView
+                android:id="@+id/ivPreviewFrame"
+                android:layout_width="match_parent"
+                android:layout_height="200dp"
+                android:scaleType="centerCrop"
+                android:background="@android:color/black"
+                android:visibility="gone" />
+
             <!-- v1.5.9: Stream strategy badge (top-left). Shows
                  the active live transport so the user knows whether
                  WebRTC, MP4 (fMP4 proxy), or HLS is feeding the
