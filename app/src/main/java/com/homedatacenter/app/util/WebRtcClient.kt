@@ -333,17 +333,7 @@ class WebRtcClient(
             // POSTing. GATHER_ONCE waits for all candidates before
             // firing onIceGatheringChange(COMPLETE).
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
-            // v1.6.17: revert GATHER_ONCE -> CONTINUAL_GATHERING.
-            // The browser (dashboard) uses CONTINUAL by default and
-            // succeeds in ~4s on remote networks. GATHER_ONCE was
-            // aborting STUN round-trips if the first gather pass
-            // didn't complete within our 5s timeout — but on flaky
-            // cellular links Google/Cloudflare STUN can take 2-4s
-            // just for the first round-trip, and a single retransmit
-            // pushes us past 5s. CONTINUAL keeps gathering (and
-            // re-gathering on network changes) so late-arriving
-            // srflx candidates still make it into the offer.
-            continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
+            continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_ONCE
             // v1.6.13: TCP candidate policy is now conditional on isLan.
             // - LAN: DISABLED — TCP candidate gathering adds 100-300ms
             //   (tries to connect to TCP 80/443 on the gateway which
@@ -361,17 +351,12 @@ class WebRtcClient(
             } else {
                 PeerConnection.TcpCandidatePolicy.ENABLED
             }
-            // v1.6.17: removed rtcpMuxPolicy = REQUIRE. The browser
-            // default is also REQUIRE, but Chrome's WebRTC stack
-            // falls back to non-mux RTCP gracefully when the remote
-            // (go2rtc 0.17) doesn't fully support it. The Android
-            // WebRTC library's strict REQUIRE was rejecting the SDP
-            // answer in cases where go2rtc advertised rtcp-mux but
-            // actually sent RTCP on a separate port, causing ICE
-            // connectivity checks to fail. Leaving this unset lets
-            // the library use its default (NEGOTIATE), which matches
-            // the browser's effective behavior.
-            // rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE  // removed
+            // v1.6.18: rtcpMuxPolicy kept at REQUIRE (WebRTC library
+            // default for UnifiedPlan). v1.6.17 removed it thinking
+            // it caused SDP negotiation failures with go2rtc, but the
+            // real root cause was the audio transceiver (see below).
+            // Reverting to match v1.6.13-v1.6.16 behavior.
+            rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE
         }
 
         val pc = pcFactory.createPeerConnection(pcConfig, pcObserver) ?: run {
@@ -380,15 +365,29 @@ class WebRtcClient(
         }
         peerConnection = pc
 
-        // Add recvonly transceivers for audio + video. The order
-        // matters: backend expects audio first, then video (matches
-        // the SDP m-line order go2rtc generates).
-        pc.addTransceiver(
-            MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO,
-            RtpTransceiver.RtpTransceiverInit(
-                RtpTransceiver.RtpTransceiverDirection.RECV_ONLY
-            )
-        )
+        // v1.6.18: VIDEO-ONLY transceiver, matching the dashboard's
+        // useWebRTCStream.ts. The previous v1.5.3-v1.6.17 code added
+        // both audio + video transceivers, but the backend's go2rtc
+        // source URL includes `#audio=0` (see registry.go rtspURL)
+        // which strips the audio track at the source. When go2rtc
+        // receives an SDP offer with an audio m-line but has no audio
+        // source to offer, the SDP negotiation breaks — go2rtc either
+        // rejects the offer or returns a malformed answer, and ICE
+        // never reaches CONNECTED.
+        //
+        // The dashboard (which reliably succeeds in ~4s on remote)
+        // only adds a video transceiver for exactly this reason — see
+        // useWebRTCStream.ts line 146:
+        //   "Video only — camera audio codecs (G726/PCMU/MPEG4-
+        //    GENERIC) are not browser-decodable via WebRTC. The API
+        //    also appends #audio=0 to the go2rtc source URL so go2rtc
+        //    won't even try to negotiate audio."
+        //
+        // Camera audio is still available via the MP4/HLS fallback
+        // paths (which use AAC, not WebRTC's Opus). The WebRTC
+        // control bar's mute button (btnWebRtcMute) is now a no-op
+        // for live streams — we keep the button for UI stability but
+        // it has no audio track to toggle.
         pc.addTransceiver(
             MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO,
             RtpTransceiver.RtpTransceiverInit(
@@ -396,11 +395,11 @@ class WebRtcClient(
             )
         )
 
-        // Create SDP offer. OfferToReceiveAudio/Video are implied
-        // by the recvonly transceivers in UnifiedPlan, but we set
-        // them explicitly for compatibility with older backends.
+        // v1.6.18: OfferToReceiveAudio removed. Setting it to "true"
+        // forces an audio m-line into the SDP offer even though we
+        // didn't add an audio transceiver — same root cause as above.
+        // The dashboard doesn't set this constraint either.
         val constraints = MediaConstraints().apply {
-            mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
             mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
         }
 
@@ -498,17 +497,13 @@ class WebRtcClient(
         // ICE completes in <500ms; any longer than 5s on LAN means
         // something is genuinely wrong.
         //
-        // v1.6.17: remote timeout bumped 10s -> 15s. Dashboard's
-        // useWebRTCStream gives ICE an 8s 'disconnected' grace
-        // window (during which the browser keeps retrying) before
-        // falling back. Our previous 10s was cutting off srflx
-        // connectivity checks that would have succeeded at 11-13s
-        // on cellular networks with high STUN latency. 15s still
-        // beats the WebRTC library's internal ~25s FAILED timeout
-        // by 10s, so MP4 fallback is still 10s faster than the
-        // pre-v1.6.13 behavior.
+        // v1.6.18: reverted v1.6.17's 15s timeout back to 10s. The
+        // real WebRTC failure root cause was the audio transceiver
+        // (see addTransceiver comment above), not the timeout being
+        // too short. With the audio m-line removed, ICE completes
+        // in ~2-4s on remote, so 10s is plenty of headroom.
         if (!connectedOrFailed) {
-            val connectTimeoutMs = if (isLan) 5_000L else 15_000L
+            val connectTimeoutMs = if (isLan) 5_000L else 10_000L
             scope.launch {
                 delay(connectTimeoutMs)
                 if (!connectedOrFailed) {

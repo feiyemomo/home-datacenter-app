@@ -1,0 +1,35 @@
+v1.6.18 更新内容
+
+【Bug 修复】远程网络下 WebRTC 直播始终失败 + MP4 fallback 也失败
+
+根因分析（真正的根因，对比 dashboard useWebRTCStream.ts）：
+
+Android 的 WebRtcClient.kt 同时添加了 audio + video 两个 transceiver，但 dashboard 只添加 video 一个。后端 go2rtc 的源 URL 包含 #audio=0 指令（见 registry.go rtspURL 函数），完全跳过音频轨。当 go2rtc 收到包含 audio m-line 的 SDP offer 但没有音频源时，SDP 协商会失败——这才是 WebRTC 在远程网络下始终无法连接的真正根因。
+
+v1.6.17 的修改完全错了方向（GATHER_ONCE→CONTINUAL、删 rtcpMuxPolicy、timeout 10s→15s），这些都不是根因，反而 CONTINUAL_GATHERING 可能让 waitForIceGathering 永远等不到 COMPLETE 状态。
+
+修复内容：
+
+1. WebRtcClient.kt - 删除 audio transceiver（对齐 dashboard）
+   - 移除 pc.addTransceiver(AUDIO, RECV_ONLY)
+   - 只保留 pc.addTransceiver(VIDEO, RECV_ONLY)
+   - 移除 OfferToReceiveAudio constraint
+   - 这对齐了 dashboard useWebRTCStream.ts 的行为：video-only，因为摄像头音频 codec (G726/PCMU) 浏览器/WebRTC 不可解码，且后端 #audio=0 已经跳过音频
+
+2. WebRtcClient.kt - 回退 v1.6.17 错误的 ICE 配置
+   - GATHER_CONTINUALLY → GATHER_ONCE（恢复 v1.6.16 行为）
+   - rtcpMuxPolicy = REQUIRE 加回（恢复 v1.6.16 行为）
+   - app-level timeout 15s → 10s（恢复 v1.6.16 行为）
+   - 保留 v1.6.17 新增的 ICE candidate 诊断日志（有价值）
+
+3. CameraDetailActivity.kt - 远程下跳过 MP4 直接 fallback HLS
+   - dashboard 的 fallback 策略是 WebRTC → HLS（没有 MP4 中间层）
+   - MP4 是无限 fMP4 流，在 Cloudflare Tunnel 下不稳定（1.4s TTFB + 无分段重试）
+   - HLS 有分段重试机制，在远程网络下更稳定
+   - LAN 保留 MP4 作为首选 fallback（1-2s vs HLS 的 3-5s）
+   - 远程下如果 HLS URL 为空，仍会 fallback 到 MP4
+
+预期效果：
+- 远程 WebRTC 直播首帧 ~4s 成功（对齐 dashboard）
+- 即使 WebRTC 失败，HLS fallback 在远程下稳定播放
+- LAN 下保持原有的快速 MP4 fallback 体验
