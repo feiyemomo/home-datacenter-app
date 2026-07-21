@@ -1,0 +1,41 @@
+v1.6.25 — 修复"发现新版"对话框下载按钮被推出屏幕外
+
+【根因分析】
+用户反馈：app 版本更新时，新版本提示对话框里的"下载并安装"按钮看不到。
+
+排查 dialog_update_available.xml 发现：版本特点 (release notes) 区域的 ScrollView 使用了如下配置：
+  android:layout_height="wrap_content"
+  android:maxHeight="180dp"
+
+关键问题：android:maxHeight 属性在普通 ScrollView (继承自 FrameLayout) 上**完全无效**。该属性只对 ProgressBar、ImageView (配合 adjustViewBounds)、MaterialButton 等特定组件生效，FrameLayout/ScrollView/LinearLayout 在 LinearLayout 父容器中测量时会被忽略。
+
+因此当 release notes 较长 (例如 v1.6.24 的 Tunnel/WebRTC/HLS 说明) 时：
+1. ScrollView 不会被限制在 180dp，而是按内容自然撑开 (可达 800dp+)
+2. 根 LinearLayout (wrap_content) 跟着撑高，总高度超过屏幕高度
+3. Dialog 窗口 (WRAP_CONTENT) 被 WindowManager 截断到屏幕高度
+4. 位于 LinearLayout 底部的按钮行 (btnCancel / btnDownloadInstall) 被推到屏幕外，用户看不到下载按钮
+
+v1.6.22 的注释声称"已修复 ScrollView 高度"，但实际上 maxHeight=180dp 从未生效，只是当时 release notes 较短没暴露问题。
+
+【Android 修复】
+1. dialog_update_available.xml: 将 release notes 的 ScrollView 包裹进 ConstraintLayout
+   - ConstraintLayout 是唯一能强制约束 wrap_content 子视图高度的容器
+   - ScrollView 改用 app:layout_constrainedHeight="true" + app:layout_constraintHeight_max="220dp"
+   - 这两个属性组合后，ConstraintLayout 在 onMeasure 阶段会把 ScrollView 的高度限制在 220dp 以内
+   - 超出部分由 ScrollView 内部滚动处理
+   - maxHeight 从 180dp 调整为 220dp (约 13-14 行文本)，给详细 release notes 更多展示空间
+   - 所有视图 ID 保持不变 (scrollReleaseNotes / tvReleaseNotes / tvReleaseNotesLabel 等)，SettingsFragment.kt 无需改动
+
+2. app/build.gradle.kts: versionCode 67 → 68, versionName "1.6.24" → "1.6.25"
+
+【预期效果】
+- 无论 release notes 多长，ScrollView 高度都不超过 220dp，超出部分内部滚动
+- "下载并安装"按钮始终固定在对话框底部可见位置
+- release notes 为空时 ScrollView 仍为 GONE，对话框布局与之前完全一致
+- 对话框在 5 英寸小屏手机上也能正常显示完整按钮行
+- 修复对 v1.6.22 引入的宽度限制 (90% screen, max 480dp) 无影响，视觉风格 (bg_card_rounded + bg_glass_card 暖色液态玻璃) 保持不变
+
+【修改文件】
+- Android:
+  - app/src/main/res/layout/dialog_update_available.xml (ScrollView 包裹进 ConstraintLayout，强制 maxHeight)
+  - app/build.gradle.kts (versionCode 68, versionName 1.6.25)

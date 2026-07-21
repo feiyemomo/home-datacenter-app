@@ -135,10 +135,18 @@
     </LinearLayout>
 
     <!-- Release notes section (版本特点) — only shown when non-empty.
-         v1.6.22: fixed ScrollView height. Previously used layout_weight=1
-         inside a wrap_content parent, which made the dialog grow to fill
-         the screen. Now constrained to a fixed 180dp max height — enough
-         for ~10 lines of release notes, with scroll for longer content. -->
+         v1.6.22: tried to cap ScrollView height with android:maxHeight=180dp.
+         v1.6.25: ROOT CAUSE FIX — android:maxHeight is IGNORED on a plain
+         ScrollView (a FrameLayout subclass) when placed inside a LinearLayout,
+         so long release notes expanded the ScrollView to its full content
+         height, pushing the button row (btnCancel / btnDownloadInstall)
+         off-screen and making the dialog appear to have no download button.
+         The fix wraps the ScrollView in a ConstraintLayout and uses
+         app:layout_constraintHeight_max, which ConstraintLayout DOES enforce
+         on a wrap_content child when combined with
+         app:layout_constrainedHeight="true". This guarantees the download
+         button stays visible at the bottom of the dialog regardless of how
+         long the release notes are. -->
     <TextView
         android:id="@+id/tvReleaseNotesLabel"
         android:layout_width="wrap_content"
@@ -150,24 +158,34 @@
         android:layout_marginBottom="6dp"
         android:visibility="gone" />
 
-    <ScrollView
-        android:id="@+id/scrollReleaseNotes"
+    <androidx.constraintlayout.widget.ConstraintLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:maxHeight="180dp"
-        android:background="@drawable/bg_glass_card"
-        android:padding="10dp"
-        android:layout_marginBottom="16dp"
-        android:visibility="gone">
+        android:layout_marginBottom="16dp">
 
-        <TextView
-            android:id="@+id/tvReleaseNotes"
-            android:layout_width="match_parent"
+        <ScrollView
+            android:id="@+id/scrollReleaseNotes"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:textSize="13sp"
-            android:textColor="@color/text_primary"
-            android:lineSpacingExtra="3dp" />
-    </ScrollView>
+            app:layout_constrainedHeight="true"
+            app:layout_constraintHeight_max="220dp"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            android:background="@drawable/bg_glass_card"
+            android:padding="10dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/tvReleaseNotes"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textSize="13sp"
+                android:textColor="@color/text_primary"
+                android:lineSpacingExtra="3dp" />
+        </ScrollView>
+    </androidx.constraintlayout.widget.ConstraintLayout>
 
     <!-- Download progress bar (hidden until download starts) -->
     <ProgressBar
