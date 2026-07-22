@@ -256,6 +256,29 @@ class BaseUrlResolver(
     fun currentRttMs(): Long = lastRttMs
 
     /**
+     * v1.6.29: Update [lastRttMs] from a real API call's RTT (e.g.
+     * DashboardFragment.loadSystemStatus). This makes the displayed
+     * latency reflect steady-state connection reuse (~250ms on cellular
+     * IPv6) rather than the probe RTT which includes TCP handshake
+     * (~500ms on cellular IPv6).
+     *
+     * Only updates when the new RTT is lower than the current value
+     * (or when no probe has succeeded yet, lastRttMs < 0). This
+     * prevents transient network jitter from degrading the displayed
+     * value — the probe RTT acts as an upper bound, and API RTT
+     * only pulls it down toward the true steady-state latency.
+     *
+     * Safe to call from any thread (lastRttMs is @Volatile).
+     */
+    fun updateRttFromApiCall(rtt: Long) {
+        if (rtt < 0) return
+        val current = lastRttMs
+        if (current < 0 || rtt < current) {
+            lastRttMs = rtt
+        }
+    }
+
+    /**
      * v1.6.26: human-readable label of the currently selected path,
      * e.g. "局域网 (12ms)" or "IPv6 直连 (45ms)" or "远程 (1400ms)".
      * Used by UI surfaces (Dashboard path chip,
@@ -624,6 +647,21 @@ class BaseUrlResolver(
         // we've already potentially switched `resolved` to LAN/IPv6 —
         // the user-visible latency is dominated by the fastest alive
         // candidate, not the slowest.
+        //
+        // v1.6.29: before probing, warm up the connection pool for the
+        // CURRENT resolved URL. This lets the probe for that URL reuse
+        // the warmed connection (skipping TCP handshake), so the probe
+        // RTT reflects steady-state latency (~250ms on cellular IPv6)
+        // instead of handshake-inclusive latency (~500ms). On the first
+        // startup probe, resolved is still REMOTE_URL so this warmup
+        // targets the Tunnel — the LAN/IPv6 probes still pay handshakes.
+        // But on every subsequent probe (every 5 min TTL), the current
+        // resolved URL (LAN or IPv6) gets warmed up first, and with
+        // keep-alive (10 min) exceeding TTL (5 min), the connection
+        // from the previous warmup is still alive in the pool.
+        if (resolved.isNotBlank()) {
+            warmupConnection(resolved)
+        }
 
         // 1. LAN probe (two-pronged: HTTP + TCP fallback)
         var lanResult = probeUrl(LAN_URL, LAN_TIMEOUT_MS)

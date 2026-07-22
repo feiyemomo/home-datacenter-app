@@ -41,8 +41,18 @@ object NetworkFactory {
         // OkHttp still keeps connections alive by default, but
         // documenting it here makes the warmup strategy in
         // BaseUrlResolver.warmupConnection() coherent.
+        //
+        // v1.6.29: keep-alive extended from 5 min to 10 min so it
+        // EXCEEDS the BaseUrlResolver probe TTL (5 min). Previously,
+        // keep-alive (5 min) == TTL (5 min), which meant by the time
+        // the next probe ran, the warmup connection had just expired
+        // and the probe paid the full TCP handshake again. With 10 min
+        // keep-alive, the connection from the previous warmup is still
+        // alive when the next probe fires, so the probe reuses it and
+        // the displayed RTT stays at ~250ms instead of jumping back to
+        // ~500ms every 5 minutes.
         val builder = OkHttpClient.Builder()
-            .connectionPool(ConnectionPool(5, 5, TimeUnit.MINUTES))
+            .connectionPool(ConnectionPool(5, 10, TimeUnit.MINUTES))
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .writeTimeout(60, TimeUnit.SECONDS)

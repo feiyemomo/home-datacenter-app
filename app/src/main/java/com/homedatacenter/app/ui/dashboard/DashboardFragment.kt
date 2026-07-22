@@ -322,12 +322,21 @@ class DashboardFragment : Fragment() {
         }
 
         viewLifecycleOwner.lifecycleScope.launch {
+            // v1.6.29: measure the real API call RTT and feed it back
+            // to BaseUrlResolver so the network quality card displays
+            // steady-state latency (connection reused, ~250ms on
+            // cellular IPv6) instead of the probe RTT (~500ms, which
+            // includes TCP handshake). This runs on every 5s poll,
+            // so the card updates within 5s of app launch.
+            val apiStart = System.currentTimeMillis()
             try {
                 val status = mainActivity.container.getRepository().getSystemStatus(
                     token = token,
                     useCache = false,
                     refreshCache = true,
                 )
+                val apiElapsed = System.currentTimeMillis() - apiStart
+                mainActivity.container.baseUrlResolver.updateRttFromApiCall(apiElapsed)
                 latestSystemStatus = status
                 updateStats(status)
             } catch (error: Exception) {

@@ -1,0 +1,9 @@
+v1.6.29 - IPv6 Latency Display Fix
+
+Fix: Dashboard network quality card now shows steady-state API RTT (~250ms)
+instead of probe RTT (~500ms) which included TCP handshake.
+
+Changes:
+- BaseUrlResolver.updateRttFromApiCall() - real API call RTT writes back to display
+- probeSync() warms up current resolved URL BEFORE probing (probe reuses warmup connection)
+- ConnectionPool keep-alive extended from 5min to 10min (exceeds 5min probe TTL)
