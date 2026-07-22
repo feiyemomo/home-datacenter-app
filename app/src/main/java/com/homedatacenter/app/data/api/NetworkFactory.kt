@@ -1,6 +1,7 @@
 package com.homedatacenter.app.data.api
 
 import kotlinx.serialization.json.Json
+import okhttp3.ConnectionPool
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
@@ -29,7 +30,19 @@ object NetworkFactory {
         //     networks, surfacing as "connection closed" in OkHttp.
         //     Forcing HTTP/1.1 trades multiplexing for stability on
         //     the slow, lossy mobile paths this app uses.
+        // v1.6.28: explicit ConnectionPool config so keep-alive
+        // connections are reused across API calls. Default OkHttp pool
+        // is (5, 5min) — same numbers, but setting it explicitly makes
+        // the intent visible and pins the behavior across OkHttp
+        // versions. This is the critical optimization for cellular
+        // IPv6 (~250ms RTT): the second request to the same origin
+        // reuses the warmed TCP connection and skips the handshake,
+        // cutting ~250ms off the request. Without an explicit pool,
+        // OkHttp still keeps connections alive by default, but
+        // documenting it here makes the warmup strategy in
+        // BaseUrlResolver.warmupConnection() coherent.
         val builder = OkHttpClient.Builder()
+            .connectionPool(ConnectionPool(5, 5, TimeUnit.MINUTES))
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .writeTimeout(60, TimeUnit.SECONDS)

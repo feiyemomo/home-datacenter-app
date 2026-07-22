@@ -718,6 +718,67 @@ class BaseUrlResolver(
                 "probeSync: switching resolved → $chosen (rtt=${chosenRtt}ms, preference=$preference)",
             )
             onUrlChanged?.invoke(chosen)
+            // v1.6.28: warm up the connection pool for the new URL so
+            // the first real API call doesn't pay the TCP handshake cost.
+            // This is especially valuable on cellular IPv6 where RTT is
+            // ~250ms — warmup saves one full RTT on the first request.
+            warmupConnection(chosen)
+        }
+    }
+
+    /**
+     * v1.6.28: Pre-warm the OkHttp ConnectionPool by issuing a throwaway
+     * HEAD request to the resolved URL. This establishes a TCP connection
+     * (and TLS for the Tunnel path) that subsequent API calls reuse,
+     * saving one RTT on the first real API request.
+     *
+     * On cellular IPv6 with ~250ms RTT, this cuts the first API call
+     * from ~500ms (TCP handshake + HTTP) to ~250ms (HTTP only).
+     *
+     * Safe to call from any thread. Failures are silently ignored —
+     * the connection pool simply won't have a warm connection, and the
+     * first API call will pay the full TCP handshake cost. No functional
+     * impact.
+     *
+     * Called by [probeSync] when the resolved URL changes (including
+     * the very first successful probe at startup).
+     */
+    private fun warmupConnection(url: String) {
+        try {
+            val warmupClient = client.newBuilder()
+                .callTimeout(3, TimeUnit.SECONDS)
+                .connectTimeout(3, TimeUnit.SECONDS)
+                .readTimeout(3, TimeUnit.SECONDS)
+                .build()
+            // HEAD request to /api/v1/system/status — same path as the
+            // probe, so the connection is to the exact same origin that
+            // subsequent API calls will use. HEAD is cheaper than GET
+            // (no response body), but the TCP+TLS establishment is
+            // identical. The response (401) is irrelevant — we only
+            // care that the connection is now in the pool.
+            //
+            // Note: we use the SHARED client's newBuilder(), so the
+            // connection pool is shared with the main OkHttpClient
+            // used by Retrofit. The warmed connection will be reused
+            // by the next API call.
+            val request = Request.Builder()
+                .url("${url.trimEnd('/')}/api/v1/system/status")
+                .head()
+                .build()
+            warmupClient.newCall(request).execute().use { response ->
+                android.util.Log.i(
+                    TAG,
+                    "warmupConnection: $url → HTTP ${response.code} " +
+                        "(connection now in pool for reuse)",
+                )
+            }
+        } catch (e: Exception) {
+            // Best-effort — if warmup fails, the first API call will
+            // just take longer. Don't surface this to the user.
+            android.util.Log.d(
+                TAG,
+                "warmupConnection: $url → failed (non-critical): ${e.javaClass.simpleName}: ${e.message}",
+            )
         }
     }
 
