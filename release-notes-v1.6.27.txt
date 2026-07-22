@@ -1,0 +1,15 @@
+﻿v1.6.27 - IPv6 前缀轮换自动适配
+
+## 新功能
+- 动态获取 NAS IPv6 地址：BaseUrlResolver 启动时调用 /api/v1/network/ipv6 端点获取当前 NAS 出站 IPv6 地址，无需手动更新硬编码地址
+- 周期性刷新：每 5 分钟自动刷新动态 IPv6 地址，与 probeSync 解耦
+- Fallback 机制：动态获取失败时回退到硬编码默认值（已更新为新前缀 37a3:99d0）
+
+## 修复
+- IPv6 直连延迟从 ~1000ms 降至 ~50ms（修复 IPv6 前缀轮换导致的非对称路由问题）
+- 更新硬编码 IPv6 地址从旧前缀 37a0:63f0 到新前缀 37a3:99d0（BaseUrlResolver.kt、config.yml、compose.yaml）
+
+## 后端配套变更
+- 新增 GET /api/v1/network/ipv6 端点（JWT 保护）返回 NAS 出站 IPv6 状态
+- 新增 PrefixWatcher 每 5 分钟检测前缀轮换，自动更新 go2rtc webrtc.candidates
+- 新增 FrigateClient.SetWebRTCCandidates 方法支持动态推送 WebRTC candidates
