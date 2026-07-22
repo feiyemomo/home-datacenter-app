@@ -347,6 +347,115 @@ fragment_dashboard.xml
 
 ---
 
+## 4.6. 动态 IPv6 地址获取 (v1.6.27)
+
+### 设计动机
+
+`BaseUrlResolver.IPV6_DIRECT_URL` 常量只在编译时反映 NAS 的 IPv6 地址。中国移动通过 DHCPv6-PD 周期性轮换 `/64` 前缀（路由器重启、ISP 维护、租约到期都会触发），一旦轮换，硬编码的地址就失效——IPv6 直连路径会因「非对称路由」（手机走残留路由到旧前缀 NAS，NAS 从新前缀返回，TCP 重传）从 ~50ms 延迟飙升到 ~1000ms。让用户每次前缀轮换都重装 APK 显然不可行，所以 v1.6.27 新增了运行时动态获取机制。
+
+### 核心组件
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                  BaseUrlResolver                             │
+│                                                              │
+│  @Volatile dynamicIpv6Url: String?  (从 /network/ipv6 拿到的) │
+│  @Volatile tokenProvider: (() -> String?)?  (AppContainer 注入)│
+│                                                              │
+│  private suspend fun fetchDynamicIpv6Url(): String?          │
+│    └── GET {resolved}/api/v1/network/ipv6                    │
+│        (3s 超时, JWT 必填)                                    │
+│        └── 解析 data.outbound_address → "http://[$addr]:8088/" │
+│                                                              │
+│  fun probeLanOnStartup() / probeAsync()                      │
+│    └── 后台线程调 fetchDynamicIpv6Url()                       │
+│        └── URL 变化 → 更新 dynamicIpv6Url + forceProbe()     │
+└──────────────────────────────────────────────────────────────┘
+              ▲
+              │ tokenProvider = { prefsManager.token }
+┌─────────────┴────────────────────────────────────────────────┐
+│                  AppContainer                                │
+│                                                              │
+│  val baseUrlResolver by lazy {                               │
+│    BaseUrlResolver(okHttpClient, context).also {             │
+│      it.tokenProvider = { prefsManager.token }               │
+│    }                                                         │
+│  }                                                           │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### 优先级与回退链
+
+`probeSync()` 选择 IPv6 候选地址时优先使用动态值：
+
+```kotlin
+val ipv6Url = dynamicIpv6Url ?: IPV6_DIRECT_URL
+```
+
+```
+dynamic URL (from /api/v1/network/ipv6)   ← 主选，跟踪前缀轮换
+            │ (null — 无 token / fetch 失败 / 登录前)
+            ▼
+hardcoded IPV6_DIRECT_URL 常量            ← 回退，可能已过期
+            │ (probe 失败 — 前缀已轮换过常量值)
+            ▼
+LAN_URL 或 REMOTE_URL                     ← 按 NetworkPathPreference
+```
+
+硬编码常量是故意保留的——删掉它会让 App 在登录前无法引导（JWT 保护端点在拿到 token 前无法调用）。
+
+### JWT 注入
+
+`/api/v1/network/ipv6` 是 JWT 保护端点。`tokenProvider` 是 `(() -> String?)?` 类型的 lambda，由 `AppContainer` 在 `baseUrlResolver` 初始化后注入：
+
+```kotlin
+val baseUrlResolver: BaseUrlResolver by lazy {
+    BaseUrlResolver(okHttpClient, context).also { resolver ->
+        resolver.tokenProvider = { prefsManager.token }
+    }
+}
+```
+
+为什么用 lambda 而不是构造函数参数：`BaseUrlResolver` 构造时 token 还不可用（用户尚未登录），而 `prefsManager.token` 是 `by lazy` 的 `EncryptedSharedPreferences` 读取。late-binding lambda 让 `fetchDynamicIpv6Url()` 在每次调用时实时读取当前 token——登录后立即生效，登出后立即失效。
+
+当 `tokenProvider` 为 null 或返回 null（未登录），`fetchDynamicIpv6Url()` 直接 return null，调用方继续使用硬编码 `IPV6_DIRECT_URL` 常量。
+
+### 触发点
+
+`fetchDynamicIpv6Url()` 在两处被异步调用：
+
+1. **`probeLanOnStartup()`**：App 启动时一次。在 `forceProbe()` 之前先尝试获取动态地址——成功则更新 `dynamicIpv6Url` 并立即触发 re-probe，让首次探测就用上新地址。
+2. **`probeAsync()`**：每次 TTL 过期触发的后台 re-probe（5 分钟周期）。与 `probeSync()` 解耦——慢速的 `/network/ipv6` 调用（3s 超时）不会阻塞 URL 切换。URL 不变时是 no-op；URL 变化时更新 `dynamicIpv6Url` 并 force re-probe，下一次 `probeSync()` 迭代会用上新地址。
+
+### 失败处理
+
+任何失败（网络错误、非 200 响应、`outbound_address` 字段缺失/为空、无 token）都返回 null。调用方保留前一次的值；首次调用时回退到硬编码常量。日志会打印失败原因（`fetchDynamicIpv6Url: failed: <ExceptionClass>: <message>`），便于排障。
+
+### 与 `isIpv6Direct()` / `isDirectPath()` 的协作
+
+两个判断函数都识别动态 IPv6 URL：
+
+```kotlin
+fun isIpv6Direct(): Boolean =
+    resolved == IPV6_DIRECT_URL ||
+    (dynamicIpv6Url != null && resolved == dynamicIpv6Url)
+
+fun isDirectPath(): Boolean = resolved == LAN_URL || isIpv6Direct()
+```
+
+这确保 WebRTC 代码在 `resolved` 指向动态 IPv6 URL 时仍然跳过 STUN/TURN 收集（直连路径只需 host candidate），与硬编码 IPv6 URL 的行为一致。
+
+### 与后端 `PrefixWatcher` 的协作
+
+后端 `PrefixWatcher` 每 5 分钟检测前缀轮换，轮换时：
+1. 更新自身的 `outbound_address` 缓存
+2. 发布 EventBus 事件 `network.ipv6.prefix_rotated`
+3. 调用 `FrigateClient.SetWebRTCCandidates()` 推送新 candidate 给 go2rtc
+
+Android 端在下一次 `probeAsync()` 周期（≤5 分钟内）调用 `/api/v1/network/ipv6` 拿到新地址 → 更新 `dynamicIpv6Url` → 触发 re-probe → 切到新 IPv6 URL。整个恢复过程 <10 分钟，无需人工干预。详见后端 `docs/ipv6-prefix-rotation.md`。
+
+---
+
 ## 5. WebSocket 推送
 
 ### 连接

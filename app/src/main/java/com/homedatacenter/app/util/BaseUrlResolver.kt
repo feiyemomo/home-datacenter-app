@@ -1,8 +1,12 @@
 package com.homedatacenter.app.util
 
 import android.content.Context
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONObject
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.concurrent.TimeUnit
@@ -117,6 +121,35 @@ class BaseUrlResolver(
      */
     @Volatile
     private var ipv6DirectAvailable: Boolean = false
+
+    /**
+     * v1.6.27: dynamically-fetched IPv6 base URL (from the backend
+     * `/api/v1/network/ipv6` endpoint). When non-null, takes priority
+     * over the hardcoded [IPV6_DIRECT_URL] constant — the constant
+     * only reflects the NAS IPv6 address at compile time and goes
+     * stale whenever the ISP rotates the /64 prefix (DHCPv6-PD
+     * renewal). The backend reports its current outbound IPv6
+     * address on every call, so preferring this field lets the app
+     * follow prefix rotations without an app rebuild.
+     *
+     * Written by [fetchDynamicIpv6Url] (called from
+     * [probeLanOnStartup] and [probeAsync]); read by [probeSync],
+     * [isIpv6Direct], [isDirectPath], and [onNetworkLost].
+     */
+    @Volatile
+    private var dynamicIpv6Url: String? = null
+
+    /**
+     * v1.6.27: supplies the JWT required to call the JWT-protected
+     * `/api/v1/network/ipv6` endpoint. Set by AppContainer after the
+     * auth state is initialized (BaseUrlResolver is constructed
+     * before the token is available, hence the late-binding lambda
+     * instead of a constructor parameter). When null or when the
+     * lambda returns null, [fetchDynamicIpv6Url] is a no-op and we
+     * fall back to the hardcoded [IPV6_DIRECT_URL].
+     */
+    @Volatile
+    var tokenProvider: (() -> String?)? = null
 
     private val probing = AtomicBoolean(false)
 
@@ -254,8 +287,15 @@ class BaseUrlResolver(
      * direct URL. Used by WebRTC code to decide whether to attempt
      * IPv6 P2P (skip STUN, gather IPv6 host candidates only) and by
      * CameraDetailActivity to gate the WebRTC-over-IPv6 path.
+     *
+     * v1.6.27: also returns true when `resolved` matches the
+     * dynamically-fetched IPv6 URL (from /api/v1/network/ipv6). The
+     * dynamic URL is functionally equivalent to [IPV6_DIRECT_URL] —
+     * same NAS, same port, just a fresher address after a prefix
+     * rotation — so all IPv6-specific WebRTC behavior applies.
      */
-    fun isIpv6Direct(): Boolean = resolved == IPV6_DIRECT_URL
+    fun isIpv6Direct(): Boolean =
+        resolved == IPV6_DIRECT_URL || (dynamicIpv6Url != null && resolved == dynamicIpv6Url)
 
     /**
      * v1.6.23: returns true if the resolved URL is a direct path to
@@ -263,8 +303,13 @@ class BaseUrlResolver(
      * Used by WebRTC code to decide whether to skip STUN/TURN servers
      * — direct paths only need host candidates, the Tunnel can't route
      * WebRTC media anyway.
+     *
+     * v1.6.27: delegates to [isIpv6Direct] so the dynamic IPv6 URL is
+     * also recognized as a direct path. Without this, WebRTC would
+     * incorrectly attempt STUN/TURN gathering when the resolver is
+     * pointed at the dynamic IPv6 URL.
      */
-    fun isDirectPath(): Boolean = resolved == LAN_URL || resolved == IPV6_DIRECT_URL
+    fun isDirectPath(): Boolean = resolved == LAN_URL || isIpv6Direct()
 
     /**
      * v1.6.23: immediate fallback for NetworkChangeMonitor.onLost().
@@ -285,7 +330,10 @@ class BaseUrlResolver(
      * potentially switch to LAN if the new network is the home WiFi.
      */
     fun onNetworkLost() {
-        val safeDefault = if (ipv6DirectAvailable) IPV6_DIRECT_URL else REMOTE_URL
+        // v1.6.27: prefer the dynamic IPv6 URL when available —
+        // matches probeSync's behavior and avoids switching to a
+        // stale hardcoded address that may have rotated.
+        val safeDefault = if (ipv6DirectAvailable) (dynamicIpv6Url ?: IPV6_DIRECT_URL) else REMOTE_URL
         if (resolved != safeDefault) {
             android.util.Log.i(
                 TAG,
@@ -369,6 +417,31 @@ class BaseUrlResolver(
      * happens on background daemon threads.
      */
     fun probeLanOnStartup() {
+        // v1.6.27: fetch dynamic IPv6 address from backend before
+        // first probe. This is best-effort — if it fails (no token
+        // yet, network not ready, backend unreachable), we fall back
+        // to the hardcoded IPV6_DIRECT_URL (which may be stale if
+        // the ISP rotated the prefix, but is better than nothing).
+        // When the fetch succeeds and the URL differs from the
+        // current one, we update dynamicIpv6Url and force a re-probe
+        // so probeSync picks up the new address immediately.
+        Thread {
+            try {
+                val newUrl = runBlocking { fetchDynamicIpv6Url() }
+                if (newUrl != null && newUrl != dynamicIpv6Url) {
+                    dynamicIpv6Url = newUrl
+                    android.util.Log.i(TAG, "probeLanOnStartup: dynamic IPv6 URL updated → $newUrl, forcing re-probe")
+                    forceProbe()
+                }
+            } catch (e: Exception) {
+                android.util.Log.w(TAG, "probeLanOnStartup: fetchDynamicIpv6Url failed: ${e.message}")
+            }
+        }.apply {
+            isDaemon = true
+            name = "BaseUrlResolver-ipv6-fetch"
+            start()
+        }
+
         // Kick off the first probe immediately (background).
         forceProbe()
         // Schedule escalating retries to absorb the real-phone
@@ -406,6 +479,97 @@ class BaseUrlResolver(
             isDaemon = true
             name = "BaseUrlResolver-probe"
             start()
+        }
+        // v1.6.27: async refresh of the dynamic IPv6 URL. Decoupled
+        // from probeSync so a slow /network/ipv6 call (3s timeout)
+        // doesn't delay the URL switch. If the URL changes, we
+        // update dynamicIpv6Url and force a re-probe — the next
+        // probeSync iteration will pick up the new address. When
+        // the URL is unchanged (common case) this is a no-op.
+        Thread {
+            try {
+                val newUrl = runBlocking { fetchDynamicIpv6Url() }
+                if (newUrl != null && newUrl != dynamicIpv6Url) {
+                    dynamicIpv6Url = newUrl
+                    android.util.Log.i(TAG, "probeAsync: dynamic IPv6 URL updated → $newUrl, forcing re-probe")
+                    forceProbe()
+                }
+            } catch (_: Exception) {
+                // Best-effort — swallow. Logged inside
+                // fetchDynamicIpv6Url if the request itself failed.
+            }
+        }.apply {
+            isDaemon = true
+            name = "BaseUrlResolver-ipv6-refresh"
+            start()
+        }
+    }
+
+    /**
+     * v1.6.27: fetches the NAS's current outbound IPv6 address from
+     * the backend `/api/v1/network/ipv6` endpoint and returns it
+     * wrapped as a base URL (`http://[<addr>]:8088/`).
+     *
+     * Why this exists: the hardcoded [IPV6_DIRECT_URL] only reflects
+     * the NAS IPv6 address at compile time. Chinese ISPs rotate the
+     * /64 prefix on DHCPv6-PD renewal (sometimes daily, sometimes on
+     * router reboot), which invalidates the hardcoded address and
+     * silently breaks IPv6 direct connectivity until the user
+     * reinstalls the app. The backend reads its own current IPv6
+     * address (or the `NAS_IPV6_ADDRESS` env var when the container
+     * can't probe it) and returns it on every call, so polling this
+     * endpoint lets us follow prefix rotations without an app
+     * rebuild.
+     *
+     * JWT is required (the endpoint is auth-protected). The token is
+     * obtained via [tokenProvider] — AppContainer sets this after
+     * the auth state is initialized. When no token is available we
+     * bail out and the caller keeps using the hardcoded
+     * [IPV6_DIRECT_URL] (which may be stale but is better than
+     * nothing).
+     *
+     * Best-effort: any failure (network error, non-200 response,
+     * missing/malformed `outbound_address` field) returns null. The
+     * caller is responsible for keeping the previous value.
+     *
+     * @return the freshly-fetched base URL (`http://[<addr>]:8088/`),
+     *   or null if the fetch failed or no token was available.
+     */
+    private suspend fun fetchDynamicIpv6Url(): String? {
+        val token = tokenProvider?.invoke() ?: return null
+        return withContext(Dispatchers.IO) {
+            try {
+                val url = "${resolved.trimEnd('/')}/api/v1/network/ipv6"
+                val request = Request.Builder()
+                    .url(url)
+                    .header("Authorization", "Bearer $token")
+                    .get()
+                    .build()
+                client.newBuilder()
+                    .callTimeout(3, TimeUnit.SECONDS)
+                    .connectTimeout(3, TimeUnit.SECONDS)
+                    .readTimeout(3, TimeUnit.SECONDS)
+                    .build()
+                    .newCall(request)
+                    .execute().use { response ->
+                        if (!response.isSuccessful) return@use null
+                        val body = response.body?.string() ?: return@use null
+                        val json = JSONObject(body)
+                        val data = json.optJSONObject("data") ?: return@use null
+                        val outbound = data.optString("outbound_address", "")
+                        if (outbound.isNotEmpty()) {
+                            val newUrl = "http://[$outbound]:8088/"
+                            android.util.Log.i(TAG, "fetchDynamicIpv6Url: got $outbound → $newUrl")
+                            newUrl
+                        } else {
+                            android.util.Log.w(TAG, "fetchDynamicIpv6Url: outbound_address empty")
+                            null
+                        }
+                    }
+            } catch (e: Exception) {
+                android.util.Log.w(TAG, "fetchDynamicIpv6Url: failed: ${e.javaClass.simpleName}: ${e.message}")
+                null
+            }
         }
     }
 
@@ -474,12 +638,21 @@ class BaseUrlResolver(
             }
         }
 
+        // v1.6.27: prefer the dynamically-fetched IPv6 URL (from
+        // /api/v1/network/ipv6) over the hardcoded IPV6_DIRECT_URL
+        // constant. The dynamic URL tracks ISP prefix rotations; the
+        // constant only reflects the address at compile time and goes
+        // stale whenever the /64 prefix changes. When dynamicIpv6Url
+        // is null (tokenProvider not yet set, or last fetch failed)
+        // we fall back to the constant.
+        val ipv6Url = dynamicIpv6Url ?: IPV6_DIRECT_URL
+
         // 2. IPv6 direct probe. OkHttp will fail immediately
         // (NoRouteToHostException / UnknownHostException) if the
         // phone has no IPv6 connectivity, so this is also an
         // implicit phone-IPv6 check — no separate ConnectivityManager
         // probe needed.
-        val ipv6Result = probeUrl(IPV6_DIRECT_URL, IPV6_TIMEOUT_MS)
+        val ipv6Result = probeUrl(ipv6Url, IPV6_TIMEOUT_MS)
         ipv6DirectAvailable = ipv6Result.alive
 
         // 3. Tunnel probe (always runs so we have a fresh RTT for the
@@ -498,12 +671,12 @@ class BaseUrlResolver(
         val chosen: String = when (preference) {
             NetworkPathPreference.LAN -> when {
                 lanResult.alive -> LAN_URL
-                ipv6Result.alive -> IPV6_DIRECT_URL
+                ipv6Result.alive -> ipv6Url
                 remoteResult.alive -> REMOTE_URL
                 else -> REMOTE_URL // last resort — Tunnel is always "reachable" in practice
             }
             NetworkPathPreference.IPV6_DIRECT -> when {
-                ipv6Result.alive -> IPV6_DIRECT_URL
+                ipv6Result.alive -> ipv6Url
                 lanResult.alive -> LAN_URL
                 remoteResult.alive -> REMOTE_URL
                 else -> REMOTE_URL
@@ -517,7 +690,7 @@ class BaseUrlResolver(
                 // earlier-added (higher-priority) candidate.
                 val candidates = mutableListOf<Pair<String, Long>>()
                 if (lanResult.alive) candidates.add(LAN_URL to lanResult.rttMs)
-                if (ipv6Result.alive) candidates.add(IPV6_DIRECT_URL to ipv6Result.rttMs)
+                if (ipv6Result.alive) candidates.add(ipv6Url to ipv6Result.rttMs)
                 if (remoteResult.alive) candidates.add(REMOTE_URL to remoteResult.rttMs)
                 candidates.minByOrNull { it.second }?.first ?: REMOTE_URL
             }
@@ -527,7 +700,7 @@ class BaseUrlResolver(
         // failed but we fell back to Tunnel, use the Tunnel RTT.
         val chosenRtt = when (chosen) {
             LAN_URL -> lanResult.rttMs
-            IPV6_DIRECT_URL -> ipv6Result.rttMs
+            ipv6Url -> ipv6Result.rttMs
             else -> remoteResult.rttMs
         }
         lastRttMs = chosenRtt
@@ -722,7 +895,7 @@ class BaseUrlResolver(
         //     lacking TLS.
         //   - The app already has usesCleartextTraffic=true for the
         //     LAN URL.
-        const val IPV6_DIRECT_URL = "http://[2409:8a70:37a0:63f0:62be:b4ff:fe08:bd09]:8088/"
+        const val IPV6_DIRECT_URL = "http://[2409:8a70:37a3:99d0:62be:b4ff:fe08:bd09]:8088/"
 
         // Remote URL — Cloudflare Tunnel. Works from anywhere but is
         // slow + lossy from China (TTFB 1.4s average, 10s+ timeouts on

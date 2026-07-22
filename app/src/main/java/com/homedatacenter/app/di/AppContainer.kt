@@ -47,6 +47,13 @@ class AppContainer(private val context: Context) {
                 // instance against the new URL.
                 resetApi()
             }
+            // v1.6.27: provide the current JWT so BaseUrlResolver can
+            // call the JWT-protected /api/v1/network/ipv6 endpoint to
+            // dynamically fetch the NAS outbound IPv6 address. When
+            // null (not logged in), fetchDynamicIpv6Url() short-
+            // circuits and the resolver falls back to the hardcoded
+            // IPV6_DIRECT_URL constant.
+            resolver.tokenProvider = { prefsManager.token }
         }
     }
 
