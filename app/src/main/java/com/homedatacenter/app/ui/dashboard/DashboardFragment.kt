@@ -59,6 +59,14 @@ class DashboardFragment : Fragment() {
     // can jump to its recording at the exact timestamp. Cleared when
     // the banner auto-dismisses.
     private var lastLiveAlert: Alert? = null
+    // v1.6.30: force refresh=true on the first network status fetch
+    // after the fragment is created, so the initial Dashboard displays
+    // current network quality instead of up to 60s of backend cache
+    // staleness. Subsequent onResume calls use the backend cache (60s
+    // TTL is fresh enough for page re-entry). Reset in onDestroyView
+    // so fragment recreation re-forces the refresh.
+    @Volatile
+    private var firstNetworkFetchDone = false
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -490,7 +498,12 @@ class DashboardFragment : Fragment() {
 
         lifecycleScope.launch {
             try {
-                val status = mainActivity.container.getRepository().getNetworkStatus(token)
+                val forceRefresh = !firstNetworkFetchDone
+                firstNetworkFetchDone = true
+                val status = mainActivity.container.getRepository().getNetworkStatus(
+                    token,
+                    refresh = forceRefresh,
+                )
                 updateNetworkStatus(status)
             } catch (e: Exception) {
                 android.util.Log.w("Dashboard", "Network status load failed: ${e.message}")
@@ -856,6 +869,7 @@ class DashboardFragment : Fragment() {
         dashboardWebSocket?.disconnect()
         dashboardWebSocket = null
         binding.rvAlerts.adapter = null
+        firstNetworkFetchDone = false
         _binding = null
         super.onDestroyView()
     }

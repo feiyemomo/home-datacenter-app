@@ -994,7 +994,7 @@ class BaseUrlResolver(
         //     lacking TLS.
         //   - The app already has usesCleartextTraffic=true for the
         //     LAN URL.
-        const val IPV6_DIRECT_URL = "http://[2409:8a70:37a3:99d0:62be:b4ff:fe08:bd09]:8088/"
+        const val IPV6_DIRECT_URL = "http://[2409:8a70:37a4:9141:62be:b4ff:fe08:bd09]:8088/"
 
         // Remote URL — Cloudflare Tunnel. Works from anywhere but is
         // slow + lossy from China (TTFB 1.4s average, 10s+ timeouts on
