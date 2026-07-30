@@ -530,33 +530,31 @@ class BaseUrlResolver(
 
     /**
      * v1.6.27: fetches the NAS's current outbound IPv6 address from
-     * the backend `/api/v1/network/ipv6` endpoint and returns it
-     * wrapped as a base URL (`http://[<addr>]:8088/`).
+     * the backend `/api/v1/network/ipv6` endpoint to verify IPv6 is
+     * available, then returns [IPV6_DIRECT_URL] (the DDNS domain).
      *
-     * Why this exists: the hardcoded [IPV6_DIRECT_URL] only reflects
-     * the NAS IPv6 address at compile time. Chinese ISPs rotate the
-     * /64 prefix on DHCPv6-PD renewal (sometimes daily, sometimes on
-     * router reboot), which invalidates the hardcoded address and
-     * silently breaks IPv6 direct connectivity until the user
-     * reinstalls the app. The backend reads its own current IPv6
-     * address (or the `NAS_IPV6_ADDRESS` env var when the container
-     * can't probe it) and returns it on every call, so polling this
-     * endpoint lets us follow prefix rotations without an app
-     * rebuild.
+     * v1.6.33: previously this returned a literal-IPv6 URL
+     * (`http://[<addr>]:8088/`) built from the backend's reported
+     * outbound address. Now that [IPV6_DIRECT_URL] is the DDNS domain
+     * `nas.feiyemomo.top`, the DDNS provider handles prefix rotations
+     * automatically via AAAA record updates — so there's no need to
+     * rebuild a literal URL. We still call the endpoint to verify the
+     * NAS has a live IPv6 address (if it returns a valid address,
+     * IPv6 direct is available; if not, we fall back to tunnel).
      *
      * JWT is required (the endpoint is auth-protected). The token is
      * obtained via [tokenProvider] — AppContainer sets this after
      * the auth state is initialized. When no token is available we
      * bail out and the caller keeps using the hardcoded
-     * [IPV6_DIRECT_URL] (which may be stale but is better than
-     * nothing).
+     * [IPV6_DIRECT_URL].
      *
      * Best-effort: any failure (network error, non-200 response,
      * missing/malformed `outbound_address` field) returns null. The
      * caller is responsible for keeping the previous value.
      *
-     * @return the freshly-fetched base URL (`http://[<addr>]:8088/`),
-     *   or null if the fetch failed or no token was available.
+     * @return [IPV6_DIRECT_URL] if the backend confirmed IPv6 is
+     *   available, or null if the fetch failed or no token was
+     *   available.
      */
     private suspend fun fetchDynamicIpv6Url(): String? {
         val token = tokenProvider?.invoke() ?: return null
@@ -581,9 +579,17 @@ class BaseUrlResolver(
                         val data = json.optJSONObject("data") ?: return@use null
                         val outbound = data.optString("outbound_address", "")
                         if (outbound.isNotEmpty()) {
-                            val newUrl = "http://[$outbound]:8088/"
-                            android.util.Log.i(TAG, "fetchDynamicIpv6Url: got $outbound → $newUrl")
-                            newUrl
+                            // v1.6.33: return the DDNS domain (IPV6_DIRECT_URL)
+                            // instead of a literal-IPv6 URL. The domain's
+                            // AAAA record tracks prefix rotations via the
+                            // DDNS provider, so there's no need to rebuild
+                            // a literal URL from the backend's reported
+                            // outbound address. We still call the endpoint
+                            // to verify the NAS has a live IPv6 address
+                            // (if it returns a valid address, IPv6 direct
+                            // is available; if not, we fall back to tunnel).
+                            android.util.Log.i(TAG, "fetchDynamicIpv6Url: NAS outbound=$outbound → using DDNS domain $IPV6_DIRECT_URL")
+                            IPV6_DIRECT_URL
                         } else {
                             android.util.Log.w(TAG, "fetchDynamicIpv6Url: outbound_address empty")
                             null
@@ -959,9 +965,9 @@ class BaseUrlResolver(
         // remote URL provides via Cloudflare Tunnel — both surface the
         // full reverse-proxy stack so HLS/MP4/WebRTC URLs work
         // identically. Port 80 on the NAS is the FNOS system UI, NOT
-        // our backend, so http://192.168.31.234/ would be wrong.
-        const val LAN_URL = "http://192.168.31.234:8088/"
-        const val LAN_HOST = "192.168.31.234"
+        // our backend, so http://<NAS_IP>/ would be wrong.
+        const val LAN_URL = "http://<NAS_IP>:8088/"
+        const val LAN_HOST = "<NAS_IP>"
         const val LAN_PORT = 8088
 
         // v1.6.23: IPv6 direct URL — bypasses Cloudflare Tunnel when
@@ -971,22 +977,20 @@ class BaseUrlResolver(
         // handles the IPv6→IPv4 translation to the container's
         // internal 0.0.0.0:80, so nginx needs no IPv6 config.
         //
-        // The IPv6 address is the NAS's SLAAC EUI-64 address (stable
-        // across reboots; only the /64 prefix rotates on ISP DHCPv6-PD
-        // renewal). If the prefix changes:
-        //   1. Find the new address: ssh fnos-momo@192.168.31.234
-        //      'ip -6 addr show enp4s0 | grep "scope global" |
-        //       grep -v temporary'
-        //   2. Update IPV6_DIRECT_URL here.
-        //   3. Update go2rtc's config.yml webrtc.candidates entry.
-        //   4. Update compose.yaml NAS_IPV6_ADDRESS env var.
-        //   5. Rebuild app + restart frigate container.
+        // v1.6.32: switched from a hard-coded IPv6 literal to the DDNS
+        // domain nas.feiyemomo.top. The domain has only an AAAA record
+        // pointing at the NAS's SLAAC EUI-64 address, so OkHttp resolves
+        // it to an IPv6 address and connects over IPv6 — semantically
+        // identical to the old literal URL, but now the ISP DHCPv6-PD
+        // prefix rotations are handled by the DDNS provider updating
+        // the AAAA record, with ZERO code changes needed here.
         //
         // Why http:// (not https://): the NAS doesn't have a valid
-        // TLS certificate for its bare IPv6 address, and acquiring
-        // one isn't possible (Let's Encrypt can't issue certs for
-        // raw IP addresses without DNS-01 challenge + AAAA record).
-        // Cleartext HTTP is acceptable here because:
+        // TLS certificate for nas.feiyemomo.top (Let's Encrypt HTTP-01
+        // can't reach the NAS on port 80 because port 80 is the FNOS
+        // system UI, not our nginx; DNS-01 would require moving DNS to
+        // a supported provider). Cleartext HTTP is acceptable here
+        // because:
         //   - The JWT token is the only sensitive payload, and it's
         //     already transmitted in cleartext on the LAN URL too.
         //   - IPv6 traffic is end-to-end (no Cloudflare MITM), so
@@ -994,7 +998,14 @@ class BaseUrlResolver(
         //     lacking TLS.
         //   - The app already has usesCleartextTraffic=true for the
         //     LAN URL.
-        const val IPV6_DIRECT_URL = "http://[2409:8a70:37a4:9141:62be:b4ff:fe08:bd09]:8088/"
+        //
+        // Note: the compose.yaml NAS_IPV6_ADDRESS env var and the
+        // go2rtc webrtc.candidates entry still use the raw IPv6 literal
+        // because (a) the API validates it with net.ParseIP, and
+        // (b) WebRTC ICE candidates require an IP:port, not a hostname.
+        // Those are infrastructure-layer config, not app-layer URLs —
+        // the app always uses the DDNS domain.
+        const val IPV6_DIRECT_URL = "http://nas.feiyemomo.top:8088/"
 
         // Remote URL — Cloudflare Tunnel. Works from anywhere but is
         // slow + lossy from China (TTFB 1.4s average, 10s+ timeouts on
