@@ -44,6 +44,22 @@
             android:layout_marginTop="3dp"
             android:maxLines="1"
             android:ellipsize="end" />
+
+        <!-- v1.6.37: current-status subtitle for camera-related logs.
+             Shown only when the adapter can resolve the camera_id in
+             the log payload to a live Camera row (see ServiceLogAdapter.
+             bindForCameraStatus). GONE by default so non-camera rows
+             stay compact. -->
+        <TextView
+            android:id="@+id/tvCameraStatus"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textSize="12sp"
+            android:textColor="@color/text_secondary"
+            android:layout_marginTop="3dp"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:visibility="gone" />
     </LinearLayout>
 
 </LinearLayout>

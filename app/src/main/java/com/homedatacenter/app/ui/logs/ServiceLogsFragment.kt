@@ -30,6 +30,15 @@ import kotlinx.coroutines.launch
  * live-prepends new entries pushed over the WebSocket `system.log`
  * topic.
  *
+ * v1.6.37: also fetches the camera list (`GET /api/v1/cameras`) and
+ * feeds it to [ServiceLogAdapter.updateCameraMap] so camera-related
+ * log rows show the camera's CURRENT status as a subtitle. The
+ * camera list is refreshed:
+ *   - on initial load
+ *   - on pull-to-refresh
+ *   - after a WS camera.* event arrives (so the subtitle updates in
+ *     real time when a camera recovers)
+ *
  * Alert viewing is preserved elsewhere — the Dashboard's "最近报警"
  * card and the CameraDetail "报警记录" dialog still surface alerts.
  */
@@ -102,6 +111,10 @@ class ServiceLogsFragment : Fragment() {
         hasMore = true
         adapter.submitList(emptyList())
         loadNextPage()
+        // v1.6.37: refresh the camera snapshot on each reset so the
+        // status subtitles reflect the current fleet state, not a
+        // stale copy from the last tab visit.
+        loadCameraSnapshot()
     }
 
     /** Fetch one page (pageLimit rows starting at currentOffset). */
@@ -140,6 +153,43 @@ class ServiceLogsFragment : Fragment() {
                 isLoading = false
                 binding.progressLoadMore.visibility = View.GONE
                 binding.swipeRefresh.isRefreshing = false
+            }
+        }
+    }
+
+    /**
+     * v1.6.37: fetch the current camera list and feed it to the
+     * adapter so camera-related log rows can show the camera's
+     * current status as a subtitle.
+     *
+     * Best-effort: failures are silently ignored (the subtitle just
+     * stays hidden until the next successful fetch). Runs on the
+     * lifecycle scope so it's cancelled when the fragment is
+     * destroyed.
+     *
+     * Uses the repository's cached path with refreshCache=true so:
+     *   - the first call hits the network (we need fresh status)
+     *   - subsequent WS-triggered calls also hit the network (the
+     *     whole point is to get the NEW status after an event)
+     * The repository's cache is updated as a side effect, so the
+     * Cameras tab also benefits from this refresh.
+     *
+     * Called from:
+     *   - [resetAndLoad] (initial load + pull-to-refresh)
+     *   - [handleWsMessage] when a camera.* event arrives (so the
+     *     subtitle updates in real time)
+     */
+    private fun loadCameraSnapshot() {
+        val mainActivity = activity as? MainActivity ?: return
+        val token = mainActivity.container.prefsManager.token ?: return
+        lifecycleScope.launch {
+            try {
+                val cameras = mainActivity.container.getRepository()
+                    .listCameras(token, useCache = false, refreshCache = true)
+                val map = cameras.associateBy { it.id }
+                adapter.updateCameraMap(map)
+            } catch (_: Exception) {
+                // Best-effort — the subtitle stays hidden.
             }
         }
     }
@@ -209,6 +259,16 @@ class ServiceLogsFragment : Fragment() {
             binding.recyclerView.post {
                 if (_binding != null) binding.recyclerView.scrollToPosition(0)
             }
+        }
+
+        // v1.6.37: when a camera.* event arrives, refresh the camera
+        // snapshot so the "当前状态" subtitle on the new row (and any
+        // existing camera rows) reflects the latest status. This is
+        // what makes the subtitle useful: the moment a camera comes
+        // back online, the previously-shown "摄像头 X 离线" row flips
+        // its subtitle from "当前状态：离线" to "当前状态：在线".
+        if (log.event_type.startsWith("camera.")) {
+            loadCameraSnapshot()
         }
     }
 
