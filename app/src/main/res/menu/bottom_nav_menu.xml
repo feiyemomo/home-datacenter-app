@@ -9,9 +9,9 @@
         android:icon="@drawable/ic_camera"
         android:title="@string/nav_cameras" />
     <item
-        android:id="@+id/nav_alerts"
-        android:icon="@drawable/ic_alerts"
-        android:title="@string/nav_alerts" />
+        android:id="@+id/nav_logs"
+        android:icon="@drawable/ic_history"
+        android:title="@string/nav_logs" />
     <item
         android:id="@+id/nav_devices"
         android:icon="@drawable/ic_devices"

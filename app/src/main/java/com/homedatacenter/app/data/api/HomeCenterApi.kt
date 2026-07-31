@@ -26,7 +26,16 @@ interface HomeCenterApi {
     suspend fun getMe(@Header("Authorization") auth: String): ApiResponse
 
     @GET("api/v1/device/list")
-    suspend fun listDevices(@Header("Authorization") auth: String): ApiResponse
+    suspend fun listDevices(
+        @Header("Authorization") auth: String,
+        @Query("scope") scope: String = "mine"
+    ): ApiResponse
+
+    @POST("api/v1/device")
+    suspend fun createDevice(
+        @Header("Authorization") auth: String,
+        @Body request: com.homedatacenter.app.data.model.CreateDeviceRequest,
+    ): ApiResponse
 
     @DELETE("api/v1/device/{id}")
     suspend fun revokeDevice(
@@ -36,6 +45,14 @@ interface HomeCenterApi {
 
     @GET("api/v1/system/status")
     suspend fun getSystemStatus(@Header("Authorization") auth: String): ApiResponse
+
+    @GET("api/v1/system/logs")
+    suspend fun listSystemLogs(
+        @Header("Authorization") auth: String,
+        @Query("limit") limit: Int = 50,
+        @Query("offset") offset: Int = 0,
+        @Query("event_type") eventType: String? = null,
+    ): ApiResponse
 
     @GET("api/v1/cameras")
     suspend fun listCameras(@Header("Authorization") auth: String): ApiResponse

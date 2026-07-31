@@ -11,6 +11,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -105,6 +106,30 @@ class WebRtcClient(
     // startStreamInternal call.
     @Volatile
     private var connectedOrFailed: Boolean = false
+
+    // v1.6.35: SDP pre-negotiation state. prepareOffer() creates a
+    // PeerConnection and completes ICE gathering in advance; the
+    // next startStream() call consumes the prepared PC (if it matches
+    // the requested cameraId) to skip the 800ms LAN / 5s remote ICE
+    // gathering delay. The prepared PC is one-shot — once consumed
+    // or replaced, it's cleared.
+    @Volatile
+    private var preparedPc: PeerConnection? = null
+    @Volatile
+    private var preparedSdp: String? = null
+    @Volatile
+    private var preparedCameraId: Long = -1L
+    private var prepareJob: Job? = null
+
+    // v1.6.35: settable listener + surface renderer for the shared
+    // observer. The observer is created at PeerConnection creation
+    // time (in prepareOffer), but the listener/surface are only known
+    // when startStream is called. All coroutines run on Dispatchers.Main
+    // so volatile reads/writes are safe and no locking is needed.
+    @Volatile
+    private var activeListener: Listener? = null
+    @Volatile
+    private var activeSurfaceRenderer: SurfaceViewRenderer? = null
 
     /**
      * v1.5.8: Toggle video track enabled state. Used by the
@@ -203,57 +228,160 @@ class WebRtcClient(
         }
     }
 
-    private suspend fun startStreamInternal(
+    /**
+     * v1.6.35: Pre-negotiate the SDP offer before the user taps Play.
+     *
+     * Creates a PeerConnection, adds the recvonly video transceiver,
+     * creates the SDP offer, sets the local description, and waits for
+     * ICE gathering to complete — all without POSTing to the backend.
+     * The prepared PC + local SDP are stored in [preparedPc] /
+     * [preparedSdp] and consumed by the next [startStream] call for
+     * the same cameraId, saving 800ms on LAN / up to 5s on remote
+     * (the ICE gathering phase).
+     *
+     * Best-effort: if the user taps Play before this finishes,
+     * [startStream] cancels this job and runs the full flow. If the
+     * factory isn't initialized or PC creation fails, the method
+     * silently returns and [startStream] does the full flow.
+     *
+     * @param cameraId Backend camera id (must match the id passed to
+     *     the subsequent [startStream] call for the prepared PC to
+     *     be consumed).
+     * @param iceServers ICE server config (same value that would be
+     *     passed to [startStream]).
+     * @param isLan Network path hint (controls TCP candidate policy
+     *     and ICE gathering timeout, same as [startStream]).
+     */
+    fun prepareOffer(
         cameraId: Long,
-        surfaceRenderer: SurfaceViewRenderer,
         iceServers: List<PeerConnection.IceServer>,
         isLan: Boolean,
-        listener: Listener,
+    ) {
+        prepareJob?.cancel()
+        prepareJob = scope.launch {
+            try {
+                prepareOfferInternal(cameraId, iceServers, isLan)
+            } catch (e: Exception) {
+                Log.w(TAG, "prepareOffer failed: ${e.message}")
+                preparedPc?.let { try { it.dispose() } catch (_: Exception) {} }
+                preparedPc = null
+                preparedSdp = null
+            }
+        }
+    }
+
+    private suspend fun prepareOfferInternal(
+        cameraId: Long,
+        iceServers: List<PeerConnection.IceServer>,
+        isLan: Boolean,
     ) {
         val pcFactory = factory ?: run {
-            listener.onError("factory not initialized")
+            Log.w(TAG, "prepareOffer: factory not initialized")
             return
         }
-        // v1.6.13: reset the connection-settled latch for this
-        // attempt. The app-level connection timeout checks this
-        // flag to know whether to fire onError("connection timeout").
-        connectedOrFailed = false
-        // Tear down any previous PeerConnection so we can start fresh
-        // on a reload. removeSink detaches the previous
-        // SurfaceViewRenderer sink before the track is disposed.
-        videoTrack?.removeSink(surfaceRenderer)
-        videoTrack = null
-        peerConnection?.let { it.dispose() }
-        peerConnection = null
 
-        val pcObserver = object : PeerConnection.Observer {
+        // Tear down any previously prepared PC before creating a new one.
+        preparedPc?.let { try { it.dispose() } catch (_: Exception) {} }
+        preparedPc = null
+        preparedSdp = null
+        preparedCameraId = -1L
+
+        val pcConfig = buildRtcConfiguration(iceServers, isLan)
+        val pc = pcFactory.createPeerConnection(pcConfig, createPeerConnectionObserver())
+            ?: run {
+                Log.w(TAG, "prepareOffer: createPeerConnection returned null")
+                return
+            }
+
+        try {
+            // Add recvonly video transceiver (same as startStreamInternal).
+            pc.addTransceiver(
+                MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO,
+                RtpTransceiver.RtpTransceiverInit(
+                    RtpTransceiver.RtpTransceiverDirection.RECV_ONLY
+                )
+            )
+
+            val constraints = MediaConstraints().apply {
+                mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
+            }
+
+            val offer = withContext(Dispatchers.IO) {
+                createOfferSuspend(pc, constraints)
+            } ?: run {
+                Log.w(TAG, "prepareOffer: createOffer returned null")
+                pc.dispose()
+                return
+            }
+
+            withContext(Dispatchers.IO) {
+                setLocalDescriptionSuspend(pc, offer)
+            }
+
+            // Wait for ICE gathering — same timeout logic as startStreamInternal.
+            val iceTimeoutMs = if (isLan) 800L else 5_000L
+            val gatheringComplete = withContext(Dispatchers.IO) {
+                waitForIceGathering(pc, timeoutMs = iceTimeoutMs)
+            }
+            if (!gatheringComplete) {
+                Log.w(TAG, "prepareOffer: ICE gathering timed out; using partial offer")
+            }
+
+            val localSdp = pc.localDescription?.description ?: run {
+                Log.w(TAG, "prepareOffer: localDescription is null")
+                pc.dispose()
+                return
+            }
+
+            preparedPc = pc
+            preparedSdp = localSdp
+            preparedCameraId = cameraId
+            Log.d(TAG, "prepareOffer done: cameraId=$cameraId, sdpLen=${localSdp.length}")
+        } catch (e: Exception) {
+            try { pc.dispose() } catch (_: Exception) {}
+            throw e
+        }
+    }
+
+    /**
+     * v1.6.35: Builds the RTCConfiguration shared by both prepareOffer
+     * and startStreamInternal. Extracted so the config is identical
+     * whether the PC is created in the pre-negotiation phase or the
+     * live-stream phase — a mismatch would invalidate the prepared SDP.
+     */
+    private fun buildRtcConfiguration(
+        iceServers: List<PeerConnection.IceServer>,
+        isLan: Boolean,
+    ): PeerConnection.RTCConfiguration {
+        return PeerConnection.RTCConfiguration(iceServers).apply {
+            sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
+            continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_ONCE
+            tcpCandidatePolicy = if (isLan) {
+                PeerConnection.TcpCandidatePolicy.DISABLED
+            } else {
+                PeerConnection.TcpCandidatePolicy.ENABLED
+            }
+            rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE
+        }
+    }
+
+    /**
+     * v1.6.35: Creates the PeerConnection.Observer used by both
+     * prepareOffer and startStreamInternal. The observer delegates to
+     * [activeListener] and [activeSurfaceRenderer] — these are set at
+     * the start of [startStreamInternal] so callbacks that fire after
+     * setRemoteDescription (onTrack, onIceConnectionChange) reach the
+     * correct listener/surface. Before startStream is called (during
+     * prepareOffer's ICE gathering phase), these fields are null and
+     * the observer's onTrack/onConnected callbacks are no-ops, which
+     * is correct — we don't want to notify any listener until the user
+     * actually starts playback.
+     */
+    private fun createPeerConnectionObserver(): PeerConnection.Observer {
+        return object : PeerConnection.Observer {
             override fun onIceCandidate(candidate: IceCandidate?) {
-                // v1.6.17: log every gathered candidate. This mirrors
-                // the browser's `iceGatheringState` + candidate event
-                // logging — without it we can't tell whether STUN
-                // reflexive gathering succeeded or timed out, which
-                // was the root cause of the v1.6.13-v1.6.16 "WebRTC
-                // always fails on remote" bug. The candidate's
-                // `candidateType()` (host / srflx / relay) tells us
-                // exactly which ICE path go2rtc can use to reach us.
-                //
-                // v1.6.23: parse the candidate SDP to extract address
-                // family (IPv4/IPv6) and candidate type. This is
-                // critical for diagnosing why WebRTC fails on IPv6
-                // direct — if no IPv6 host candidate appears, the
-                // WebRTC library isn't gathering IPv6 candidates and
-                // the IPv6 P2P path can never work.
                 candidate?.let { c ->
                     val sdp = c.sdp ?: "(no sdp)"
-                    // v1.6.23: detect IPv6 candidates by checking for
-                    // "::" in the address field. ICE candidate SDP
-                    // format: "a=candidate:<id> <proto> <prio> <addr>
-                    // <port> typ <type> ...". IPv6 addresses contain
-                    // "::" (zero-compression); IPv4 never does. This
-                    // tells us whether the WebRTC library is actually
-                    // gathering IPv6 host candidates — if it isn't,
-                    // IPv6 P2P can never work regardless of go2rtc's
-                    // SDP answer.
                     val addrIsIpv6 = sdp.contains("::")
                     android.util.Log.i(TAG, "ICE candidate: type=${c.sdpMid ?: "?"} " +
                         "url=${c.serverUrl ?: ""} " +
@@ -263,31 +391,17 @@ class WebRtcClient(
             }
             override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
                 Log.d(TAG, "ICE state: $state")
-                // v1.5.5: PeerConnection.Observer callbacks fire on
-                // WebRTC's internal signaling thread, NOT the main
-                // thread. If the listener touches any View (e.g.
-                // binding.progressVideo.visibility = View.GONE) we
-                // get a CalledFromWrongThreadException. The WebRTC
-                // JNI bridge checks env->ExceptionCheck() after the
-                // callback returns, sees the pending Java exception,
-                // and fails RTC_CHECK(!env->ExceptionCheck()) —
-                // which calls abort() and kills the process.
-                // Fix: dispatch ALL listener callbacks through the
-                // main-thread scope so listeners can safely touch UI.
                 state?.let { nonNullState ->
-                    scope.launch { listener.onIceStateChanged(nonNullState) }
+                    scope.launch { activeListener?.onIceStateChanged(nonNullState) }
                     when (nonNullState) {
                         PeerConnection.IceConnectionState.CONNECTED,
                         PeerConnection.IceConnectionState.COMPLETED -> {
-                            // v1.6.13: latch the settled state so the
-                            // app-level connection timeout knows not
-                            // to fire.
                             connectedOrFailed = true
-                            scope.launch { listener.onConnected() }
+                            scope.launch { activeListener?.onConnected() }
                         }
                         PeerConnection.IceConnectionState.FAILED -> {
                             connectedOrFailed = true
-                            scope.launch { listener.onError("ICE failed") }
+                            scope.launch { activeListener?.onError("ICE failed") }
                         }
                         else -> {}
                     }
@@ -304,19 +418,14 @@ class WebRtcClient(
                     MediaStreamTrack.VIDEO_TRACK_KIND -> {
                         val vt = track as VideoTrack
                         videoTrack = vt
-                        // addSink must run on the main thread (EGL
-                        // renderer's onFrame is posted there).
-                        scope.launch { vt.addSink(surfaceRenderer) }
+                        val sink = activeSurfaceRenderer
+                        if (sink != null) {
+                            scope.launch { vt.addSink(sink) }
+                        } else {
+                            android.util.Log.w(TAG, "onTrack: video track arrived but no surfaceRenderer set")
+                        }
                     }
                     MediaStreamTrack.AUDIO_TRACK_KIND -> {
-                        // v1.5.8: capture the audio track so the
-                        // control bar's mute button can toggle it.
-                        // v1.5.9: explicitly enable + max volume.
-                        // v1.5.13: add diagnostic logging. The user
-                        // reported "no sound" — if this branch never
-                        // fires it confirms the backend strips
-                        // audio (default rtspURL uses #audio=0 when
-                        // Capabilities["audio"] is not true).
                         val at = track as AudioTrack
                         audioTrack = at
                         android.util.Log.d(TAG, "onTrack: audio track received, " +
@@ -344,142 +453,160 @@ class WebRtcClient(
                 mediaStreams: Array<out org.webrtc.MediaStream>?,
             ) {}
         }
+    }
 
-        val pcConfig = PeerConnection.RTCConfiguration(iceServers).apply {
-            // Backend doesn't support trickle ICE — it expects the
-            // full SDP offer with all candidates gathered before
-            // POSTing. GATHER_ONCE waits for all candidates before
-            // firing onIceGatheringChange(COMPLETE).
-            sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
-            continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_ONCE
-            // v1.6.13: TCP candidate policy is now conditional on isLan.
-            // - LAN: DISABLED — TCP candidate gathering adds 100-300ms
-            //   (tries to connect to TCP 80/443 on the gateway which
-            //   never answers). LAN streaming uses UDP host candidates
-            //   only.
-            // - Remote: ENABLED — go2rtc exposes 8555 TCP, and TCP
-            //   candidates are a critical fallback when UDP is blocked
-            //   by carrier-grade NAT, symmetric NAT, or firewall. The
-            //   previous global DISABLED setting was a major cause of
-            //   the "~20s and falls back to MP4" bug on external
-            //   networks: the Android client couldn't use go2rtc's TCP
-            //   candidate, so ICE had no working pair when UDP failed.
-            tcpCandidatePolicy = if (isLan) {
-                PeerConnection.TcpCandidatePolicy.DISABLED
-            } else {
-                PeerConnection.TcpCandidatePolicy.ENABLED
+    private suspend fun startStreamInternal(
+        cameraId: Long,
+        surfaceRenderer: SurfaceViewRenderer,
+        iceServers: List<PeerConnection.IceServer>,
+        isLan: Boolean,
+        listener: Listener,
+    ) {
+        val pcFactory = factory ?: run {
+            listener.onError("factory not initialized")
+            return
+        }
+        // v1.6.13: reset the connection-settled latch for this
+        // attempt. The app-level connection timeout checks this
+        // flag to know whether to fire onError("connection timeout").
+        connectedOrFailed = false
+
+        // v1.6.35: set the active listener + surface so the shared
+        // observer (createPeerConnectionObserver) can dispatch
+        // onTrack / onIceConnectionChange callbacks to the correct
+        // listener. These must be set BEFORE any code that could
+        // trigger observer callbacks (setRemoteDescription).
+        activeListener = listener
+        activeSurfaceRenderer = surfaceRenderer
+
+        // v1.6.35: if prepareOffer is still running, wait for it to
+        // complete (with the same timeout as ICE gathering). The
+        // prepare has already done PC creation + offer creation +
+        // (partial) ICE gathering, so waiting is always faster than
+        // starting fresh. If the prepare finishes, we use its PC and
+        // skip the full flow. If it times out, we cancel it and do
+        // the full flow — but this only happens when ICE gathering
+        // itself is stuck (the prepare and full flow use the same
+        // timeout, so a stuck prepare means a stuck full flow too).
+        val prepareJobLocal = prepareJob
+        if (prepareJobLocal != null && prepareJobLocal.isActive) {
+            val waitMs = if (isLan) 800L else 5_000L
+            try {
+                withTimeout(waitMs) { prepareJobLocal.join() }
+            } catch (_: Exception) {
+                // Timeout or cancellation — prepare is still running.
+                // Cancel it so its PC (if any) gets disposed by the
+                // prepareOffer catch block, then fall through to the
+                // full flow.
+                prepareJobLocal.cancel()
             }
-            // v1.6.18: rtcpMuxPolicy kept at REQUIRE (WebRTC library
-            // default for UnifiedPlan). v1.6.17 removed it thinking
-            // it caused SDP negotiation failures with go2rtc, but the
-            // real root cause was the audio transceiver (see below).
-            // Reverting to match v1.6.13-v1.6.16 behavior.
-            rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE
+        }
+        prepareJob = null
+
+        // v1.6.35: check for a pre-negotiated PeerConnection. If
+        // prepareOffer completed for this cameraId, reuse its PC +
+        // local SDP and skip straight to POSTing the offer — this
+        // saves the 800ms LAN / 5s remote ICE gathering phase.
+        val preparedPcLocal = preparedPc
+        val preparedSdpLocal = preparedSdp
+        val usePrepared = preparedPcLocal != null &&
+            preparedSdpLocal != null &&
+            preparedCameraId == cameraId
+
+        // Tear down any previous active PeerConnection so we can
+        // start fresh on a reload. removeSink detaches the previous
+        // SurfaceViewRenderer sink before the track is disposed.
+        videoTrack?.removeSink(surfaceRenderer)
+        videoTrack = null
+        if (!usePrepared) {
+            peerConnection?.let { it.dispose() }
+            peerConnection = null
+        } else {
+            // The prepared PC will become the active peerConnection;
+            // dispose any stale non-prepared PC first.
+            if (peerConnection != null && peerConnection !== preparedPcLocal) {
+                peerConnection?.dispose()
+            }
+            peerConnection = null
         }
 
-        val pc = pcFactory.createPeerConnection(pcConfig, pcObserver) ?: run {
-            listener.onError("createPeerConnection returned null")
-            return
-        }
-        peerConnection = pc
+        val pc: PeerConnection
+        val localSdp: String
 
-        // v1.6.18: VIDEO-ONLY transceiver, matching the dashboard's
-        // useWebRTCStream.ts. The previous v1.5.3-v1.6.17 code added
-        // both audio + video transceivers, but the backend's go2rtc
-        // source URL includes `#audio=0` (see registry.go rtspURL)
-        // which strips the audio track at the source. When go2rtc
-        // receives an SDP offer with an audio m-line but has no audio
-        // source to offer, the SDP negotiation breaks — go2rtc either
-        // rejects the offer or returns a malformed answer, and ICE
-        // never reaches CONNECTED.
-        //
-        // The dashboard (which reliably succeeds in ~4s on remote)
-        // only adds a video transceiver for exactly this reason — see
-        // useWebRTCStream.ts line 146:
-        //   "Video only — camera audio codecs (G726/PCMU/MPEG4-
-        //    GENERIC) are not browser-decodable via WebRTC. The API
-        //    also appends #audio=0 to the go2rtc source URL so go2rtc
-        //    won't even try to negotiate audio."
-        //
-        // Camera audio is still available via the MP4/HLS fallback
-        // paths (which use AAC, not WebRTC's Opus). The WebRTC
-        // control bar's mute button (btnWebRtcMute) is now a no-op
-        // for live streams — we keep the button for UI stability but
-        // it has no audio track to toggle.
-        pc.addTransceiver(
-            MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO,
-            RtpTransceiver.RtpTransceiverInit(
-                RtpTransceiver.RtpTransceiverDirection.RECV_ONLY
+        if (usePrepared) {
+            // --- Pre-negotiated fast path ---
+            pc = preparedPcLocal!!
+            localSdp = preparedSdpLocal!!
+            // Clear prepared state (one-shot consumption).
+            preparedPc = null
+            preparedSdp = null
+            preparedCameraId = -1L
+            peerConnection = pc
+            Log.d(TAG, "Using precomputed offer for cameraId=$cameraId (skipped ICE gathering)")
+        } else {
+            // --- Full negotiation path (no prepared PC available) ---
+            val pcConfig = buildRtcConfiguration(iceServers, isLan)
+            val newPc = pcFactory.createPeerConnection(pcConfig, createPeerConnectionObserver())
+                ?: run {
+                    listener.onError("createPeerConnection returned null")
+                    return
+                }
+            pc = newPc
+            peerConnection = pc
+
+            // v1.6.18: VIDEO-ONLY transceiver, matching the dashboard's
+            // useWebRTCStream.ts. The backend's go2rtc source URL
+            // includes `#audio=0` which strips the audio track at the
+            // source. An audio m-line in the offer with no audio source
+            // breaks SDP negotiation. Camera audio is still available
+            // via the MP4/HLS fallback paths (which use AAC, not Opus).
+            pc.addTransceiver(
+                MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO,
+                RtpTransceiver.RtpTransceiverInit(
+                    RtpTransceiver.RtpTransceiverDirection.RECV_ONLY
+                )
             )
-        )
 
-        // v1.6.18: OfferToReceiveAudio removed. Setting it to "true"
-        // forces an audio m-line into the SDP offer even though we
-        // didn't add an audio transceiver — same root cause as above.
-        // The dashboard doesn't set this constraint either.
-        val constraints = MediaConstraints().apply {
-            mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
-        }
+            val constraints = MediaConstraints().apply {
+                mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
+            }
 
-        val offer = withContext(Dispatchers.IO) {
-            createOfferSuspend(pc, constraints)
-        } ?: run {
-            listener.onError("createOffer returned null")
-            return
-        }
+            val offer = withContext(Dispatchers.IO) {
+                createOfferSuspend(pc, constraints)
+            } ?: run {
+                listener.onError("createOffer returned null")
+                return
+            }
 
-        // Set local description and wait for ICE gathering to complete.
-        withContext(Dispatchers.IO) {
-            setLocalDescriptionSuspend(pc, offer)
-        }
+            withContext(Dispatchers.IO) {
+                setLocalDescriptionSuspend(pc, offer)
+            }
 
-        // Wait for ICE gathering — non-trickle ICE requires all
-        // candidates to be in the local SDP before sending.
-        // Typical: ~200-500ms on LAN (host candidates only), up to
-        // 5s with STUN/TURN.
-        // v1.5.7: reduce timeout from 5s -> 2s so a stuck gathering
-        // phase fails faster and falls back to MP4. On LAN the
-        // host candidate is gathered in <100ms; 2s is still 4x
-        // headroom for STUN. If gathering times out we send the
-        // partial SDP anyway — backend will reject if it can't
-        // pick a candidate, and the listener's onError -> MP4
-        // fallback kicks in.
-        // v1.6.10: when there are no STUN/TURN servers (LAN mode
-        // passes an empty iceServers list), host candidate gathering
-        // completes in <100ms — drop the timeout to 800ms so a
-        // stuck gather fails 1.2s faster. With STUN/TURN (remote
-        // mode), keep 2s to allow STUN round-trips to complete.
-        // v1.6.13: remote-mode timeout bumped 2s -> 5s. Cellular
-        // STUN round-trips to Google/Cloudflare can take 1-3s on
-        // flaky mobile networks; the previous 2s timeout was
-        // cutting off STUN-reflexive candidate gathering before
-        // it completed, leaving the offer with only unreachable
-        // host candidates. The browser (which has a 3s timeout)
-        // was succeeding where Android was failing. The decision
-        // is now based on isLan (passed in by the caller) instead
-        // of iceServers.isEmpty() — those usually agree but
-        // iceServers could be empty even in remote mode if the
-        // backend returns an empty list, in which case we still
-        // want the longer timeout (host candidates on cellular
-        // are unreachable from the home server, so we want any
-        // late-arriving candidate to make it into the offer).
-        val iceTimeoutMs = if (isLan) 800L else 5_000L
-        val gatheringComplete = withContext(Dispatchers.IO) {
-            waitForIceGathering(pc, timeoutMs = iceTimeoutMs)
-        }
-        if (!gatheringComplete) {
-            Log.w(TAG, "ICE gathering timed out; sending partial offer")
-        }
+            // Wait for ICE gathering — non-trickle ICE requires all
+            // candidates to be in the local SDP before sending.
+            // v1.6.13: timeout is isLan-based (800ms LAN / 5s remote)
+            // to allow STUN round-trips on cellular while keeping LAN
+            // fast. If gathering times out we send the partial SDP
+            // anyway — backend will reject if it can't pick a candidate.
+            val iceTimeoutMs = if (isLan) 800L else 5_000L
+            val gatheringComplete = withContext(Dispatchers.IO) {
+                waitForIceGathering(pc, timeoutMs = iceTimeoutMs)
+            }
+            if (!gatheringComplete) {
+                Log.w(TAG, "ICE gathering timed out; sending partial offer")
+            }
 
-        val localSdp = pc.localDescription ?: run {
-            listener.onError("localDescription is null")
-            return
+            val localDesc = pc.localDescription ?: run {
+                listener.onError("localDescription is null")
+                return
+            }
+            localSdp = localDesc.description
         }
 
         // POST the offer to the backend's WHEP-style endpoint.
         // The body is the raw SDP string (Content-Type: application/sdp).
         val answerSdp = withContext(Dispatchers.IO) {
-            postOffer(cameraId, localSdp.description)
+            postOffer(cameraId, localSdp)
         } ?: run {
             listener.onError("backend returned empty SDP answer")
             return
@@ -651,6 +778,17 @@ class WebRtcClient(
     /** Detaches video sinks and disposes the PeerConnection. */
     fun release() {
         signalingJob?.cancel()
+        // v1.6.35: cancel any pending pre-negotiation and dispose
+        // the prepared PC so it doesn't leak when the activity is
+        // destroyed before the user taps Play.
+        prepareJob?.cancel()
+        prepareJob = null
+        preparedPc?.let { try { it.dispose() } catch (_: Exception) {} }
+        preparedPc = null
+        preparedSdp = null
+        preparedCameraId = -1L
+        activeListener = null
+        activeSurfaceRenderer = null
         videoTrack = null
         audioTrack = null
         peerConnection?.let {

@@ -1,19 +1,18 @@
 package com.homedatacenter.app.ui.settings
 
 import android.app.AlertDialog
-import android.app.Dialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.view.Window
 import android.widget.RadioGroup
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.homedatacenter.app.R
-import com.homedatacenter.app.databinding.DialogUpdateAvailableBinding
 import com.homedatacenter.app.databinding.FragmentSettingsBinding
 import com.homedatacenter.app.ui.admin.UsersActivity
 import com.homedatacenter.app.ui.main.MainActivity
@@ -31,6 +30,23 @@ class SettingsFragment : Fragment() {
 
     private var _binding: FragmentSettingsBinding? = null
     private val binding get() = _binding!!
+
+    // v1.6.28: polls AppContainer's background-download state while a
+    // download is in flight so the progress text stays live. The
+    // runnable self-perpetuates (postDelayed) until the download
+    // completes or fails, then stops. Restarted from onResume and
+    // after a manual force-check.
+    private val updatePollHandler = Handler(Looper.getMainLooper())
+    private val updatePollRunnable = object : Runnable {
+        override fun run() {
+            val container = (activity as? MainActivity)?.container ?: return
+            if (_binding == null) return
+            renderCachedUpdateStatus()
+            if (container.isDownloadingApk()) {
+                updatePollHandler.postDelayed(this, POLL_INTERVAL_MS)
+            }
+        }
+    }
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -177,252 +193,163 @@ class SettingsFragment : Fragment() {
     }
 
     /**
-     * v1.6.11: in-app self-update section. On view creation we
-     * immediately render the cached UpdateInfo (from the silent
-     * background check in HomeCenterApp.onCreate). The button
-     * triggers a fresh forceCheckUpdate and shows the result.
+     * v1.6.28: the update section now reflects the background auto-
+     * download state managed by AppContainer. There is no update
+     * dialog anymore — the single "Check for updates" button serves
+     * three roles depending on the tag set by [renderCachedUpdateStatus]:
+     *   - default: trigger forceCheckUpdate (which also starts the
+     *     background download when a new version is found)
+     *   - ACTION_INSTALL: the APK is ready on disk, launch the system
+     *     PackageInstaller with one tap
+     *   - ACTION_RETRY: the last background download failed, retry it
+     *
+     * The click listener is attached exactly once here (in onViewCreated
+     * via setupUpdateSection) — never re-assigned in onResume — so the
+     * first tap always lands on the current listener. This is the root
+     * cause fix for the old "点三下" (triple-click) bug: re-assigning
+     * the listener in onResume left the first tap firing a stale
+     * listener that consumed the event without acting.
      */
     private fun setupUpdateSection() {
         val mainActivity = activity as? MainActivity ?: return
         val container = mainActivity.container
 
-        // Render cached state immediately (e.g. "new version 1.6.11
-        // available" if the background startup check found one).
+        // Initial render from whatever state the background check /
+        // download has reached so far.
         renderCachedUpdateStatus()
+        startUpdatePollingIfNeeded()
 
         binding.btnCheckUpdate.setOnClickListener {
-            // Disable button + show "checking..." while the network
-            // call is in flight. Re-enable on completion.
-            binding.btnCheckUpdate.isEnabled = false
-            binding.tvUpdateStatus.text = getString(R.string.update_checking)
-
-            lifecycleScope.launch {
-                try {
-                    val info = container.forceCheckUpdate()
-                    if (info != null) {
-                        // New version available — show confirmation
-                        // dialog with download/install button.
-                        showUpdateAvailableDialog(info)
+            val action = binding.btnCheckUpdate.tag as? String
+            when (action) {
+                ACTION_INSTALL -> {
+                    val apkFile = container.getCachedDownloadedApk()
+                    if (apkFile != null && apkFile.exists()) {
+                        ApkInstaller.launchInstaller(requireActivity(), apkFile)
                     } else {
-                        binding.tvUpdateStatus.text = getString(R.string.update_latest)
+                        // State changed between render and tap — refresh.
+                        renderCachedUpdateStatus()
                     }
-                } catch (_: Exception) {
-                    binding.tvUpdateStatus.text = getString(R.string.update_check_failed)
-                } finally {
-                    binding.btnCheckUpdate.isEnabled = true
+                }
+                ACTION_RETRY -> {
+                    container.retryDownload()
+                    renderCachedUpdateStatus()
+                    startUpdatePollingIfNeeded()
+                }
+                else -> {
+                    // Default: check for updates. forceCheckUpdate
+                    // triggers startBackgroundDownload internally when
+                    // a new version is found, so the UI will flip to
+                    // "downloading…" on the next poll/render.
+                    binding.btnCheckUpdate.isEnabled = false
+                    binding.tvUpdateStatus.text = getString(R.string.update_checking)
+
+                    lifecycleScope.launch {
+                        try {
+                            val info = container.forceCheckUpdate()
+                            if (info == null) {
+                                binding.tvUpdateStatus.text = getString(R.string.update_latest)
+                            }
+                        } catch (_: Exception) {
+                            binding.tvUpdateStatus.text = getString(R.string.update_check_failed)
+                        } finally {
+                            binding.btnCheckUpdate.isEnabled = true
+                            renderCachedUpdateStatus()
+                            startUpdatePollingIfNeeded()
+                        }
+                    }
                 }
             }
         }
     }
 
-    /** Render the cached UpdateInfo (if any) as a "new version
-     *  available" hint. Called from setupUpdateSection on view
-     *  creation so the user sees the startup-check result without
-     *  having to tap "Check for updates" themselves. */
+    /**
+     * v1.6.28: render the update card based on AppContainer's
+     * background-download state. Sets the button's tag to drive the
+     * single click listener defined in [setupUpdateSection].
+     *
+     * States (checked in priority order):
+     *   1. APK ready on disk  → "v<x> 已就绪，点击安装", button = "安装"
+     *   2. Downloading        → "正在下载 v<x>… <p>%"
+     *   3. Download failed    → "下载失败，点此重试"
+     *   4. Update available   → "新版本 <x> 可用" (fallback; download
+     *      should already be auto-started, this covers the race)
+     *   5. No update info     → default summary
+     */
     private fun renderCachedUpdateStatus() {
         val mainActivity = activity as? MainActivity ?: return
-        val info = mainActivity.container.getCachedUpdateInfo()
-        if (info != null) {
-            binding.tvUpdateStatus.text = getString(
-                R.string.setting_check_update_new_format, info.version_name
-            )
-            // Tint the status text to the primary (warm peach) color
-            // so the "new version available" hint stands out from
-            // the default text_hint color.
-            binding.tvUpdateStatus.setTextColor(
-                requireContext().getColor(R.color.primary)
-            )
-        } else {
-            binding.tvUpdateStatus.text = getString(R.string.setting_check_update_summary)
-            binding.tvUpdateStatus.setTextColor(
-                requireContext().getColor(R.color.text_hint)
-            )
-        }
-    }
-
-    /**
-     * v1.6.12: Show the "new version available" dialog using a custom
-     * layout (dialog_update_available.xml) instead of the bare
-     * AlertDialog.Builder.setMessage(). The custom layout shows:
-     *   - Version transition pill (current → new) with visual contrast
-     *   - APK size row
-     *   - Scrollable release notes section (版本特点) — only shown
-     *     when the backend returned non-empty release_notes
-     *   - Download progress bar (hidden until download starts)
-     *   - Cancel + Download-and-install buttons
-     *
-     * The dialog reference is kept in [updateDialogBinding] so the
-     * download progress callback can update the progress bar in place
-     * without dismissing/recreating the dialog.
-     */
-    private var updateDialogBinding: DialogUpdateAvailableBinding? = null
-    private var updateAlertDialog: Dialog? = null
-
-    private fun showUpdateAvailableDialog(info: com.homedatacenter.app.data.model.UpdateInfo) {
-        val context = context ?: return
-        val mainActivity = activity as? MainActivity ?: return
-
-        val currentVersion = ApkInstaller.installedVersionName(context)
-        val sizeStr = formatSize(info.size_bytes)
-
-        val dialogBinding = DialogUpdateAvailableBinding.inflate(
-            LayoutInflater.from(context), null, false
-        )
-        updateDialogBinding = dialogBinding
-
-        dialogBinding.tvCurrentVersion.text = currentVersion.ifBlank { "?" }
-        dialogBinding.tvNewVersion.text = info.version_name
-        dialogBinding.tvUpdateSize.text = sizeStr
-
-        // Release notes section — only show when non-empty. The
-        // backend reads release-notes-v{version}.txt from the
-        // releases directory; missing file = empty string.
-        val notes = info.release_notes.trim()
-        if (notes.isNotEmpty()) {
-            dialogBinding.tvReleaseNotesLabel.visibility = View.VISIBLE
-            dialogBinding.scrollReleaseNotes.visibility = View.VISIBLE
-            dialogBinding.tvReleaseNotes.text = notes
-        } else {
-            dialogBinding.tvReleaseNotesLabel.visibility = View.GONE
-            dialogBinding.scrollReleaseNotes.visibility = View.GONE
-        }
-
-        val dialog = Dialog(context)
-        // v1.6.15: use a plain Dialog instead of AlertDialog. AlertDialog's
-        // window decor (title bar, button panel container) was intercepting
-        // the first 1-2 touch events on the MaterialButton inside our custom
-        // view, so the user had to tap "下载并安装" 3 times before the click
-        // actually fired. A plain Dialog with requestFeature(FEATURE_NO_TITLE)
-        // puts our custom view directly in the content frame with no decor
-        // interception — the button responds on the first tap.
-        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
-        dialog.setContentView(dialogBinding.root)
-        dialog.setCancelable(true)
-        // Match AlertDialog's default dim-behind behavior.
-        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
-        // v1.6.22: constrain dialog width to 90% of screen + max 480dp.
-        // Without this the dialog stretches to full screen width on phones
-        // and looks oversized. The root LinearLayout's wrap_content height
-        // + ScrollView maxHeight=180dp keeps the height reasonable.
-        dialog.window?.let { w ->
-            val dm = resources.displayMetrics
-            val maxWidthPx = (480 * dm.density).toInt().coerceAtMost(dm.widthPixels)
-            val targetWidth = (dm.widthPixels * 0.9).toInt().coerceAtMost(maxWidthPx)
-            w.setLayout(targetWidth, ViewGroup.LayoutParams.WRAP_CONTENT)
-        }
-        updateAlertDialog = dialog
-
-        dialogBinding.btnCancel.setOnClickListener {
-            dialog.dismiss()
-            // Re-render the cached status (still shows "new
-            // version available" so the user can come back).
-            renderCachedUpdateStatus()
-        }
-        dialogBinding.btnDownloadInstall.setOnClickListener {
-            // Hide buttons + show progress bar before starting download.
-            dialogBinding.btnCancel.isEnabled = false
-            dialogBinding.btnDownloadInstall.isEnabled = false
-            dialogBinding.btnDownloadInstall.text = getString(R.string.update_download_in_progress)
-            dialogBinding.progressDownload.visibility = View.VISIBLE
-            dialogBinding.tvProgressPercent.visibility = View.VISIBLE
-            startApkDownload(info, dialogBinding)
-        }
-
-        dialog.setOnDismissListener {
-            updateDialogBinding = null
-            updateAlertDialog = null
-        }
-        dialog.show()
-    }
-
-    /**
-     * Stream the APK to disk and launch the installer. Updates
-     * the in-dialog progress bar (if the dialog is still showing)
-     * with download progress (0..100%). On failure shows an error
-     * message — the user can retry by tapping "Check for updates"
-     * again.
-     */
-    private fun startApkDownload(
-        info: com.homedatacenter.app.data.model.UpdateInfo,
-        dialogBinding: DialogUpdateAvailableBinding,
-    ) {
-        val mainActivity = activity as? MainActivity ?: return
         val container = mainActivity.container
-        val token = container.prefsManager.token ?: return
-        val activity = activity ?: return
+        val info = container.getCachedUpdateInfo()
+        val apkFile = container.getCachedDownloadedApk()
 
-        // Also keep tvUpdateStatus on the settings page in sync so
-        // if the user dismisses the dialog they still see progress.
-        binding.btnCheckUpdate.isEnabled = false
-        binding.tvUpdateStatus.text = getString(R.string.update_download_in_progress)
-
-        lifecycleScope.launch {
-            val success = ApkInstaller.downloadAndInstall(
-                activity = activity,
-                repo = container.getRepository(),
-                token = token,
-                info = info,
-                onProgress = { percent ->
-                    if (isAdded) {
-                        // Update the in-dialog progress bar.
-                        dialogBinding.progressDownload.progress = percent
-                        dialogBinding.tvProgressPercent.text = getString(
-                            R.string.update_download_progress_format, percent
-                        )
-                        // Also update the settings page status text.
-                        binding.tvUpdateStatus.text = getString(
-                            R.string.update_download_progress_format, percent
-                        )
-                    }
-                }
-            )
-
-            if (isAdded) {
-                binding.btnCheckUpdate.isEnabled = true
-                if (!success) {
-                    binding.tvUpdateStatus.text = getString(R.string.update_download_failed)
-                    binding.tvUpdateStatus.setTextColor(
-                        requireContext().getColor(R.color.error)
-                    )
-                    // Update dialog UI to show failure + re-enable buttons.
-                    dialogBinding.btnCancel.isEnabled = true
-                    dialogBinding.btnDownloadInstall.isEnabled = true
-                    dialogBinding.btnDownloadInstall.text = getString(R.string.btn_download_install)
-                    dialogBinding.progressDownload.visibility = View.GONE
-                    dialogBinding.tvProgressPercent.visibility = View.GONE
-                    dialogBinding.tvProgressPercent.text = getString(R.string.update_download_failed)
-                    dialogBinding.tvProgressPercent.setTextColor(
-                        requireContext().getColor(R.color.error)
-                    )
-                    dialogBinding.tvProgressPercent.visibility = View.VISIBLE
-                } else {
-                    // v1.6.14: dismiss the dialog as soon as the
-                    // install Intent is launched. Previously the
-                    // dialog stayed open with both buttons disabled
-                    // and the progress bar stuck at 100% — if the
-                    // user canceled the system install and returned
-                    // to the app, the modal dialog looked frozen
-                    // (buttons disabled, no way out except Back).
-                    // Dismissing here means the user returns to the
-                    // settings page, where they can re-trigger the
-                    // check if they want to retry.
-                    updateAlertDialog?.dismiss()
-                    binding.tvUpdateStatus.text = getString(R.string.update_download_complete)
-                    binding.tvUpdateStatus.setTextColor(
-                        requireContext().getColor(R.color.online)
-                    )
-                }
+        when {
+            // APK fully downloaded — ready to install.
+            apkFile != null && info != null -> {
+                binding.tvUpdateStatus.text = getString(
+                    R.string.update_ready_to_install_format, info.version_name
+                )
+                binding.tvUpdateStatus.setTextColor(
+                    requireContext().getColor(R.color.online)
+                )
+                binding.btnCheckUpdate.text = getString(R.string.btn_install)
+                binding.btnCheckUpdate.tag = ACTION_INSTALL
+            }
+            // Download in flight — show progress.
+            container.isDownloadingApk() && info != null -> {
+                binding.tvUpdateStatus.text = getString(
+                    R.string.update_downloading_format,
+                    info.version_name,
+                    container.getDownloadProgress()
+                )
+                binding.tvUpdateStatus.setTextColor(
+                    requireContext().getColor(R.color.text_hint)
+                )
+                binding.btnCheckUpdate.text = getString(R.string.setting_check_update)
+                binding.btnCheckUpdate.tag = null
+            }
+            // Download failed — offer retry.
+            container.isDownloadFailed() -> {
+                binding.tvUpdateStatus.text = getString(R.string.update_download_failed_retry)
+                binding.tvUpdateStatus.setTextColor(
+                    requireContext().getColor(R.color.error)
+                )
+                binding.btnCheckUpdate.text = getString(R.string.setting_check_update)
+                binding.btnCheckUpdate.tag = ACTION_RETRY
+            }
+            // Update available but not yet downloading — fallback.
+            info != null -> {
+                binding.tvUpdateStatus.text = getString(
+                    R.string.setting_check_update_new_format, info.version_name
+                )
+                binding.tvUpdateStatus.setTextColor(
+                    requireContext().getColor(R.color.primary)
+                )
+                binding.btnCheckUpdate.text = getString(R.string.setting_check_update)
+                binding.btnCheckUpdate.tag = null
+            }
+            else -> {
+                binding.tvUpdateStatus.text = getString(R.string.setting_check_update_summary)
+                binding.tvUpdateStatus.setTextColor(
+                    requireContext().getColor(R.color.text_hint)
+                )
+                binding.btnCheckUpdate.text = getString(R.string.setting_check_update)
+                binding.btnCheckUpdate.tag = null
             }
         }
     }
 
-    /** Format a byte count as "12.3 MB" or "1.23 GB". */
-    private fun formatSize(bytes: Long): String {
-        val mb = bytes / (1024.0 * 1024.0)
-        return if (mb >= 1024) {
-            getString(R.string.update_size_gb_format, mb / 1024)
-        } else {
-            getString(R.string.update_size_mb_format, mb)
+    /**
+     * v1.6.28: start polling AppContainer's download state every
+     * [POLL_INTERVAL_MS] while a download is in flight, so the
+     * progress text stays live. Idempotent — removes any existing
+     * callback before posting, so it's safe to call from onResume
+     * and after a manual check without stacking runnables.
+     */
+    private fun startUpdatePollingIfNeeded() {
+        val container = (activity as? MainActivity)?.container ?: return
+        updatePollHandler.removeCallbacks(updatePollRunnable)
+        if (container.isDownloadingApk()) {
+            updatePollHandler.postDelayed(updatePollRunnable, POLL_INTERVAL_MS)
         }
     }
 
@@ -444,17 +371,28 @@ class SettingsFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
-        // After the user installs an update the app restarts, but
-        // if they cancel the install and come back to settings, we
-        // should re-render the cached update hint (in case the
-        // startup check found one).
+        // Re-render on resume: the background download may have
+        // completed (or failed) while the fragment was paused, and
+        // if the user canceled the system installer and came back,
+        // the cached APK is still ready to install.
         if (isAdded && _binding != null) {
             renderCachedUpdateStatus()
+            startUpdatePollingIfNeeded()
         }
     }
 
     override fun onDestroyView() {
         super.onDestroyView()
+        updatePollHandler.removeCallbacks(updatePollRunnable)
         _binding = null
+    }
+
+    companion object {
+        private const val POLL_INTERVAL_MS = 1000L
+
+        // Tag values stored on btnCheckUpdate.tag to drive the single
+        // click listener in setupUpdateSection without re-assigning it.
+        private const val ACTION_INSTALL = "install"
+        private const val ACTION_RETRY = "retry"
     }
 }

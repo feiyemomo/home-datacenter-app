@@ -226,6 +226,22 @@ class AppContainer(private val context: Context) {
     private var updateCheckFailed: Boolean = false
     private var updateCheckJob: kotlinx.coroutines.Job? = null
 
+    // v1.6.28: background auto-download state. As soon as a new
+    // version is detected (startup check or manual force-check) we
+    // start streaming the APK to disk so it's ready by the time the
+    // user opens the settings page. SettingsFragment reads these
+    // fields to render "ready, tap to install" / "downloading… X%" /
+    // "download failed, tap to retry" without driving the download
+    // itself.
+    @Volatile
+    private var cachedDownloadedApk: java.io.File? = null
+    @Volatile
+    private var downloadProgress: Int = 0  // 0..100
+    @Volatile
+    private var downloadFailed: Boolean = false
+    @Volatile
+    private var downloadingApk: Boolean = false
+
     /**
      * Silent background update check. Idempotent — no-op if a check
      * is already in flight or has already completed this session.
@@ -254,6 +270,10 @@ class AppContainer(private val context: Context) {
                     cachedUpdateInfo = info
                     Log.d("AppContainer",
                         "Update available: ${info.version_name} (installed=$installedName)")
+                    // v1.6.28: start downloading the APK immediately
+                    // so it's ready on disk when the user visits the
+                    // settings page — no manual "download" step.
+                    startBackgroundDownload(info)
                 } else {
                     Log.d("AppContainer",
                         "App is up-to-date (installed=$installedName, latest=${info.version_name})")
@@ -294,6 +314,10 @@ class AppContainer(private val context: Context) {
                 .compareVersions(info.version_name, installedName) > 0
             if (hasUpdate) {
                 cachedUpdateInfo = info
+                // v1.6.28: a manual check that finds a new version
+                // also kicks off the background download so the UI
+                // can show progress immediately.
+                startBackgroundDownload(info)
                 info
             } else {
                 cachedUpdateInfo = null
@@ -310,6 +334,105 @@ class AppContainer(private val context: Context) {
     fun clearCachedUpdateInfo() {
         cachedUpdateInfo = null
         updateCheckFailed = false
+    }
+
+    // --- v1.6.28: background APK auto-download ---
+    //
+    // As soon as a new version is detected (startup check or manual
+    // force-check) we start streaming the APK to disk in the
+    // background. The user no longer has to tap "download" — by the
+    // time they reach the settings page the APK is usually already
+    // on disk and they just tap "install" to launch the system
+    // PackageInstaller.
+
+    /**
+     * Kick off the background APK download for [info]. Idempotent:
+     *   - If the APK is already on disk (isApkCached), just record
+     *     the file path and return.
+     *   - If a download is already in flight, return (no duplicate).
+     * On failure, silently retries once; if the retry also fails,
+     * sets [downloadFailed] so the UI can offer a manual retry.
+     */
+    private fun startBackgroundDownload(info: com.homedatacenter.app.data.model.UpdateInfo) {
+        // If the APK is already on disk from a previous session,
+        // skip re-downloading — just remember the file path.
+        if (com.homedatacenter.app.util.ApkInstaller.isApkCached(context, info)) {
+            val fileName = if (info.file_name.isNotEmpty()) info.file_name
+                else "app-debug-v${info.version_name}.apk"
+            cachedDownloadedApk = java.io.File(
+                java.io.File(context.filesDir, "downloads"), fileName
+            )
+            downloadingApk = false
+            downloadFailed = false
+            downloadProgress = 100
+            Log.d("AppContainer", "APK already cached on disk: $fileName")
+            return
+        }
+        // Prevent concurrent downloads.
+        if (downloadingApk) return
+        val token = prefsManager.token ?: return
+
+        downloadingApk = true
+        downloadFailed = false
+        downloadProgress = 0
+
+        warmScope.launch {
+            var file = com.homedatacenter.app.util.ApkInstaller.downloadOnly(
+                context = context,
+                repo = getRepository(),
+                token = token,
+                info = info,
+                onProgress = { percent -> downloadProgress = percent },
+            )
+            if (file == null) {
+                // Silent single retry — transient network blips are
+                // common over Cloudflare Tunnel and the user hasn't
+                // been prompted yet, so a retry is cheaper than
+                // surfacing a failure state.
+                Log.w("AppContainer", "Background download failed, retrying once…")
+                downloadProgress = 0
+                file = com.homedatacenter.app.util.ApkInstaller.downloadOnly(
+                    context = context,
+                    repo = getRepository(),
+                    token = token,
+                    info = info,
+                    onProgress = { percent -> downloadProgress = percent },
+                )
+            }
+            if (file != null) {
+                cachedDownloadedApk = file
+                downloadProgress = 100
+                Log.d("AppContainer", "Background download ready: ${file.absolutePath}")
+            } else {
+                downloadFailed = true
+                Log.w("AppContainer", "Background download failed after retry")
+            }
+            downloadingApk = false
+        }
+    }
+
+    /** The fully-downloaded APK File ready to install, or null. */
+    fun getCachedDownloadedApk(): java.io.File? = cachedDownloadedApk
+
+    /** Current background download progress (0..100). */
+    fun getDownloadProgress(): Int = downloadProgress
+
+    /** True if the last background download attempt failed. */
+    fun isDownloadFailed(): Boolean = downloadFailed
+
+    /** True if a background download is currently in flight. */
+    fun isDownloadingApk(): Boolean = downloadingApk
+
+    /**
+     * Retry the background download after a failure. No-op unless
+     * [isDownloadFailed] is true and we still have cached UpdateInfo
+     * (i.e. a check has previously found a new version).
+     */
+    fun retryDownload() {
+        if (!downloadFailed) return
+        val info = cachedUpdateInfo ?: return
+        downloadFailed = false
+        startBackgroundDownload(info)
     }
 
     // --- ICE config 预取 (v1.5.7) ---
@@ -343,6 +466,22 @@ class AppContainer(private val context: Context) {
             try {
                 val config = getRepository().getIceConfig(token)
                 cachedIceConfig = config
+                // Persist to PrefsManager so on cold start the app can
+                // synchronously return the last-known ICE config via
+                // [getIceConfig] without waiting for the
+                // GET /api/v1/network/ice-config round-trip (10ms LAN /
+                // 1.4s Tunnel). Wrapped in its own try/catch so a
+                // serialization/prefs failure never blocks caching in
+                // memory.
+                try {
+                    val json = NetworkFactory.json.encodeToString(
+                        com.homedatacenter.app.data.model.IceConfig.serializer(),
+                        config
+                    )
+                    prefsManager.setIceConfigJson(json)
+                } catch (e: Exception) {
+                    Log.w("AppContainer", "ICE config persist failed: ${e.message}")
+                }
                 Log.d("AppContainer", "ICE config prefetched: ${config.ice_servers.size} servers")
             } catch (e: Exception) {
                 Log.w("AppContainer", "ICE config prefetch failed: ${e.message}")
@@ -361,6 +500,32 @@ class AppContainer(private val context: Context) {
             getRepository().getIceConfig(token).also { cachedIceConfig = it }
         } catch (e: Exception) {
             Log.w("AppContainer", "ICE config fetch failed: ${e.message}")
+            null
+        }
+    }
+
+    /**
+     * Synchronously return the ICE config: from the in-memory cache,
+     * else from the persisted [PrefsManager] copy (< 1 hour old), else
+     * null. Does NOT hit the network — callers needing a guaranteed
+     * non-null value must fall back to [getOrFetchIceConfig]. On cold
+     * start, before any network call has completed, this returns the
+     * last-known config persisted by [prefetchIceConfig], shaving the
+     * GET /api/v1/network/ice-config round-trip (10ms LAN / 1.4s
+     * Tunnel) off the first camera open.
+     */
+    fun getIceConfig(): com.homedatacenter.app.data.model.IceConfig? {
+        cachedIceConfig?.let { return it }
+        val json = prefsManager.getIceConfigJson() ?: return null
+        return try {
+            val config = NetworkFactory.json.decodeFromString(
+                com.homedatacenter.app.data.model.IceConfig.serializer(),
+                json
+            )
+            cachedIceConfig = config
+            config
+        } catch (e: Exception) {
+            Log.w("AppContainer", "ICE config deserialize from prefs failed: ${e.message}")
             null
         }
     }

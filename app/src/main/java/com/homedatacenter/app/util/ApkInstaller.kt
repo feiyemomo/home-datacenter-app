@@ -42,15 +42,18 @@ object ApkInstaller {
 
     /**
      * Download the APK from /api/v1/release/latest/apk to private
-     * storage, then launch the system PackageInstaller.
+     * storage only — does NOT launch the installer. This is the
+     * background-download half of the v1.6.28 update flow:
+     * AppContainer.startBackgroundDownload calls this as soon as a
+     * new version is detected, so the APK is ready on disk by the
+     * time the user visits the settings page.
      *
      * Must be called from a coroutine — the network I/O runs on
-     * Dispatchers.IO. The Intent launch hops back to the main
-     * thread because startActivity must be called from the UI
-     * thread.
+     * Dispatchers.IO.
      *
-     * @param activity  required for startActivity (PackageInstaller
-     *                  needs an Activity context, not Application).
+     * @param context   any context — only used to resolve
+     *                  filesDir/downloads for the saved APK. Does
+     *                  NOT need to be an Activity.
      * @param repo      HomeCenterRepository — used for the streaming
      *                  download call.
      * @param token     JWT — the /release/latest/apk endpoint is
@@ -65,20 +68,20 @@ object ApkInstaller {
      *                  dispatcher — caller is responsible for
      *                  hopping to main if updating UI.
      *
-     * @return true if the install Intent was launched, false on
-     *         any error (network, disk, FileProvider).
+     * @return the downloaded File on success, null on any error
+     *         (network, disk, FileProvider).
      */
-    suspend fun downloadAndInstall(
-        activity: Activity,
+    suspend fun downloadOnly(
+        context: Context,
         repo: HomeCenterRepository,
         token: String,
         info: UpdateInfo,
         onProgress: ((Int) -> Unit)? = null,
-    ): Boolean = withContext(Dispatchers.IO) {
+    ): File? = withContext(Dispatchers.IO) {
         try {
             val fileName = if (info.file_name.isNotEmpty()) info.file_name
                 else "app-debug-v${info.version_name}.apk"
-            val downloadsDir = File(activity.filesDir, "downloads").apply {
+            val downloadsDir = File(context.filesDir, "downloads").apply {
                 if (!exists()) mkdirs()
             }
             val apkFile = File(downloadsDir, fileName)
@@ -112,18 +115,61 @@ object ApkInstaller {
             }
 
             Log.d(TAG, "Downloaded ${apkFile.length()} bytes to ${apkFile.absolutePath}")
-
-            // Hop to main thread for startActivity — the install
-            // Intent must be launched from an Activity context on
-            // the UI thread.
-            withContext(Dispatchers.Main) {
-                launchInstaller(activity, apkFile)
-            }
-            true
+            apkFile
         } catch (e: Exception) {
-            Log.e(TAG, "Download/install failed: ${e.message}", e)
-            false
+            Log.e(TAG, "Download failed: ${e.message}", e)
+            null
         }
+    }
+
+    /**
+     * Download the APK and immediately launch the system
+     * PackageInstaller. Convenience wrapper around [downloadOnly] +
+     * [launchInstaller] kept for the legacy one-shot flow.
+     *
+     * The install Intent requires an Activity context (not
+     * application context) on most OEM ROMs, so this takes an
+     * Activity.
+     *
+     * @return true if the install Intent was launched, false on
+     *         any error (network, disk, FileProvider).
+     */
+    suspend fun downloadAndInstall(
+        activity: Activity,
+        repo: HomeCenterRepository,
+        token: String,
+        info: UpdateInfo,
+        onProgress: ((Int) -> Unit)? = null,
+    ): Boolean {
+        val apkFile = downloadOnly(activity, repo, token, info, onProgress) ?: return false
+        // Hop to main thread for startActivity — the install
+        // Intent must be launched from an Activity context on
+        // the UI thread.
+        withContext(Dispatchers.Main) {
+            launchInstaller(activity, apkFile)
+        }
+        return true
+    }
+
+    /**
+     * v1.6.28: check whether the APK for [info] is already on disk
+     * and complete (file exists AND its byte length matches
+     * [UpdateInfo.size_bytes]). Used by AppContainer.startBackground
+     * Download to skip re-downloading an APK that was already
+     * fetched in a previous session.
+     *
+     * If [UpdateInfo.file_name] is empty, falls back to
+     * "app-debug-v<version_name>.apk" — same convention as
+     * [downloadOnly].
+     */
+    fun isApkCached(context: Context, info: UpdateInfo): Boolean {
+        val fileName = if (info.file_name.isNotEmpty()) info.file_name
+            else "app-debug-v${info.version_name}.apk"
+        val apkFile = File(File(context.filesDir, "downloads"), fileName)
+        // size_bytes <= 0 means the server didn't report a size —
+        // can't verify integrity, so treat as not cached.
+        return info.size_bytes > 0 && apkFile.exists() &&
+            apkFile.length() == info.size_bytes
     }
 
     /**
@@ -138,7 +184,7 @@ object ApkInstaller {
      * to the settings screen, then returns to our install Intent
      * after granting.
      */
-    private fun launchInstaller(context: Context, apkFile: File) {
+    fun launchInstaller(context: Context, apkFile: File) {
         val authority = "${context.packageName}.fileprovider"
         val uri: Uri = FileProvider.getUriForFile(context, authority, apkFile)
 

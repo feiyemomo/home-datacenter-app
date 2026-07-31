@@ -64,6 +64,10 @@ class LoginActivity : AppCompatActivity() {
                 // camera the PeerConnectionFactory + EGL context will
                 // already be initialized.
                 container.warmWebRtc()
+                // v1.6.36: also prefetch ICE config so the first
+                // camera open doesn't wait for the
+                // GET /api/v1/network/ice-config round-trip.
+                container.prefetchIceConfig()
                 navigateToMain()
             } catch (e: Exception) {
                 showError(getString(com.homedatacenter.app.R.string.login_error) + ": ${e.message}")

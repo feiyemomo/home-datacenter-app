@@ -156,6 +156,16 @@
                             android:textColor="@color/text_primary"
                             android:textSize="13sp"
                             android:textStyle="bold" />
+                        <!-- v1.6.34: probe progress spinner — shown while
+                             BaseUrlResolver is probing LAN/IPv6/Tunnel
+                             candidates after a preference change. -->
+                        <ProgressBar
+                            android:id="@+id/progressProbe"
+                            style="?android:attr/progressBarStyleSmall"
+                            android:layout_width="24dp"
+                            android:layout_height="24dp"
+                            android:layout_marginStart="8dp"
+                            android:visibility="gone" />
                     </LinearLayout>
 
                     <View

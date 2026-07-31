@@ -10,10 +10,10 @@ import com.homedatacenter.app.HomeCenterApp
 import com.homedatacenter.app.R
 import com.homedatacenter.app.databinding.ActivityMainBinding
 import com.homedatacenter.app.di.AppContainer
-import com.homedatacenter.app.ui.alerts.AlertsFragment
 import com.homedatacenter.app.ui.cameras.CamerasFragment
 import com.homedatacenter.app.ui.dashboard.DashboardFragment
 import com.homedatacenter.app.ui.devices.DevicesFragment
+import com.homedatacenter.app.ui.logs.ServiceLogsFragment
 import com.homedatacenter.app.ui.login.LoginActivity
 import com.homedatacenter.app.ui.settings.SettingsFragment
 import kotlinx.coroutines.launch
@@ -26,7 +26,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var dashboardFragment: Fragment
     private lateinit var camerasFragment: Fragment
-    private lateinit var alertsFragment: Fragment
+    private lateinit var logsFragment: Fragment
     private lateinit var devicesFragment: Fragment
     private lateinit var settingsFragment: Fragment
     private var activeFragment: Fragment? = null
@@ -108,7 +108,7 @@ class MainActivity : AppCompatActivity() {
         super.onRestoreInstanceState(savedInstanceState)
         val target = when (binding.bottomNav.selectedItemId) {
             R.id.nav_cameras -> camerasFragment
-            R.id.nav_alerts -> alertsFragment
+            R.id.nav_logs -> logsFragment
             R.id.nav_devices -> devicesFragment
             R.id.nav_settings -> settingsFragment
             else -> dashboardFragment
@@ -143,7 +143,7 @@ class MainActivity : AppCompatActivity() {
         val fm = supportFragmentManager
         dashboardFragment = fm.findFragmentByTag("dashboard") ?: DashboardFragment()
         camerasFragment = fm.findFragmentByTag("cameras") ?: CamerasFragment()
-        alertsFragment = fm.findFragmentByTag("alerts") ?: AlertsFragment()
+        logsFragment = fm.findFragmentByTag("logs") ?: ServiceLogsFragment()
         devicesFragment = fm.findFragmentByTag("devices") ?: DevicesFragment()
         settingsFragment = fm.findFragmentByTag("settings") ?: SettingsFragment()
 
@@ -156,7 +156,7 @@ class MainActivity : AppCompatActivity() {
         fm.commit {
             add(R.id.nav_host_fragment, settingsFragment, "settings").hide(settingsFragment)
             add(R.id.nav_host_fragment, devicesFragment, "devices").hide(devicesFragment)
-            add(R.id.nav_host_fragment, alertsFragment, "alerts").hide(alertsFragment)
+            add(R.id.nav_host_fragment, logsFragment, "logs").hide(logsFragment)
             add(R.id.nav_host_fragment, camerasFragment, "cameras").hide(camerasFragment)
             add(R.id.nav_host_fragment, dashboardFragment, "dashboard")
         }
@@ -175,7 +175,7 @@ class MainActivity : AppCompatActivity() {
             when (item.itemId) {
                 R.id.nav_dashboard -> { showFragment(dashboardFragment); true }
                 R.id.nav_cameras -> { showFragment(camerasFragment); true }
-                R.id.nav_alerts -> { showFragment(alertsFragment); true }
+                R.id.nav_logs -> { showFragment(logsFragment); true }
                 R.id.nav_devices -> { showFragment(devicesFragment); true }
                 R.id.nav_settings -> { showFragment(settingsFragment); true }
                 else -> false

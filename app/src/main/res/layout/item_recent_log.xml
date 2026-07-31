@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Compact single-row log entry for the Dashboard "最近日志" card.
+     Mirrors item_service_log.xml's icon mapping but lays the
+     timestamp out to the right (single row) so the preview card
+     stays compact. Icon tint / background match the service-log
+     row for visual consistency across the dashboard and logs tab. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:padding="10dp"
+    android:gravity="center_vertical"
+    android:background="@drawable/bg_card"
+    android:minHeight="44dp">
+
+    <ImageView
+        android:id="@+id/ivLogIcon"
+        android:layout_width="24dp"
+        android:layout_height="24dp"
+        android:src="@drawable/ic_history"
+        android:contentDescription="@null"
+        android:tint="@color/text_secondary" />
+
+    <TextView
+        android:id="@+id/tvLogMessage"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:layout_marginStart="10dp"
+        android:layout_marginEnd="8dp"
+        android:textSize="13sp"
+        android:textColor="@color/text_primary"
+        android:maxLines="2"
+        android:ellipsize="end" />
+
+    <TextView
+        android:id="@+id/tvLogTime"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textSize="12sp"
+        android:textColor="@color/text_hint"
+        android:maxLines="1"
+        android:ellipsize="end" />
+
+</LinearLayout>

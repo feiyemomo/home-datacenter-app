@@ -14,6 +14,8 @@ import com.homedatacenter.app.data.model.Alert
 import com.homedatacenter.app.data.model.AlertListData
 import com.homedatacenter.app.data.model.DeviceList
 import com.homedatacenter.app.data.model.NetworkStatus
+import com.homedatacenter.app.data.model.SystemLog
+import com.homedatacenter.app.data.model.SystemLogListData
 import com.homedatacenter.app.data.model.SystemStatus
 import com.homedatacenter.app.data.model.WeatherResponse
 import com.homedatacenter.app.data.model.WsMessage
@@ -37,6 +39,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
@@ -51,6 +54,7 @@ class DashboardFragment : Fragment() {
     private var _binding: FragmentDashboardBinding? = null
     private val binding get() = _binding!!
     private lateinit var alertAdapter: AlertListAdapter
+    private lateinit var recentLogAdapter: RecentLogAdapter
     private var statusPollingJob: Job? = null
     private var liveAlertDismissJob: Job? = null
     private var dashboardWebSocket: HomeCenterWebSocket? = null
@@ -96,10 +100,25 @@ class DashboardFragment : Fragment() {
         binding.rvAlerts.layoutManager = LinearLayoutManager(context)
         binding.rvAlerts.adapter = alertAdapter
 
+        recentLogAdapter = RecentLogAdapter()
+        binding.rvRecentLogs.layoutManager = LinearLayoutManager(context)
+        binding.rvRecentLogs.adapter = recentLogAdapter
+
         binding.swipeRefresh.setOnRefreshListener { refreshAll() }
         binding.btnViewAllAlerts.setOnClickListener {
             (activity as? MainActivity)?.let {
-                it.binding.bottomNav.selectedItemId = R.id.nav_alerts
+                // v1.6.13: the standalone "报警" tab was replaced by
+                // the "服务日志" tab. The dashboard still hosts its own
+                // recent-alerts preview, so "全部" now jumps to the logs
+                // tab where the user can browse system activity.
+                it.binding.bottomNav.selectedItemId = R.id.nav_logs
+            }
+        }
+        binding.btnViewAllLogs.setOnClickListener {
+            // Mirrors btnViewAllAlerts: jump to the "服务日志" tab so
+            // the user can browse the full log history.
+            (activity as? MainActivity)?.let {
+                it.binding.bottomNav.selectedItemId = R.id.nav_logs
             }
         }
         binding.cardNetwork.setOnClickListener {
@@ -148,6 +167,7 @@ class DashboardFragment : Fragment() {
         loadWeather()
         loadNetworkStatus()
         loadRecentAlerts()
+        loadRecentLogs()
         loadSystemStatus(onComplete = {
             if (_binding != null) binding.swipeRefresh.isRefreshing = false
         })
@@ -623,6 +643,7 @@ class DashboardFragment : Fragment() {
                     dashboardWebSocket?.subscribe("device")
                     dashboardWebSocket?.subscribe("camera")
                     dashboardWebSocket?.subscribe("camera.motion")
+                    dashboardWebSocket?.subscribe("system.log")
                 }
 
                 override fun onMessage(message: WsMessage) {
@@ -657,6 +678,25 @@ class DashboardFragment : Fragment() {
                 loadSystemStatus()
             }
             message.topic == "camera.motion" -> showLiveDetection(message)
+            message.topic == "system.log" -> {
+                try {
+                    val log = NetworkFactory.json.decodeFromJsonElement(
+                        SystemLog.serializer(),
+                        message.payload ?: return
+                    )
+                    // Prepend to the adapter and cap at 5 entries so
+                    // the dashboard preview stays compact. Mirrors the
+                    // live-alert prepend path in showLiveDetection.
+                    val current = recentLogAdapter.currentList.toMutableList()
+                    current.add(0, log)
+                    if (current.size > 5) current.subList(5, current.size).clear()
+                    recentLogAdapter.submitList(current)
+                    binding.tvRecentLogsEmpty.visibility = View.GONE
+                    binding.rvRecentLogs.visibility = View.VISIBLE
+                } catch (e: Exception) {
+                    android.util.Log.w("Dashboard", "Failed to parse system.log", e)
+                }
+            }
         }
     }
 
@@ -862,6 +902,32 @@ class DashboardFragment : Fragment() {
         }
     }
 
+    // --- Recent logs (last 5) ---
+
+    private fun loadRecentLogs() {
+        val mainActivity = activity as? MainActivity ?: return
+        val token = mainActivity.container.prefsManager.token ?: return
+
+        lifecycleScope.launch {
+            try {
+                val resp = mainActivity.container.getApi()
+                    .listSystemLogs("Bearer $token", limit = 5, offset = 0)
+                val logs = if (resp.isSuccess) {
+                    resp.decodeData<SystemLogListData>()?.logs ?: emptyList()
+                } else {
+                    emptyList()
+                }
+                recentLogAdapter.submitList(logs)
+                binding.tvRecentLogsEmpty.visibility = if (logs.isEmpty()) View.VISIBLE else View.GONE
+                binding.rvRecentLogs.visibility = if (logs.isEmpty()) View.GONE else View.VISIBLE
+                AnimationHelper.fadeIn(binding.rvRecentLogs, 300)
+            } catch (_: Exception) {
+                binding.tvRecentLogsEmpty.visibility = View.VISIBLE
+                binding.rvRecentLogs.visibility = View.GONE
+            }
+        }
+    }
+
     override fun onDestroyView() {
         stopStatusPolling()
         liveAlertDismissJob?.cancel()
@@ -869,6 +935,7 @@ class DashboardFragment : Fragment() {
         dashboardWebSocket?.disconnect()
         dashboardWebSocket = null
         binding.rvAlerts.adapter = null
+        binding.rvRecentLogs.adapter = null
         firstNetworkFetchDone = false
         _binding = null
         super.onDestroyView()

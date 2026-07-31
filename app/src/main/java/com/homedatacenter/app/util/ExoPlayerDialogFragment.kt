@@ -8,6 +8,7 @@ import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
 import androidx.fragment.app.DialogFragment
+import com.google.android.exoplayer2.DefaultLoadControl
 import com.google.android.exoplayer2.ExoPlayer
 import com.google.android.exoplayer2.MediaItem
 import com.google.android.exoplayer2.PlaybackException
@@ -92,14 +93,39 @@ class ExoPlayerDialogFragment : DialogFragment() {
             }
         }
 
+        // Match CameraDetailActivity.preparePlayback: tuned for 0.5s
+        // LL-HLS segments. Cuts first-frame from ~3s to ~1.5-2s on
+        // remote Cloudflare Tunnel links.
+        val mediaItem = MediaItem.Builder()
+            .setUri(url)
+            .setLiveConfiguration(
+                MediaItem.LiveConfiguration.Builder()
+                    .setTargetOffsetMs(1_500)
+                    .build()
+            )
+            .build()
+
         val mediaSource = HlsMediaSource.Factory(dataSourceFactory)
-            .createMediaSource(MediaItem.fromUri(url))
+            .createMediaSource(mediaItem)
+
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                /* minBufferMs= */ 1_000,
+                /* maxBufferMs= */ 3_000,
+                /* bufferForPlaybackMs= */ 500,
+                /* bufferForPlaybackAfterRebufferMs= */ 1_000,
+            )
+            .setTargetBufferBytes(DefaultLoadControl.DEFAULT_TARGET_BUFFER_BYTES)
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .build()
 
         // Delegate to ExoPlayerRendererFactory: filters out broken
         // goldfish decoders on emulators, enables decoder fallback on
         // real devices. See util/ExoPlayerRendererFactory.kt.
         val renderersFactory = ExoPlayerRendererFactory.create(requireContext())
-        player = ExoPlayer.Builder(requireContext(), renderersFactory).build().apply {
+        player = ExoPlayer.Builder(requireContext(), renderersFactory)
+            .setLoadControl(loadControl)
+            .build().apply {
             setMediaSource(mediaSource)
             playWhenReady = true
 

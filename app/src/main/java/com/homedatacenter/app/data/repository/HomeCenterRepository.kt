@@ -37,6 +37,7 @@ class HomeCenterRepository(
 
     suspend fun listDevices(
         token: String,
+        scope: String = "mine",
         useCache: Boolean = true,
         refreshCache: Boolean = false
     ): List<Device> {
@@ -50,15 +51,15 @@ class HomeCenterRepository(
             return try {
                 NetworkFactory.json.decodeFromString<DeviceList>(cached).devices
             } catch (_: Exception) {
-                fetchDevicesFromNetwork(token)
+                fetchDevicesFromNetwork(token, scope)
             }
         }
 
-        return fetchDevicesFromNetwork(token)
+        return fetchDevicesFromNetwork(token, scope)
     }
 
-    private suspend fun fetchDevicesFromNetwork(token: String): List<Device> {
-        val resp = api.listDevices(bearer(token))
+    private suspend fun fetchDevicesFromNetwork(token: String, scope: String): List<Device> {
+        val resp = api.listDevices(bearer(token), scope)
         ensureSuccess(resp)
         val devices = resp.decodeData<DeviceList>()?.devices ?: emptyList()
         try {
@@ -72,9 +73,9 @@ class HomeCenterRepository(
         return devices
     }
 
-    suspend fun refreshDevicesInBackground(token: String) {
+    suspend fun refreshDevicesInBackground(token: String, scope: String = "mine") {
         try {
-            fetchDevicesFromNetwork(token)
+            fetchDevicesFromNetwork(token, scope)
         } catch (_: Exception) {
         }
     }
@@ -83,6 +84,26 @@ class HomeCenterRepository(
         val resp = api.revokeDevice(bearer(token), deviceId)
         ensureSuccess(resp)
         prefsManager.lastDevicesFetchTime = 0L
+    }
+
+    /**
+     * Create a new auth device for the current user via POST /api/v1/device.
+     * Returns the new device record and the plaintext access key, which is
+     * shown ONCE — the server stores only the SHA-256 hash. Invalidates the
+     * device cache so the next listDevices() call refetches.
+     */
+    suspend fun createDevice(
+        token: String,
+        name: String,
+    ): com.homedatacenter.app.data.model.CreateDeviceResponse {
+        val resp = api.createDevice(
+            bearer(token),
+            com.homedatacenter.app.data.model.CreateDeviceRequest(name),
+        )
+        ensureSuccess(resp)
+        prefsManager.lastDevicesFetchTime = 0L
+        return resp.decodeData<com.homedatacenter.app.data.model.CreateDeviceResponse>()
+            ?: throw java.io.IOException("empty response")
     }
 
     suspend fun getSystemStatus(

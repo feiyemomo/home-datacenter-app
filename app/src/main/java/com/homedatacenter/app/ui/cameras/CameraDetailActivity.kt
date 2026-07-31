@@ -631,7 +631,14 @@ class CameraDetailActivity : AppCompatActivity() {
         // first startPlayback() runs. init() is idempotent.
         ensureWebRtcClient()
 
-        startPlayback()
+        // v1.6.35: pre-negotiate the SDP offer in the background so
+        // that when startPlayback() fires (called from onCreate after
+        // all setup* methods complete), startStream can reuse the
+        // prepared PeerConnection and skip the 800ms LAN / 5s remote
+        // ICE gathering phase. startPlayback() is NOT called here —
+        // onCreate() calls it after setupVideo() returns, giving the
+        // prepare a head start during the remaining setup* calls.
+        precomputeSdpOffer()
     }
 
     private fun setupActions() {
@@ -751,12 +758,18 @@ class CameraDetailActivity : AppCompatActivity() {
         lifecycleScope.launch {
             try {
                 val bitmap = withContext(Dispatchers.IO) {
-                    val connection = java.net.URL(url).openConnection() as java.net.HttpURLConnection
-                    connection.connectTimeout = 5_000
-                    connection.readTimeout = 10_000
-                    connection.setRequestProperty("Authorization", "Bearer $token")
-                    connection.inputStream.use {
-                        android.graphics.BitmapFactory.decodeStream(it)
+                    // v1.6.16: use the shared OkHttpClient so this request
+                    // reuses the connection pool/interceptors that
+                    // BaseUrlResolver.warmupConnection already warmed.
+                    val request = okhttp3.Request.Builder()
+                        .url(url)
+                        .addHeader("Authorization", "Bearer $token")
+                        .build()
+                    container.okHttpClient.newCall(request).execute().use { response ->
+                        if (!response.isSuccessful) return@use null
+                        response.body?.bytes()?.let { bytes ->
+                            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                        }
                     }
                 }
                 if (bitmap != null && !isFinishing) {
@@ -863,6 +876,58 @@ class CameraDetailActivity : AppCompatActivity() {
         } catch (e: Exception) {
             android.util.Log.e(TAG, "WebRtcClient init failed: ${e.message}", e)
             false
+        }
+    }
+
+    /**
+     * v1.6.35: Pre-negotiate the SDP offer in the background. Fetches
+     * the ICE config (from cache or network), builds the ICE server
+     * list, and calls [WebRtcClient.prepareOffer] which creates a
+     * PeerConnection + completes ICE gathering without POSTing to the
+     * backend. When [startWebRtcStream] fires next, it consumes the
+     * prepared PC and skips the ICE gathering phase.
+     *
+     * Best-effort: if the user taps Play before this finishes,
+     * [startWebRtcStream] cancels the prepare job and runs the full
+     * flow. If ICE config fetch fails, the method silently returns
+     * and the full flow runs as before.
+     */
+    private fun precomputeSdpOffer() {
+        val cam = camera ?: return
+        val client = webRtcClient ?: return
+        val token = container.prefsManager.token ?: return
+
+        lifecycleScope.launch {
+            try {
+                // Use cached ICE config if available (warmed by
+                // DashboardFragment / prefetchIceConfig). Fall back
+                // to a network fetch if the cache is cold.
+                val iceConfig = cachedIceConfig
+                    ?: container.getIceConfig()
+                    ?: try {
+                        container.getOrFetchIceConfig(token).also { cachedIceConfig = it }
+                    } catch (e: Exception) {
+                        android.util.Log.w(TAG, "precomputeSdpOffer: ICE config fetch failed: ${e.message}")
+                        null
+                    }
+
+                val isDirectPath = container.baseUrlResolver.isDirectPath()
+                val iceServers = if (isDirectPath) {
+                    emptyList()
+                } else {
+                    iceConfig?.ice_servers?.map { srv ->
+                        PeerConnection.IceServer.builder(srv.urls).apply {
+                            srv.username?.let { setUsername(it) }
+                            srv.credential?.let { setPassword(it) }
+                        }.createIceServer()
+                    } ?: emptyList()
+                }
+
+                client.prepareOffer(cam.id, iceServers, isDirectPath)
+                android.util.Log.d(TAG, "precomputeSdpOffer: started for cameraId=${cam.id} (directPath=$isDirectPath)")
+            } catch (e: Exception) {
+                android.util.Log.w(TAG, "precomputeSdpOffer failed: ${e.message}")
+            }
         }
     }
 

@@ -42,6 +42,12 @@ class PrefsManager(context: Context) {
         get() = prefs.getInt(KEY_THEME_MODE, THEME_FOLLOW_SYSTEM)
         set(value) = prefs.edit().putInt(KEY_THEME_MODE, value).apply()
 
+    fun getDeviceScope(): String = prefs.getString(KEY_DEVICE_SCOPE, "mine") ?: "mine"
+
+    fun setDeviceScope(scope: String) {
+        prefs.edit().putString(KEY_DEVICE_SCOPE, scope).apply()
+    }
+
     fun saveUserInfo(name: String, admin: Boolean) {
         prefs.edit()
             .putString(KEY_USER_NAME, name)
@@ -100,6 +106,20 @@ class PrefsManager(context: Context) {
             .apply()
     }
 
+    fun getIceConfigJson(): String? {
+        val ts = prefs.getLong(KEY_ICE_CONFIG_TS, 0L)
+        if (ts == 0L || System.currentTimeMillis() - ts > ICE_CONFIG_TTL_MS) return null
+        return prefs.getString(KEY_ICE_CONFIG_JSON, null)
+    }
+
+    fun setIceConfigJson(json: String) {
+        prefs.edit().apply {
+            putString(KEY_ICE_CONFIG_JSON, json)
+            putLong(KEY_ICE_CONFIG_TS, System.currentTimeMillis())
+            apply()
+        }
+    }
+
     companion object {
         private const val PREFS_FILE = "home_datacenter_prefs"
         private const val KEY_TOKEN = "auth_token"
@@ -108,6 +128,7 @@ class PrefsManager(context: Context) {
         private const val KEY_USER_NAME = "user_name"
         private const val KEY_IS_ADMIN = "is_admin"
         private const val KEY_THEME_MODE = "theme_mode"
+        private const val KEY_DEVICE_SCOPE = "device_scope"
         private const val KEY_CACHED_DEVICES = "cached_devices"
         private const val KEY_CACHED_CAMERAS = "cached_cameras"
         private const val KEY_CACHED_SYSTEM_STATUS = "cached_system_status"
@@ -115,6 +136,9 @@ class PrefsManager(context: Context) {
         private const val KEY_LAST_DEVICES_FETCH = "last_devices_fetch"
         private const val KEY_LAST_CAMERAS_FETCH = "last_cameras_fetch"
         private const val KEY_LAST_STATUS_FETCH = "last_status_fetch"
+        private const val KEY_ICE_CONFIG_JSON = "ice_config_json"
+        private const val KEY_ICE_CONFIG_TS = "ice_config_ts"
+        private const val ICE_CONFIG_TTL_MS = 60 * 60 * 1000L // 1 hour
 
         const val THEME_LIGHT = 0
         const val THEME_DARK = 1

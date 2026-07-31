@@ -59,6 +59,17 @@ class NetworkDetailActivity : AppCompatActivity() {
         // the button CHECK state is re-synced in onResume.
         setupNetworkPreferenceToggle()
 
+        // v1.6.34: register probe-state callback to show/hide the probe
+        // progress spinner next to the "客户端实际路径" row. The callback
+        // fires from background probe threads, so UI updates are marshalled
+        // through runOnUiThread. Cleared in onDestroy to avoid leaking
+        // the activity (the resolver outlives any single activity).
+        container.baseUrlResolver.onProbeStateChanged = { inProgress ->
+            runOnUiThread {
+                binding.progressProbe.visibility = if (inProgress) View.VISIBLE else View.GONE
+            }
+        }
+
         // Initial render from cache so the user sees something immediately.
         renderFromCache()
         loadAll(forceRefresh = false)
@@ -73,6 +84,13 @@ class NetworkDetailActivity : AppCompatActivity() {
         // while the activity was paused).
         syncNetworkPreferenceToggle()
         refreshClientPath()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        // v1.6.34: clear the probe-state callback to avoid leaking
+        // the activity (the resolver outlives the activity).
+        container.baseUrlResolver.onProbeStateChanged = null
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {

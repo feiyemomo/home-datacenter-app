@@ -38,7 +38,50 @@ class DevicesFragment : Fragment() {
 
         binding.swipeRefresh.setOnRefreshListener { loadDevices() }
 
+        setupScopeToggle()
+        setupFab()
+
         loadDevices()
+    }
+
+    private fun setupScopeToggle() {
+        val mainActivity = activity as? MainActivity ?: return
+        val prefsManager = mainActivity.container.prefsManager
+        if (!mainActivity.container.roleManager.isAdmin()) {
+            // Non-admins keep the toggle hidden (default gone).
+            return
+        }
+        binding.toggleDeviceScope.visibility = View.VISIBLE
+        val scope = prefsManager.getDeviceScope()
+        val initialBtn = if (scope == "all") R.id.btnScopeAll else R.id.btnScopeMine
+        // Check before registering the listener so the initial
+        // programmatic selection does not trigger a re-fetch.
+        binding.toggleDeviceScope.check(initialBtn)
+        binding.toggleDeviceScope.addOnButtonCheckedListener { _, checkedId, isChecked ->
+            if (!isChecked) return@addOnButtonCheckedListener
+            val newScope = if (checkedId == R.id.btnScopeAll) "all" else "mine"
+            if (newScope == prefsManager.getDeviceScope()) return@addOnButtonCheckedListener
+            prefsManager.setDeviceScope(newScope)
+            // Invalidate the device cache so the next load fetches with
+            // the new scope instead of returning the previous scope's data.
+            prefsManager.lastDevicesFetchTime = 0L
+            loadDevices()
+        }
+    }
+
+    private fun setupFab() {
+        binding.fabAddDevice.setOnClickListener {
+            RegisterDeviceDialog().show(childFragmentManager, "register_device")
+        }
+    }
+
+    /**
+     * Public entry point for [RegisterDeviceDialog] to request a list
+     * refresh after a device is created. Delegates to [loadDevices]
+     * so the new device appears without a manual pull-to-refresh.
+     */
+    fun refreshDevices() {
+        if (isAdded) loadDevices()
     }
 
     override fun onResume() {
@@ -114,6 +157,7 @@ class DevicesFragment : Fragment() {
             try {
                 val devices = mainActivity.container.getRepository().listDevices(
                     token,
+                    scope = mainActivity.container.prefsManager.getDeviceScope(),
                     useCache = true
                 )
                 adapter.submitList(devices)
@@ -136,6 +180,7 @@ class DevicesFragment : Fragment() {
             try {
                 val devices = mainActivity.container.getRepository().listDevices(
                     token,
+                    scope = mainActivity.container.prefsManager.getDeviceScope(),
                     useCache = false,
                     refreshCache = true
                 )

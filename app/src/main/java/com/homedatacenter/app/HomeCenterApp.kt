@@ -44,6 +44,13 @@ class HomeCenterApp : Application() {
         // call warmWebRtc() after successful auth.
         if (!container.prefsManager.token.isNullOrBlank()) {
             container.warmWebRtc()
+            // v1.6.36: prefetch ICE config at app startup (previously
+            // deferred to DashboardFragment.onResume). On remote
+            // networks GET /api/v1/network/ice-config takes 1.4s+;
+            // starting it here means by the time the user navigates
+            // to any camera the config is already in memory + persisted
+            // to PrefsManager. Idempotent — no-ops if already cached.
+            container.prefetchIceConfig()
             // v1.6.11: silent background check for a new APK version.
             // Result is cached in AppContainer.cachedUpdateInfo —
             // SettingsFragment reads it to show a "new version

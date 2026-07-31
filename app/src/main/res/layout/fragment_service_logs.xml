@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Service logs tab. Mirrors fragment_alerts.xml structure:
+     SwipeRefreshLayout wrapping a RecyclerView, with a centered
+     empty-state TextView (shown when the list is empty) and a
+     bottom ProgressBar (shown while loading the next page). -->
 <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/swipeRefresh"
@@ -22,9 +26,18 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center"
-            android:text="@string/no_alerts"
+            android:text="@string/no_logs"
             android:textSize="16sp"
             android:textColor="@color/text_secondary"
+            android:visibility="gone" />
+
+        <ProgressBar
+            android:id="@+id/progressLoadMore"
+            style="?android:attr/progressBarStyleSmall"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|center_horizontal"
+            android:layout_marginBottom="8dp"
             android:visibility="gone" />
 
     </FrameLayout>

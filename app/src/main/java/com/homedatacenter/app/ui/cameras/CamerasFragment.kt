@@ -74,6 +74,12 @@ class CamerasFragment : Fragment() {
             val ctx = context ?: return@setOnClickListener
             RegisterCameraDialog(ctx, mainActivity.container) { loadCamerasFromNetwork() }.show()
         }
+
+        // v1.5.7: pre-fetch ICE config so the first WebRTC stream
+        // doesn't wait for an extra round-trip. Idempotent — the
+        // AppContainer skips if already cached. Mirrors
+        // DashboardFragment.refreshAll().
+        mainActivity.container.prefetchIceConfig()
     }
 
     private fun openCameraDetail(camera: Camera) {

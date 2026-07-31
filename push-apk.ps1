@@ -25,9 +25,9 @@ $apkPath = "d:\Projects\Android\app\build\outputs\apk\debug\app-debug.apk"
 # v1.6.12: also push release-notes-vX.Y.Z.txt alongside the APK —
 # the backend reads this file and returns its contents as
 # release_notes in the /api/v1/release/latest response.
-$remoteApkPath = "fnos-momo@192.168.31.234:/vol1/docker/home-datacenter/data/releases/app-debug-v$version.apk"
+$remoteApkPath = "fnos-momo@<NAS_IP>:/vol1/docker/home-datacenter/data/releases/app-debug-v$version.apk"
 $localNotesPath = "d:\Projects\Android\release-notes-v$version.txt"
-$remoteNotesPath = "fnos-momo@192.168.31.234:/vol1/docker/home-datacenter/data/releases/release-notes-v$version.txt"
+$remoteNotesPath = "fnos-momo@<NAS_IP>:/vol1/docker/home-datacenter/data/releases/release-notes-v$version.txt"
 
 Write-Host "Pushing APK to NAS releases directory..."
 # Ensure the remote directory exists (mkdir -p is idempotent)
@@ -43,7 +43,7 @@ $env:DISPLAY = "1"
     -o PreferredAuthentications=password `
     -o PubkeyAuthentication=no `
     -o NumberOfPasswordPrompts=1 `
-    fnos-momo@192.168.31.234 `
+    fnos-momo@<NAS_IP> `
     "mkdir -p /vol1/docker/home-datacenter/data/releases" 2>&1 | Out-Host
 Remove-Item $askpass2 -ErrorAction SilentlyContinue
 
@@ -108,7 +108,7 @@ if ($code -eq 0) {
         -o PreferredAuthentications=password `
         -o PubkeyAuthentication=no `
         -o NumberOfPasswordPrompts=1 `
-        fnos-momo@192.168.31.234 `
+        fnos-momo@<NAS_IP> `
         "ls -la /vol1/docker/home-datacenter/data/releases/ ; echo '---' ; curl -s http://localhost:8080/health" 2>&1 | Out-Host
     Remove-Item $askpass3 -ErrorAction SilentlyContinue
 } else {

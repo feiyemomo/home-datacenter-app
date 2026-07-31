@@ -33,6 +33,9 @@ class RoleManager(
     /** Synchronous best-effort admin check. False until first /me resolves. */
     fun isAdminCached(): Boolean = prefsManager.isAdmin
 
+    /** Synchronous best-effort admin check. Alias for [isAdminCached]. */
+    fun isAdmin(): Boolean = isAdminCached()
+
     /** Cached user id from prefs (set at login, may be updated by /me). */
     fun userIdCached(): Long = prefsManager.userId
 

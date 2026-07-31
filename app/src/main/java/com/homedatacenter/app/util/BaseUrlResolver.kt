@@ -2,6 +2,8 @@ package com.homedatacenter.app.util
 
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -185,6 +187,25 @@ class BaseUrlResolver(
      */
     @Volatile
     private var pendingProbe: Boolean = false
+
+    /**
+     * v1.6.34: true while a probe is actively running (between
+     * [forceProbe]/[probeAsync] kicking off and [probeSync] finishing).
+     * UI surfaces read this via [onProbeStateChanged] to show a spinner
+     * next to the "客户端实际路径" row on NetworkDetailActivity.
+     */
+    @Volatile
+    private var probeInProgress: Boolean = false
+
+    /**
+     * v1.6.34: invoked on [probeInProgress] state transitions. Receives
+     * `true` when a probe starts, `false` when it finishes. Called from
+     * background probe threads — callers must marshal to the UI thread
+     * when updating views. Set to null in onDestroy to avoid leaking
+     * the activity.
+     */
+    @Volatile
+    var onProbeStateChanged: ((Boolean) -> Unit)? = null
 
     private val prefs by lazy {
         // Use applicationContext to avoid leaking whatever context
@@ -392,6 +413,10 @@ class BaseUrlResolver(
             pendingProbe = true
             return
         }
+        // v1.6.34: flip probe state immediately so the UI spinner
+        // appears without waiting for the background thread to start.
+        // probeSync()'s finally block will flip it back to false.
+        setProbeInProgress(true)
         Thread {
             try {
                 probeSync()
@@ -492,6 +517,10 @@ class BaseUrlResolver(
     }
 
     private fun probeAsync() {
+        // v1.6.34: flip probe state immediately so the UI spinner
+        // appears without waiting for the background thread to start.
+        // probeSync()'s finally block will flip it back to false.
+        setProbeInProgress(true)
         Thread {
             try {
                 probeSync()
@@ -602,6 +631,18 @@ class BaseUrlResolver(
         }
     }
 
+    /**
+     * v1.6.34: updates [probeInProgress] and notifies [onProbeStateChanged]
+     * only when the value actually changes, so the UI doesn't get spurious
+     * hide callbacks while a probe is already running. Safe to call from
+     * any thread (probeInProgress is @Volatile).
+     */
+    private fun setProbeInProgress(value: Boolean) {
+        if (probeInProgress == value) return
+        probeInProgress = value
+        onProbeStateChanged?.invoke(value)
+    }
+
     private fun probeSync() {
         // v1.6.26: three-tier probe with RTT measurement + manual
         // preference override.
@@ -646,13 +687,18 @@ class BaseUrlResolver(
         // when the LAN probe returns, and the Tunnel probe just
         // updates RTT/availability caches when it finishes.
         //
-        // Implementation note: we run the three probes sequentially
-        // (not parallel) to keep the code simple and because the LAN
-        // and IPv6 probes finish quickly (alive ~10ms / dead <100ms).
-        // Only the Tunnel probe takes real time (~1.4s), and by then
-        // we've already potentially switched `resolved` to LAN/IPv6 —
-        // the user-visible latency is dominated by the fastest alive
-        // candidate, not the slowest.
+        // Implementation note: the three probes (LAN, IPv6, Tunnel)
+        // run in PARALLEL via async(Dispatchers.IO), with all three
+        // Deferreds awaited before proceeding, so the worst-case wall
+        // time is the longest single timeout (REMOTE_TIMEOUT_MS = 4s)
+        // instead of the sum (1.5 + 2.0 + 4.0 = 7.5s). The async blocks
+        // only READ immutable state and return ProbeResults; all
+        // volatile-field writes (resolved, lastRttMs,
+        // ipv6DirectAvailable) happen in the sequential section after
+        // the parallel block returns. The selection logic below still
+        // picks the lowest-RTT alive candidate with the LAN > IPv6 >
+        // Tunnel tiebreaker — RTT comparison, not completion order,
+        // decides.
         //
         // v1.6.29: before probing, warm up the connection pool for the
         // CURRENT resolved URL. This lets the probe for that URL reuse
@@ -665,21 +711,10 @@ class BaseUrlResolver(
         // resolved URL (LAN or IPv6) gets warmed up first, and with
         // keep-alive (10 min) exceeding TTL (5 min), the connection
         // from the previous warmup is still alive in the pool.
+        setProbeInProgress(true)
+        try {
         if (resolved.isNotBlank()) {
             warmupConnection(resolved)
-        }
-
-        // 1. LAN probe (two-pronged: HTTP + TCP fallback)
-        var lanResult = probeUrl(LAN_URL, LAN_TIMEOUT_MS)
-        if (!lanResult.alive) {
-            val tcpRtt = probeTcpRtt(LAN_HOST, LAN_PORT, LAN_TIMEOUT_MS)
-            if (tcpRtt >= 0) {
-                // HTTP failed but TCP succeeded — vendor HTTP policy
-                // is likely intercepting. Use TCP connect time as the
-                // RTT proxy. The next real API call will reveal if
-                // HTTP actually works.
-                lanResult = ProbeResult(alive = true, rttMs = tcpRtt)
-            }
         }
 
         // v1.6.27: prefer the dynamically-fetched IPv6 URL (from
@@ -691,17 +726,54 @@ class BaseUrlResolver(
         // we fall back to the constant.
         val ipv6Url = dynamicIpv6Url ?: IPV6_DIRECT_URL
 
-        // 2. IPv6 direct probe. OkHttp will fail immediately
-        // (NoRouteToHostException / UnknownHostException) if the
-        // phone has no IPv6 connectivity, so this is also an
-        // implicit phone-IPv6 check — no separate ConnectivityManager
-        // probe needed.
-        val ipv6Result = probeUrl(ipv6Url, IPV6_TIMEOUT_MS)
-        ipv6DirectAvailable = ipv6Result.alive
+        // Launch the three probes in parallel. Each async block runs
+        // on Dispatchers.IO so the blocking OkHttp execute() / socket
+        // connect() calls don't serialize on the runBlocking thread —
+        // without an explicit dispatcher the async blocks would share
+        // runBlocking's single-threaded event loop and run one after
+        // another, defeating the parallelism.
+        val (lanResult, ipv6Result, remoteResult) = runBlocking {
+            coroutineScope {
+                // 1. LAN probe (two-pronged: HTTP + TCP fallback)
+                val lanDeferred = async(Dispatchers.IO) {
+                    var lan = probeUrl(LAN_URL, LAN_TIMEOUT_MS)
+                    if (!lan.alive) {
+                        val tcpRtt = probeTcpRtt(LAN_HOST, LAN_PORT, LAN_TIMEOUT_MS)
+                        if (tcpRtt >= 0) {
+                            // HTTP failed but TCP succeeded — vendor HTTP policy
+                            // is likely intercepting. Use TCP connect time as the
+                            // RTT proxy. The next real API call will reveal if
+                            // HTTP actually works.
+                            lan = ProbeResult(alive = true, rttMs = tcpRtt)
+                        }
+                    }
+                    lan
+                }
 
-        // 3. Tunnel probe (always runs so we have a fresh RTT for the
-        // Tunnel and so AUTO can compare all three).
-        val remoteResult = probeUrl(REMOTE_URL, REMOTE_TIMEOUT_MS)
+                // 2. IPv6 direct probe. OkHttp will fail immediately
+                // (NoRouteToHostException / UnknownHostException) if the
+                // phone has no IPv6 connectivity, so this is also an
+                // implicit phone-IPv6 check — no separate ConnectivityManager
+                // probe needed.
+                val ipv6Deferred = async(Dispatchers.IO) {
+                    probeUrl(ipv6Url, IPV6_TIMEOUT_MS)
+                }
+
+                // 3. Tunnel probe (always runs so we have a fresh RTT for the
+                // Tunnel and so AUTO can compare all three).
+                val remoteDeferred = async(Dispatchers.IO) {
+                    probeUrl(REMOTE_URL, REMOTE_TIMEOUT_MS)
+                }
+
+                // Await all three. They're already running in parallel,
+                // so the total wall time is max(LAN, IPv6, Tunnel) rather
+                // than the sum. Awaiting in this order is fine — once the
+                // first completes, the others are likely already done (or
+                // finish immediately on their own await).
+                Triple(lanDeferred.await(), ipv6Deferred.await(), remoteDeferred.await())
+            }
+        }
+        ipv6DirectAvailable = ipv6Result.alive
 
         android.util.Log.i(
             TAG,
@@ -767,6 +839,9 @@ class BaseUrlResolver(
             // This is especially valuable on cellular IPv6 where RTT is
             // ~250ms — warmup saves one full RTT on the first request.
             warmupConnection(chosen)
+        }
+        } finally {
+            setProbeInProgress(false)
         }
     }
 

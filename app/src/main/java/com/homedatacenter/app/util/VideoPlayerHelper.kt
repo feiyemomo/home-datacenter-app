@@ -20,8 +20,6 @@ import com.homedatacenter.app.data.model.Camera
 
 object VideoPlayerHelper {
 
-    private const val HLS_JS_URL = "https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js"
-
     private enum class StreamType {
         HLS, WEBRTC_WS, WEBRTC_HTTP, NATIVE
     }
@@ -479,7 +477,7 @@ object VideoPlayerHelper {
           return;
         }
         const script = document.createElement('script');
-        script.src = "$HLS_JS_URL";
+        script.src = "file:///android_asset/hls.min.js";
         script.onerror = function() { notifyError('无法加载 hls.js 库'); };
         script.onload = function() {
           if (!window.Hls) { notifyError('hls.js 加载失败'); return; }
