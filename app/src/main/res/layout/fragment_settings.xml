@@ -108,47 +108,6 @@
                 android:textColor="@color/online" />
         </LinearLayout>
 
-        <!-- Admin section: visible only when isAdmin -->
-        <TextView
-            android:id="@+id/tvAdminSectionLabel"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/profile_admin_section"
-            android:textSize="14sp"
-            android:textColor="@color/text_secondary"
-            android:layout_marginBottom="8dp"
-            android:visibility="gone" />
-
-        <LinearLayout
-            android:id="@+id/cardAdmin"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="@drawable/bg_glass_card"
-            android:orientation="vertical"
-            android:padding="16dp"
-            android:layout_marginBottom="16dp"
-            android:visibility="gone">
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnOpenUsers"
-                style="@style/Widget.Material3.Button.TextButton"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:gravity="start|center_vertical"
-                android:text="@string/profile_open_users"
-                app:icon="@drawable/ic_admin_users"
-                app:iconTint="@color/primary" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="56dp"
-                android:layout_marginTop="-2dp"
-                android:text="@string/profile_open_users_summary"
-                android:textSize="11sp"
-                android:textColor="@color/text_hint" />
-        </LinearLayout>
-
         <!-- Theme selector -->
         <TextView
             android:layout_width="wrap_content"

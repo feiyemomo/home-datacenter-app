@@ -63,7 +63,6 @@ class SettingsFragment : Fragment() {
 
         setupThemeSelector(prefs)
         setupProfileCard(prefs)
-        setupAdminSection(prefs)
         setupJwtInfo(prefs)
         setupUpdateSection()
 
@@ -104,12 +103,6 @@ class SettingsFragment : Fragment() {
             } else ""
             binding.tvUserName.text = prefs.userName + adminLabel
         }
-    }
-
-    private fun setupAdminSection(prefs: PrefsManager) {
-        val isAdmin = prefs.isAdmin
-        binding.tvAdminSectionLabel.visibility = if (isAdmin) View.VISIBLE else View.GONE
-        binding.cardAdmin.visibility = if (isAdmin) View.VISIBLE else View.GONE
     }
 
     private fun setupJwtInfo(prefs: PrefsManager) {
@@ -169,8 +162,7 @@ class SettingsFragment : Fragment() {
                     " (${getString(R.string.setting_admin_label)})"
                 } else ""
                 binding.tvUserName.text = user.name + adminLabel
-                // Refresh admin section visibility based on fresh role.
-                setupAdminSection(prefs)
+                // Admin section was removed — no refresh needed.
             } catch (_: Exception) {
             }
         }

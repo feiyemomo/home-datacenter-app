@@ -283,6 +283,7 @@
 
             <!-- PTZ section -->
             <TextView
+                android:id="@+id/tvPtzSectionTitle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/camera_ptz_section"
@@ -423,6 +424,7 @@
 
             <!-- Presets section -->
             <TextView
+                android:id="@+id/tvPresetsSectionTitle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/camera_presets_section"
@@ -431,6 +433,7 @@
                 android:layout_marginBottom="8dp" />
 
             <LinearLayout
+                android:id="@+id/cardPresets"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:background="@drawable/bg_glass_card"
@@ -462,7 +465,7 @@
                     app:icon="@drawable/ic_add" />
             </LinearLayout>
 
-            <!-- Settings section: audio / recording / codec / delete -->
+            <!-- Settings section: share / audio / recording / codec / delete -->
             <TextView
                 android:id="@+id/tvSettingsSectionTitle"
                 android:layout_width="wrap_content"

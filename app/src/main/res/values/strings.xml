@@ -157,7 +157,7 @@
     <string name="alert_jump_failed">跳转失败，请重试</string>
 
     <!-- Camera detail / control page -->
-    <string name="camera_detail_title">摄像头控制</string>
+    <string name="camera_detail_title">摄像头相关信息</string>
     <string name="camera_video_section">实时视频</string>
     <string name="camera_action_recordings">查看录像</string>
     <string name="camera_action_alerts">报警记录</string>

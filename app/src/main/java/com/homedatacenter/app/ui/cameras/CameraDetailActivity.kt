@@ -299,6 +299,11 @@ class CameraDetailActivity : AppCompatActivity() {
             binding.tvPtzUnsupported.visibility = View.VISIBLE
             binding.ptzGrid.visibility = View.GONE
             binding.seekPtzSpeed.isEnabled = false
+            // Hide PTZ section title and presets entirely when no PTZ support
+            binding.tvPtzSectionTitle.visibility = View.GONE
+            binding.cardPtz.visibility = View.GONE
+            binding.tvPresetsSectionTitle.visibility = View.GONE
+            binding.cardPresets.visibility = View.GONE
             return
         }
         binding.tvPtzUnsupported.visibility = View.GONE
