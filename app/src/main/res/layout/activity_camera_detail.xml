@@ -32,7 +32,6 @@
             android:theme="@style/ThemeOverlay.Material3.Light"
             app:navigationIcon="@drawable/ic_baseline_arrow_back_24"
             app:navigationIconTint="@color/text_primary"
-            app:title="@string/camera_detail_title"
             app:titleTextColor="@color/text_primary" />
 
         <!-- Video player + action buttons: rendered edge-to-edge

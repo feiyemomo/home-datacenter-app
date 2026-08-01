@@ -277,9 +277,8 @@ class CameraDetailActivity : AppCompatActivity() {
             getString(R.string.camera_offline)
         }
         val statusColor = getColor(if (cam.isOnline) R.color.online else R.color.offline)
+        binding.toolbar.title = cam.name
         binding.toolbar.subtitle = buildString {
-            append(cam.name)
-            append(" · ")
             append(statusText)
             if (cam.vendor.isNotBlank()) {
                 append(" · ")

@@ -217,12 +217,12 @@
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnLogout"
             android:layout_width="match_parent"
-            android:layout_height="52dp"
+            android:layout_height="36dp"
             android:text="@string/setting_logout"
-            android:textColor="@color/error"
+            android:textColor="@color/text_hint"
+            android:layout_marginTop="-8dp"
             android:layout_marginBottom="24dp"
-            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-            app:strokeColor="@color/error" />
+            style="@style/Widget.MaterialComponents.Button.TextButton" />
 
         <TextView
             android:id="@+id/tvVersion"
