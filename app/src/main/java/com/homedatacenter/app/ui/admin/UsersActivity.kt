@@ -1,11 +1,17 @@
 package com.homedatacenter.app.ui.admin
 
 import android.app.AlertDialog
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.os.Bundle
+import android.view.Menu
+import android.view.MenuItem
 import android.view.View
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
@@ -34,6 +40,10 @@ class UsersActivity : AppCompatActivity() {
     private lateinit var container: AppContainer
     private lateinit var adapter: UserListAdapter
 
+    companion object {
+        private const val MENU_ADD_USER = 1
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityUsersBinding.inflate(layoutInflater)
@@ -42,7 +52,18 @@ class UsersActivity : AppCompatActivity() {
         container = (application as HomeCenterApp).container
 
         binding.toolbar.setNavigationOnClickListener { finish() }
-        binding.fabAddUser.setOnClickListener { showCreateUserDialog() }
+        binding.toolbar.menu.add(Menu.NONE, MENU_ADD_USER, Menu.NONE, R.string.users_create)
+            .setIcon(R.drawable.ic_add)
+            .setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
+        binding.toolbar.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                MENU_ADD_USER -> {
+                    showCreateUserDialog()
+                    true
+                }
+                else -> false
+            }
+        }
         binding.swipeRefresh.setOnRefreshListener { loadUsers() }
 
         adapter = UserListAdapter { user -> showEditUserDialog(user) }
@@ -92,13 +113,17 @@ class UsersActivity : AppCompatActivity() {
                 }
                 lifecycleScope.launch {
                     try {
-                        container.getRepository().createUser(
+                        val accessKey = container.getRepository().createUser(
                             token,
                             name = name,
                             isAdmin = cbAdmin.isChecked,
                         )
-                        toast("用户已创建")
                         loadUsers()
+                        if (!accessKey.isNullOrEmpty()) {
+                            showAccessKeyDialog(accessKey)
+                        } else {
+                            toast("用户已创建")
+                        }
                     } catch (e: Exception) {
                         toast("创建失败: ${e.message}")
                     }
@@ -106,6 +131,45 @@ class UsersActivity : AppCompatActivity() {
             }
             .setNegativeButton(R.string.btn_cancel, null)
             .show()
+    }
+
+    private fun showAccessKeyDialog(accessKey: String) {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(50, 30, 50, 10)
+        }
+        val tvLabel = TextView(this).apply {
+            text = getString(R.string.device_register_access_key_label)
+            textSize = 14f
+        }
+        val tvKey = TextView(this).apply {
+            text = accessKey
+            textSize = 16f
+            setTextColor(
+                resources.getColor(android.R.color.holo_red_dark, theme)
+            )
+            setPadding(0, 16, 0, 16)
+            typeface = android.graphics.Typeface.MONOSPACE
+        }
+        container.apply {
+            addView(tvLabel)
+            addView(tvKey)
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle(R.string.users_create)
+            .setView(container)
+            .setPositiveButton(R.string.device_register_copied) { _, _ ->
+                copyToClipboard(accessKey)
+                toast("已复制")
+            }
+            .setNeutralButton(R.string.btn_confirm) { _, _ -> }
+            .show()
+    }
+
+    private fun copyToClipboard(text: String) {
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("access_key", text))
     }
 
     private fun showEditUserDialog(user: User) {
