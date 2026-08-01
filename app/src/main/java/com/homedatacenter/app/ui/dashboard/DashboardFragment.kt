@@ -695,6 +695,8 @@ class DashboardFragment : Fragment() {
             }
             message.topic == "camera.motion" -> showLiveDetection(message)
             message.topic == "system.log" -> {
+                // v1.7.10: skip processing system.log for non-admin users
+                if (!(activity as? MainActivity)?.container?.prefsManager?.isAdmin == true) return
                 try {
                     val log = NetworkFactory.json.decodeFromJsonElement(
                         SystemLog.serializer(),
@@ -922,6 +924,9 @@ class DashboardFragment : Fragment() {
 
     private fun loadRecentLogs() {
         val mainActivity = activity as? MainActivity ?: return
+        // v1.7.10: skip loading recent logs for non-admin users
+        // to prevent the WebSocket handler from making them visible.
+        if (!mainActivity.container.prefsManager.isAdmin) return
         val token = mainActivity.container.prefsManager.token ?: return
 
         lifecycleScope.launch {
