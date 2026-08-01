@@ -23,6 +23,7 @@ import com.google.android.exoplayer2.source.ProgressiveMediaSource
 import com.google.android.exoplayer2.upstream.DefaultHttpDataSource
 import com.google.android.exoplayer2.MediaMetadata
 import com.homedatacenter.app.R
+import com.homedatacenter.app.data.api.NetworkFactory
 import com.homedatacenter.app.data.model.Camera
 import com.homedatacenter.app.data.model.Recording
 import com.homedatacenter.app.di.AppContainer
@@ -514,18 +515,19 @@ class RecordingsDialog(
         // playlist session before we (re)build the player.
         daySeekHandler.removeCallbacks(daySeekUpdateRunnable)
         val renderersFactory = ExoPlayerRendererFactory.create(context)
-        // v1.6.16: low-latency LoadControl for recordings. The default
-        // ExoPlayer LoadControl buffers 15s before starting playback,
-        // which adds ~4-5s to first-frame on remote networks (Cloudflare
-        // Tunnel TTFB ~1.4s + 2.5s buffer-for-playback download time).
-        // Mirroring the live-stream LoadControl (minBuffer=2s,
-        // bufferForPlayback=500ms) cuts first-frame to ~2s on remote.
+        // v1.6.39: increased buffer for smoother recording playback.
+        // The previous low-latency config (minBuffer=2s, maxBuffer=10s)
+        // caused rebuffering at every 60s clip boundary because the
+        // player couldn't pre-load the next segment fast enough.
+        // Recording playback is NOT a low-latency scenario — a 3s
+        // first-frame delay is acceptable, but mid-playback stutter
+        // at every segment boundary is not.
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                /* minBufferMs= */ 2_000,
-                /* maxBufferMs= */ 10_000,
-                /* bufferForPlaybackMs= */ 500,
-                /* bufferForPlaybackAfterRebufferMs= */ 1_000,
+                /* minBufferMs= */ 5_000,
+                /* maxBufferMs= */ 30_000,
+                /* bufferForPlaybackMs= */ 1_000,
+                /* bufferForPlaybackAfterRebufferMs= */ 2_000,
             )
             .setTargetBufferBytes(com.google.android.exoplayer2.DefaultLoadControl.DEFAULT_TARGET_BUFFER_BYTES)
             .setPrioritizeTimeOverSizeThresholds(true)
@@ -541,6 +543,7 @@ class RecordingsDialog(
                 /* handleAudioFocus = */ true,
             )
             val dataSourceFactory = DefaultHttpDataSource.Factory().apply {
+                setUserAgent(NetworkFactory.USER_AGENT)
                 setConnectTimeoutMs(15000)
                 setReadTimeoutMs(60000)
                 if (!token.isNullOrEmpty()) {

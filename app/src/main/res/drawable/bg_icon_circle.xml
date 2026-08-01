@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Semi-transparent warm tint for stat-card icons. Using 20% alpha
+     of the primary coral keeps the icon visible while letting the
+     glass card background show through — consistent with the liquid
+     glass design language used elsewhere in the app. -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="oval">
-    <solid android:color="@color/primary" />
+    <solid android:color="#4DFF8A65" />
 </shape>

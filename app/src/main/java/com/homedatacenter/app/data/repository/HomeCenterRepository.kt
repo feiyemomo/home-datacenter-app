@@ -86,6 +86,12 @@ class HomeCenterRepository(
         prefsManager.lastDevicesFetchTime = 0L
     }
 
+    suspend fun deleteDevice(token: String, deviceId: Long) {
+        val resp = api.deleteDevice(bearer(token), deviceId)
+        ensureSuccess(resp)
+        prefsManager.lastDevicesFetchTime = 0L
+    }
+
     /**
      * Create a new auth device for the current user via POST /api/v1/device.
      * Returns the new device record and the plaintext access key, which is
@@ -366,6 +372,21 @@ class HomeCenterRepository(
         prefsManager.lastCamerasFetchTime = 0L
     }
 
+    /**
+     * Best-effort preheat: ask the backend to warm up the camera's
+     * RTSP/go2rtc connection so the subsequent stream request
+     * (WebRTC offer / MP4 / preview frame) skips the cold-start
+     * handshake. Fire-and-forget — callers should NOT await this
+     * before navigating; errors are swallowed on purpose.
+     */
+    suspend fun preheatCamera(token: String, cameraId: Long) {
+        try {
+            api.preheat(bearer(token), cameraId)
+        } catch (_: Exception) {
+            // best-effort, ignore errors
+        }
+    }
+
     // --- User management (admin) ---
 
     suspend fun listUsers(token: String): List<User> {
@@ -413,6 +434,46 @@ class HomeCenterRepository(
         val resp = api.deleteUser(bearer(token), userId)
         ensureSuccess(resp)
         return resp.decodeData<DeleteUserResult>()?.deletedDevices ?: 0
+    }
+
+    // --- Camera sharing (admin or camera owner) ---
+
+    /**
+     * Share [cameraId] with [userId] via POST /api/v1/cameras/:id/shares.
+     * The caller is responsible for authorization checks (admin or
+     * camera owner); the server still enforces it.
+     */
+    suspend fun shareCamera(token: String, cameraId: Long, userId: Long) {
+        val resp = api.shareCamera(
+            bearer(token),
+            cameraId,
+            com.homedatacenter.app.data.model.ShareCameraRequest(userId),
+        )
+        ensureSuccess(resp)
+    }
+
+    /**
+     * Revoke [userId]'s access to [cameraId] via
+     * DELETE /api/v1/cameras/:id/shares/:user_id.
+     */
+    suspend fun unshareCamera(token: String, cameraId: Long, userId: Long) {
+        val resp = api.unshareCamera(bearer(token), cameraId, userId)
+        ensureSuccess(resp)
+    }
+
+    /**
+     * List the users [cameraId] is currently shared with. Returns an
+     * empty list when no shares exist (or when the backend returns no
+     * data field for an empty collection).
+     */
+    suspend fun listShares(
+        token: String,
+        cameraId: Long,
+    ): List<com.homedatacenter.app.data.model.CameraShare> {
+        val resp = api.listShares(bearer(token), cameraId)
+        ensureSuccess(resp)
+        return resp.decodeData<List<com.homedatacenter.app.data.model.CameraShare>>()
+            ?: emptyList()
     }
 
     // --- In-app self-update (v1.6.11) ---

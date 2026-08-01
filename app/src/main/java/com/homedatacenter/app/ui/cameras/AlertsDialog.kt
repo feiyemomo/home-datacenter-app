@@ -18,6 +18,7 @@ import com.google.android.exoplayer2.Player
 import com.google.android.exoplayer2.source.ProgressiveMediaSource
 import com.google.android.exoplayer2.upstream.DefaultHttpDataSource
 import com.homedatacenter.app.R
+import com.homedatacenter.app.data.api.NetworkFactory
 import com.homedatacenter.app.data.model.Alert
 import com.homedatacenter.app.data.model.AlertListData
 import com.homedatacenter.app.data.model.Camera
@@ -305,6 +306,7 @@ class AlertsDialog(
                 /* handleAudioFocus = */ true,
             )
             val dataSourceFactory = DefaultHttpDataSource.Factory().apply {
+                setUserAgent(NetworkFactory.USER_AGENT)
                 setConnectTimeoutMs(15000)
                 setReadTimeoutMs(60000)
                 if (!token.isNullOrEmpty()) {

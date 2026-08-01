@@ -2,6 +2,7 @@ package com.homedatacenter.app.util
 
 import android.content.Context
 import android.util.Log
+import com.homedatacenter.app.data.api.NetworkFactory
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -97,6 +98,13 @@ class WebRtcClient(
     private var peerConnection: PeerConnection? = null
     private var videoTrack: VideoTrack? = null
     private var audioTrack: AudioTrack? = null
+    // v1.7.2: latch the user's mute preference so that audio tracks
+    // arriving AFTER a reconnect / renegotiation honour it. Without
+    // this, onTrack forces setEnabled(true) + setVolume(1.0) on every
+    // new audio track, un-muting the stream even though the user
+    // tapped mute — the "关闭视频声音不停" symptom.
+    @Volatile
+    private var audioEnabledByUser: Boolean = true
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var signalingJob: Job? = null
     // v1.6.13: latched true once the listener has received onConnected
@@ -147,8 +155,13 @@ class WebRtcClient(
      * operation — the backend keeps sending RTP audio, we just
      * stop rendering it. Cheaper than setVolume(0f) and survives
      * track re-negotiation.
+     *
+     * v1.7.2: also latch the preference in [audioEnabledByUser] so
+     * that a late-arriving audio track (after ICE reconnect) does
+     * not un-mute the stream via onTrack's default setEnabled(true).
      */
     fun setAudioEnabled(enabled: Boolean) {
+        audioEnabledByUser = enabled
         audioTrack?.setEnabled(enabled)
     }
 
@@ -266,6 +279,13 @@ class WebRtcClient(
                 preparedPc?.let { try { it.dispose() } catch (_: Exception) {} }
                 preparedPc = null
                 preparedSdp = null
+                // v1.6.41: clear preparedCameraId too so the triple
+                // stays consistent. Previously this was missed, which
+                // could leave a stale cameraId alongside null pc/sdp.
+                // The usePrepared null checks in startStreamInternal
+                // already guard against this, but clearing it removes
+                // any ambiguity for future readers.
+                preparedCameraId = -1L
             }
         }
     }
@@ -428,10 +448,17 @@ class WebRtcClient(
                     MediaStreamTrack.AUDIO_TRACK_KIND -> {
                         val at = track as AudioTrack
                         audioTrack = at
+                        // v1.7.2: honour the user's mute preference
+                        // instead of unconditionally enabling audio.
+                        // A reconnect delivers a fresh track here; if
+                        // the user had muted, forcing enabled=true
+                        // brought the sound back ("关闭声音不停").
+                        at.setEnabled(audioEnabledByUser)
+                        runCatching {
+                            at.setVolume(if (audioEnabledByUser) 1.0 else 0.0)
+                        }
                         android.util.Log.d(TAG, "onTrack: audio track received, " +
-                            "enabled=${at.enabled()}")
-                        at.setEnabled(true)
-                        runCatching { at.setVolume(1.0) }
+                            "userEnabled=$audioEnabledByUser enabled=${at.enabled()}")
                     }
                     else -> {
                         android.util.Log.w(TAG, "onTrack: unknown track kind=${track.kind()}")
@@ -470,6 +497,11 @@ class WebRtcClient(
         // attempt. The app-level connection timeout checks this
         // flag to know whether to fire onError("connection timeout").
         connectedOrFailed = false
+        // v1.7.2: reset the user's audio preference for the new
+        // stream. A fresh camera open should start unmuted; the
+        // latch only needs to survive ICE reconnects, not full
+        // stream restarts.
+        audioEnabledByUser = true
 
         // v1.6.35: set the active listener + surface so the shared
         // observer (createPeerConnectionObserver) can dispatch
@@ -490,7 +522,14 @@ class WebRtcClient(
         // timeout, so a stuck prepare means a stuck full flow too).
         val prepareJobLocal = prepareJob
         if (prepareJobLocal != null && prepareJobLocal.isActive) {
-            val waitMs = if (isLan) 800L else 5_000L
+            // v1.6.41: cap the wait at min(iceTimeoutMs, 2000L). On
+            // remote this prevents a 5s prepare wait from stacking on
+            // top of the full flow's 5s ICE gathering — if prepare
+            // hasn't finished in 2s, cancel it and start fresh so the
+            // 6s connection timeout is the only backstop the user
+            // waits for. LAN is unaffected (min(800, 2000) = 800).
+            val iceTimeoutMs = if (isLan) 800L else 5_000L
+            val waitMs = minOf(iceTimeoutMs, 2_000L)
             try {
                 withTimeout(waitMs) { prepareJobLocal.join() }
             } catch (_: Exception) {
@@ -542,7 +581,10 @@ class WebRtcClient(
             preparedSdp = null
             preparedCameraId = -1L
             peerConnection = pc
-            Log.d(TAG, "Using precomputed offer for cameraId=$cameraId (skipped ICE gathering)")
+            // v1.6.41: upgraded Log.d -> Log.i so the preload fast-path
+            // hit is visible in logcat without a debug filter — this is
+            // the key signal that precomputeSdpOffer actually paid off.
+            Log.i(TAG, "Using precomputed offer for cameraId=$cameraId (skipped ICE gathering)")
         } else {
             // --- Full negotiation path (no prepared PC available) ---
             val pcConfig = buildRtcConfiguration(iceServers, isLan)
@@ -754,6 +796,9 @@ class WebRtcClient(
             .url(url)
             .post(sdpOffer.toRequestBody("application/sdp".toMediaType()))
             .apply {
+                // Unified UA (overwrites OkHttp default). Use header()
+                // instead of addHeader() so there's exactly one value.
+                header("User-Agent", NetworkFactory.USER_AGENT)
                 if (!token.isNullOrEmpty()) {
                     addHeader("Authorization", "Bearer $token")
                     addHeader("Cookie", "home_token=$token")

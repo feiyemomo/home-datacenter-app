@@ -168,6 +168,9 @@ class MainActivity : AppCompatActivity() {
         // devices within their own scope. Administrator-only actions are
         // gated inside their respective screens and by the server.
         binding.bottomNav.menu.findItem(R.id.nav_devices)?.isVisible = true
+        // Service logs tab is admin-only — non-admin users get a
+        // simplified navigation bar without the logs entry.
+        binding.bottomNav.menu.findItem(R.id.nav_logs)?.isVisible = container.prefsManager.isAdmin
     }
 
     private fun setupNavigation() {

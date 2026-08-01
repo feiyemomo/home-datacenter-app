@@ -84,6 +84,18 @@ class CamerasFragment : Fragment() {
 
     private fun openCameraDetail(camera: Camera) {
         val ctx = context ?: return
+        val mainActivity = activity as? MainActivity
+        val token = mainActivity?.container?.prefsManager?.token
+        // Fire-and-forget preheat: warm up the camera's RTSP/go2rtc
+        // connection on the backend so the detail page's first stream
+        // request doesn't pay the cold-start cost. Do NOT await — the
+        // UI jumps to CameraDetailActivity immediately while preheat
+        // runs in the background.
+        if (mainActivity != null && !token.isNullOrEmpty()) {
+            lifecycleScope.launch {
+                mainActivity.container.getRepository().preheatCamera(token, camera.id)
+            }
+        }
         val json = NetworkFactory.json.encodeToString(Camera.serializer(), camera)
         val intent = Intent(ctx, CameraDetailActivity::class.java).apply {
             putExtra(CameraDetailActivity.EXTRA_CAMERA_JSON, json)

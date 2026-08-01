@@ -5,6 +5,7 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -32,7 +33,10 @@ class DevicesFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        adapter = DeviceAdapter { device -> showRevokeDialog(device) }
+        adapter = DeviceAdapter(
+            onRevokeClick = { device -> showRevokeDialog(device) },
+            onDeleteClick = { device -> showDeleteDialog(device) }
+        )
         binding.recyclerView.layoutManager = LinearLayoutManager(context)
         binding.recyclerView.adapter = adapter
 
@@ -211,6 +215,33 @@ class DevicesFragment : Fragment() {
         lifecycleScope.launch {
             try {
                 mainActivity.container.getRepository().revokeDevice(token, device.id)
+                loadDevices()
+                refreshSystemStatus()
+            } catch (e: Exception) {
+                // ignore
+            }
+        }
+    }
+
+    private fun showDeleteDialog(device: Device) {
+        val context = context ?: return
+        val dialog = AlertDialog.Builder(context)
+            .setTitle(R.string.confirm_delete_title)
+            .setMessage(R.string.confirm_delete_message)
+            .setPositiveButton(R.string.btn_delete) { _, _ -> deleteDevice(device) }
+            .setNegativeButton(R.string.btn_cancel, null)
+            .show()
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            ?.setTextColor(ContextCompat.getColor(context, R.color.error))
+    }
+
+    private fun deleteDevice(device: Device) {
+        val mainActivity = activity as? MainActivity ?: return
+        val token = mainActivity.container.prefsManager.token ?: return
+
+        lifecycleScope.launch {
+            try {
+                mainActivity.container.getRepository().deleteDevice(token, device.id)
                 loadDevices()
                 refreshSystemStatus()
             } catch (e: Exception) {

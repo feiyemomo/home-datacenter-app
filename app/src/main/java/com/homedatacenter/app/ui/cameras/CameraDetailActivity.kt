@@ -35,6 +35,7 @@ import com.homedatacenter.app.util.ExoPlayerRendererFactory
 import com.homedatacenter.app.util.PlayerFullscreenHelper
 import com.homedatacenter.app.util.WebRtcClient
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.webrtc.PeerConnection
@@ -158,6 +159,16 @@ class CameraDetailActivity : AppCompatActivity() {
         // 5-15s while WebRTC ICE gathering + DTLS handshake completes.
         // The preview is hidden once any video surface becomes visible.
         loadPreviewFrame()
+
+        // Fire-and-forget preheat in parallel with loadPreviewFrame:
+        // warm up the backend's RTSP/go2rtc connection so the WebRTC
+        // offer / MP4 stream / preview frame request that follows
+        // doesn't wait for the cold-start RTSP handshake. Runs in a
+        // separate coroutine and never blocks the UI.
+        lifecycleScope.launch {
+            val token = container.prefsManager.token ?: return@launch
+            container.getRepository().preheatCamera(token, camera!!.id)
+        }
 
         // v1.6.0: if launched with an initial timestamp (alert click
         // "查看录像"), auto-open the RecordingsDialog at that moment
@@ -300,16 +311,12 @@ class CameraDetailActivity : AppCompatActivity() {
             binding.btnPtzRight to "right",
             binding.btnPtzStop to "stop",
         )
+        // v1.6.40: PTZ controls are available to all users — the
+        // server-side endpoint enforces its own authorization. The
+        // buttons are always visible when the camera supports PTZ.
         buttons.forEach { (btn, command) ->
-            // PTZ is admin-gated on the server; hide for non-admin to
-            // avoid confusion. Server remains authoritative.
-            btn.visibility = if (isAdmin) View.VISIBLE else View.GONE
+            btn.visibility = View.VISIBLE
             btn.setOnClickListener { sendPtz(command) }
-        }
-        if (!isAdmin) {
-            binding.tvPtzUnsupported.visibility = View.VISIBLE
-            binding.tvPtzUnsupported.text = getString(R.string.camera_admin_required)
-            binding.ptzGrid.visibility = View.GONE
         }
 
         binding.seekPtzSpeed.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
@@ -337,6 +344,38 @@ class CameraDetailActivity : AppCompatActivity() {
 
     private fun setupSettings() {
         val cam = camera ?: return
+
+        // The share button is visible to admins OR the camera's owner.
+        // Admin-only controls (audio / recording / codec / delete) live
+        // in groupAdminControls and stay hidden for non-admin owners.
+        val isOwner = cam.ownerId == container.prefsManager.userId
+        val canShare = isAdmin || isOwner
+
+        // Non-admin non-owner: hide the entire settings section.
+        // PTZ controls above remain visible — they have their own
+        // admin-gated visibility in setupPtz() and the server still
+        // enforces authorization.
+        if (!canShare) {
+            binding.tvSettingsSectionTitle.visibility = View.GONE
+            binding.cardSettings.visibility = View.GONE
+            return
+        }
+
+        // Share button — admin or owner. Opens ShareCameraDialog which
+        // lists current shares and provides add/revoke actions.
+        binding.btnShareCamera.visibility = View.VISIBLE
+        binding.btnShareCamera.setOnClickListener {
+            ShareCameraDialog(this, container, cam.id).show()
+        }
+
+        // Admin-only controls: audio / recording / codec / delete.
+        // Hidden entirely for non-admin owners (they only see the
+        // share button above).
+        if (!isAdmin) {
+            binding.groupAdminControls.visibility = View.GONE
+            return
+        }
+        binding.groupAdminControls.visibility = View.VISIBLE
 
         // Audio switch — initial state from camera capabilities.
         binding.switchAudio.isChecked = cam.hasAudio
@@ -369,11 +408,11 @@ class CameraDetailActivity : AppCompatActivity() {
         }
 
         // Codec button — only H264 is supported via this API.
-        binding.btnCodecH264.visibility = if (isAdmin) View.VISIBLE else View.GONE
+        binding.btnCodecH264.visibility = View.VISIBLE
         binding.btnCodecH264.setOnClickListener { updateCodec() }
 
         // Delete camera — admin only.
-        binding.btnDelete.visibility = if (isAdmin) View.VISIBLE else View.GONE
+        binding.btnDelete.visibility = View.VISIBLE
         binding.btnDelete.setOnClickListener { confirmDeleteCamera() }
     }
 
@@ -750,36 +789,52 @@ class CameraDetailActivity : AppCompatActivity() {
      */
     private fun loadPreviewFrame() {
         val cam = camera ?: return
+        // v1.8.14: skip preview frame when camera is offline to avoid
+        // unnecessary network requests that will fail anyway.
+        if (!cam.isOnline) return
         val container = (application as HomeCenterApp).container
         val baseUrl = container.getApiBaseUrl().ifBlank { return }
         val token = container.prefsManager.token ?: return
-        val url = "${baseUrl.trimEnd('/')}/api/v1/cameras/${cam.id}/frame"
+        // Task 10: request a downscaled JPEG (quality=30, width=640) so
+        // the preview frame loads fast on slow Cloudflare Tunnel links;
+        // the full-resolution frame is never needed for a placeholder.
+        val url = "${baseUrl.trimEnd('/')}/api/v1/cameras/${cam.id}/frame?quality=30&width=640"
 
         lifecycleScope.launch {
-            try {
-                val bitmap = withContext(Dispatchers.IO) {
-                    // v1.6.16: use the shared OkHttpClient so this request
-                    // reuses the connection pool/interceptors that
-                    // BaseUrlResolver.warmupConnection already warmed.
-                    val request = okhttp3.Request.Builder()
-                        .url(url)
-                        .addHeader("Authorization", "Bearer $token")
-                        .build()
-                    container.okHttpClient.newCall(request).execute().use { response ->
-                        if (!response.isSuccessful) return@use null
-                        response.body?.bytes()?.let { bytes ->
-                            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            // v1.7.3: retry up to 2 times on failure to cover go2rtc cold start
+            // (ffmpeg producer connecting to RTSP source). Each retry waits 3s.
+            var bitmap: android.graphics.Bitmap? = null
+            for (attempt in 0..2) {
+                if (isFinishing) return@launch
+                try {
+                    bitmap = withContext(Dispatchers.IO) {
+                        // v1.6.16: use the shared OkHttpClient so this request
+                        // reuses the connection pool/interceptors that
+                        // BaseUrlResolver.warmupConnection already warmed.
+                        val request = okhttp3.Request.Builder()
+                            .url(url)
+                            .header("User-Agent", NetworkFactory.USER_AGENT)
+                            .addHeader("Authorization", "Bearer $token")
+                            .build()
+                        container.okHttpClient.newCall(request).execute().use { response ->
+                            if (!response.isSuccessful) return@use null
+                            response.body?.bytes()?.let { bytes ->
+                                android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                            }
                         }
                     }
+                    if (bitmap != null) break
+                } catch (e: Exception) {
+                    // Preview frame is best-effort; log and retry if attempts remain.
+                    android.util.Log.w(TAG, "Preview frame fetch attempt ${attempt + 1} failed: ${e.message}")
                 }
-                if (bitmap != null && !isFinishing) {
-                    binding.ivPreviewFrame.setImageBitmap(bitmap)
-                    binding.ivPreviewFrame.visibility = View.VISIBLE
+                if (attempt < 2 && bitmap == null) {
+                    delay(3000)
                 }
-            } catch (e: Exception) {
-                // Preview frame is best-effort; if it fails, the user
-                // just sees the loading spinner as before.
-                android.util.Log.w(TAG, "Preview frame fetch failed: ${e.message}")
+            }
+            if (bitmap != null && !isFinishing) {
+                binding.ivPreviewFrame.setImageBitmap(bitmap)
+                binding.ivPreviewFrame.visibility = View.VISIBLE
             }
         }
     }
@@ -800,6 +855,21 @@ class CameraDetailActivity : AppCompatActivity() {
         triedWebRtc = false
         triedMp4 = false
         triedHls = false
+
+        // v1.8.14: if camera is offline, show error immediately
+        // instead of attempting WebRTC/MP4/HLS which will all fail
+        // and waste network requests. The user sees a clear message
+        // that the camera is unavailable.
+        if (!cam.isOnline) {
+            binding.tvVideoError.visibility = View.VISIBLE
+            binding.progressVideo.visibility = View.GONE
+            binding.playerView.visibility = View.VISIBLE
+            binding.surfaceRenderer.visibility = View.GONE
+            binding.webRtcControls.visibility = View.GONE
+            binding.btnWebRtcFullscreen.visibility = View.GONE
+            updateStreamStrategy(null)
+            return
+        }
 
         // v1.5.9: show the loading badge before any transport is
         // selected. The badge is updated to the actual transport
@@ -834,7 +904,7 @@ class CameraDetailActivity : AppCompatActivity() {
             return
         }
 
-        // Offline camera OR WebRTC factory init failed: skip WebRTC,
+        // WebRTC factory init failed: skip WebRTC,
         // let startMp4Playback pick the right ExoPlayer transport
         // (HLS on remote, MP4 on LAN).
         startMp4Playback(cam)
@@ -858,7 +928,15 @@ class CameraDetailActivity : AppCompatActivity() {
         // across all CameraDetailActivity instances so opening a
         // second camera doesn't pay the 300-500ms factory init
         // cost again.
-        val client = container.getOrInitWebRtcClient() ?: return false
+        val client = container.getOrInitWebRtcClient() ?: run {
+            // v1.6.41: log the silent failure so the preload path is
+            // diagnosable. Previously this returned false with no log,
+            // making it hard to tell why precomputeSdpOffer was
+            // skipped (webRtcClient stays null -> precompute early-
+            // returns at `val client = webRtcClient ?: return`).
+            android.util.Log.w(TAG, "ensureWebRtcClient: getOrInitWebRtcClient returned null (baseUrl/token unavailable or factory init failed)")
+            return false
+        }
         webRtcClient = client
         return try {
             // Init the SurfaceViewRenderer with the WebRTC client's
@@ -897,21 +975,38 @@ class CameraDetailActivity : AppCompatActivity() {
         val client = webRtcClient ?: return
         val token = container.prefsManager.token ?: return
 
+        // v1.6.41: entry log at Log.i so the preload trigger is
+        // visible in logcat without a debug filter. Confirms the
+        // onCreate -> setupVideo -> precomputeSdpOffer chain fired.
+        android.util.Log.i(TAG, "precomputeSdpOffer: entry, cameraId=${cam.id}")
+
         lifecycleScope.launch {
             try {
-                // Use cached ICE config if available (warmed by
-                // DashboardFragment / prefetchIceConfig). Fall back
-                // to a network fetch if the cache is cold.
-                val iceConfig = cachedIceConfig
-                    ?: container.getIceConfig()
-                    ?: try {
-                        container.getOrFetchIceConfig(token).also { cachedIceConfig = it }
-                    } catch (e: Exception) {
-                        android.util.Log.w(TAG, "precomputeSdpOffer: ICE config fetch failed: ${e.message}")
-                        null
-                    }
-
+                // v1.6.41: check isDirectPath FIRST. On LAN/IPv6
+                // direct, iceServers is always empty (host candidates
+                // suffice), so we skip the network ICE config fetch
+                // entirely — on cold start this saves a 1.4s+ Tunnel
+                // round-trip that would needlessly delay prepareOffer.
+                // isDirectPath() is a pure field comparison against
+                // `resolved` (no network probe), so it never blocks.
                 val isDirectPath = container.baseUrlResolver.isDirectPath()
+
+                // Only fetch ICE config on non-direct (Tunnel) paths.
+                // On direct paths the fetch is unnecessary work since
+                // iceServers is forced to emptyList() below.
+                val iceConfig = if (isDirectPath) {
+                    cachedIceConfig ?: container.getIceConfig()
+                } else {
+                    cachedIceConfig
+                        ?: container.getIceConfig()
+                        ?: try {
+                            container.getOrFetchIceConfig(token).also { cachedIceConfig = it }
+                        } catch (e: Exception) {
+                            android.util.Log.w(TAG, "precomputeSdpOffer: ICE config fetch failed: ${e.message}")
+                            null
+                        }
+                }
+
                 val iceServers = if (isDirectPath) {
                     emptyList()
                 } else {
@@ -924,7 +1019,7 @@ class CameraDetailActivity : AppCompatActivity() {
                 }
 
                 client.prepareOffer(cam.id, iceServers, isDirectPath)
-                android.util.Log.d(TAG, "precomputeSdpOffer: started for cameraId=${cam.id} (directPath=$isDirectPath)")
+                android.util.Log.i(TAG, "precomputeSdpOffer: started for cameraId=${cam.id} (directPath=$isDirectPath)")
             } catch (e: Exception) {
                 android.util.Log.w(TAG, "precomputeSdpOffer failed: ${e.message}")
             }
@@ -1149,7 +1244,7 @@ class CameraDetailActivity : AppCompatActivity() {
             // stream establish before ExoPlayer gives up.
             setConnectTimeoutMs(30_000)
             setReadTimeoutMs(60_000)
-            setUserAgent("HomeDatacenter/1.5")
+            setUserAgent(NetworkFactory.USER_AGENT)
             if (!token.isNullOrEmpty()) {
                 setDefaultRequestProperties(
                     mapOf(

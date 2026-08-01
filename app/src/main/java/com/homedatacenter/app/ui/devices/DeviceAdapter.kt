@@ -1,6 +1,7 @@
 package com.homedatacenter.app.ui.devices
 
 import android.view.LayoutInflater
+import android.view.View
 import android.view.ViewGroup
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
@@ -26,7 +27,8 @@ import com.homedatacenter.app.util.AnimationHelper
  * [submitList] + a fresh [onlineDeviceIds] on each render is enough.
  */
 class DeviceAdapter(
-    private val onRevokeClick: (Device) -> Unit
+    private val onRevokeClick: (Device) -> Unit,
+    private val onDeleteClick: (Device) -> Unit
 ) : ListAdapter<Device, DeviceAdapter.DeviceViewHolder>(DiffCallback()) {
 
     /** Snapshot of online device ids from SystemStatus. Empty when unknown. */
@@ -85,6 +87,10 @@ class DeviceAdapter(
             binding.btnRevoke.isEnabled = !device.isRevoked
             binding.btnRevoke.alpha = if (device.isRevoked) 0.5f else 1f
             binding.btnRevoke.setOnClickListener { onRevokeClick(device) }
+
+            // Hard-delete is only available for already-revoked devices.
+            binding.btnDelete.visibility = if (device.isRevoked) View.VISIBLE else View.GONE
+            binding.btnDelete.setOnClickListener { onDeleteClick(device) }
         }
     }
 

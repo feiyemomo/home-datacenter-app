@@ -1,5 +1,6 @@
 package com.homedatacenter.app.ui.logs
 
+import android.content.res.ColorStateList
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -11,6 +12,7 @@ import com.homedatacenter.app.R
 import com.homedatacenter.app.data.model.Camera
 import com.homedatacenter.app.data.model.SystemLog
 import com.homedatacenter.app.data.model.SystemLogLevel
+import com.homedatacenter.app.databinding.ItemLogSectionHeaderBinding
 import com.homedatacenter.app.databinding.ItemServiceLogBinding
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -18,70 +20,85 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Adapter for system service log rows. Maps each [SystemLog] event
- * type to an icon (device / camera / user) and renders the message
- * + formatted timestamp.
+ * v1.6.39: Adapter for the service logs list with two-section
+ * collapsible display.
  *
- * v1.6.36: the icon is tinted by [SystemLog.level] so urgent events
- * stand out at a glance:
- *   - critical (camera/device offline) -> red icon
- *   - normal   (user login, online)    -> primary (orange) icon
- *   - info     (status_changed)        -> grey icon (text_secondary)
+ * Logs are split into:
+ *   - "待处理日志" (critical/pending level): always visible
+ *   - "所有日志" (all levels including critical): collapsed by default,
+ *     expandable via header tap. Critical logs are highlighted
+ *     with a red icon tint.
  *
- * v1.6.37: for camera-related logs, a subtitle shows the camera's
- * CURRENT status (在线/离线) fetched from [cameraMap]. This lets the
- * user see at a glance whether a camera that went offline (critical
- * log) has recovered — without navigating to the Cameras tab. The
- * subtitle is updated when [updateCameraMap] is called (e.g. when
- * the fragment refreshes the camera list after a WS event).
+ * v1.8.14: Added "核查并删除" (verify and delete) action on
+ * critical log entries. The user taps the button to confirm
+ * the offline event has been handled, then the entry is deleted.
+ * Uses a callback [onVerifyDelete] to trigger the API call from
+ * the fragment.
  *
- * The adapter is a [ListAdapter] so it diffs by log id and only
- * rebinds changed rows — important for the WebSocket live-prepend
- * path, which inserts a single new item at the top while the rest
- * of the list stays unchanged.
+ * Uses a sealed [LogListItem] to represent both section headers
+ * and individual log entries in the same RecyclerView.
  */
-class ServiceLogAdapter :
-    ListAdapter<SystemLog, ServiceLogAdapter.LogViewHolder>(DiffCallback()) {
+class ServiceLogAdapter(
+    private val onHeaderClick: (LogListItem.Section) -> Unit,
+    private val onVerifyDelete: ((SystemLog) -> Unit)? = null,
+) : ListAdapter<LogListItem, RecyclerView.ViewHolder>(DiffCallback()) {
 
-    /**
-     * v1.6.37: live camera snapshot keyed by camera id. Updated by
-     * [updateCameraMap] from the fragment after each /api/v1/cameras
-     * fetch. Read by [LogViewHolder.bind] to render the "当前状态："
-     * subtitle on camera-related log rows.
-     *
-     * @Volatile so the background fetch thread can write while the
-     * UI thread reads in bind() without synchronization — a stale
-     * read just shows the previous status for one frame.
-     */
     @Volatile
     private var cameraMap: Map<Long, Camera> = emptyMap()
 
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): LogViewHolder {
-        val b = ItemServiceLogBinding.inflate(
-            LayoutInflater.from(parent.context), parent, false)
-        return LogViewHolder(b)
+    override fun getItemViewType(position: Int): Int = when (getItem(position)) {
+        is LogListItem.Header -> TYPE_HEADER
+        is LogListItem.LogEntry -> TYPE_LOG
     }
 
-    override fun onBindViewHolder(holder: LogViewHolder, position: Int) {
-        holder.bind(getItem(position))
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
+        val inflater = LayoutInflater.from(parent.context)
+        return when (viewType) {
+            TYPE_HEADER -> HeaderViewHolder(
+                ItemLogSectionHeaderBinding.inflate(inflater, parent, false)
+            )
+            else -> LogViewHolder(
+                ItemServiceLogBinding.inflate(inflater, parent, false)
+            )
+        }
     }
 
-    /**
-     * Replace the camera snapshot and re-bind any visible rows that
-     * show a camera-status subtitle so the displayed status is fresh.
-     * Called by the fragment after a successful /api/v1/cameras fetch.
-     *
-     * Cheap: notifyItemRangeChanged only touches visible rows, not
-     * the whole list. The diff payload is unused because the log
-     * row itself hasn't changed — only the camera status subtitle.
-     */
+    override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
+        when (val item = getItem(position)) {
+            is LogListItem.Header -> (holder as HeaderViewHolder).bind(item)
+            is LogListItem.LogEntry -> (holder as LogViewHolder).bind(item.log)
+        }
+    }
+
     fun updateCameraMap(map: Map<Long, Camera>) {
         cameraMap = map
-        // Re-bind visible rows so the subtitle picks up the new
-        // status. Without this, a camera that just came back online
-        // would still show "当前状态：离线" until the user scrolls.
         notifyItemRangeChanged(0, itemCount)
     }
+
+    // --- Header ViewHolder ---
+
+    inner class HeaderViewHolder(
+        private val binding: ItemLogSectionHeaderBinding,
+    ) : RecyclerView.ViewHolder(binding.root) {
+
+        init {
+            binding.root.setOnClickListener {
+                val item = getItem(bindingAdapterPosition)
+                if (item is LogListItem.Header) {
+                    onHeaderClick(item.section)
+                }
+            }
+        }
+
+        fun bind(header: LogListItem.Header) {
+            binding.tvSectionTitle.text = header.title
+            binding.tvSectionCount.text = "${header.count} 条"
+            // Rotate arrow: 0° = expanded, -90° = collapsed
+            binding.ivExpandArrow.rotation = if (header.collapsed) -90f else 0f
+        }
+    }
+
+    // --- Log ViewHolder (unchanged from v1.6.37) ---
 
     inner class LogViewHolder(private val binding: ItemServiceLogBinding) :
         RecyclerView.ViewHolder(binding.root) {
@@ -90,33 +107,22 @@ class ServiceLogAdapter :
 
         fun bind(log: SystemLog) {
             binding.ivIcon.setImageResource(iconForEventType(log.event_type))
-            binding.ivIcon.imageTintList = android.content.res.ColorStateList.valueOf(
-                colorForLevel(log.level)
-            )
+            binding.ivIcon.imageTintList = ColorStateList.valueOf(colorForLevel(log.level))
             binding.tvMessage.text = log.message.ifBlank { log.event_type }
             binding.tvTime.text = timeFormat.format(Date(log.ts * 1000L))
             bindCameraStatus(log)
+
+            // v1.8.14: show "核查并删除" button for critical logs
+            // (camera/device offline). The user reviews the log and
+            // taps to confirm the issue has been handled, then the
+            // entry is deleted.
+            val isCritical = log.level == SystemLogLevel.CRITICAL
+            binding.btnVerifyDelete.visibility = if (isCritical) View.VISIBLE else View.GONE
+            binding.btnVerifyDelete.setOnClickListener {
+                onVerifyDelete?.invoke(log)
+            }
         }
 
-        /**
-         * v1.6.37: For camera-related logs, resolve the camera_id
-         * from the event payload and show the camera's CURRENT
-         * status as a subtitle. This answers the user's question
-         * "this camera went offline 10 minutes ago — is it back now?"
-         * without requiring a tab switch.
-         *
-         * Shown for ALL camera.* logs (not just critical) because the
-         * current status is useful context for online/status_changed
-         * events too. Hidden when:
-         *   - the log isn't camera-related
-         *   - the payload can't be parsed (no camera_id)
-         *   - the camera isn't in [cameraMap] (deleted camera, or
-         *     the fragment hasn't fetched the list yet)
-         *
-         * The subtitle text is "当前状态：在线" / "当前状态：离线"
-         * with a colored status word so the user can scan the list
-         * visually — green for online, red for offline.
-         */
         private fun bindCameraStatus(log: SystemLog) {
             val tvStatus = binding.tvCameraStatus
             if (!log.event_type.startsWith("camera.")) {
@@ -130,10 +136,6 @@ class ServiceLogAdapter :
             }
             val camera = cameraMap[cameraId]
             if (camera == null) {
-                // Camera may have been deleted, or the fragment hasn't
-                // fetched the list yet. Hide rather than show "unknown"
-                // to avoid clutter — the log message itself already has
-                // the camera name.
                 tvStatus.visibility = View.GONE
                 return
             }
@@ -141,55 +143,27 @@ class ServiceLogAdapter :
             val isOnline = camera.isOnline
             val statusText = if (isOnline) "在线" else "离线"
             val statusColor = ContextCompat.getColor(
-                ctx,
-                if (isOnline) R.color.online else R.color.error
+                ctx, if (isOnline) R.color.online else R.color.error
             )
-            // Build "当前状态：在线" with the status word colored.
-            // Using text + span would be cleaner, but a single
-            // TextView with a colored prefix is simpler and the row
-            // is already compact enough.
             tvStatus.text = "当前状态：$statusText"
             tvStatus.setTextColor(statusColor)
             tvStatus.visibility = View.VISIBLE
         }
 
-        /**
-         * Parse camera_id from the raw event payload JSON. The
-         * backend's CameraStatusPayload JSON has shape:
-         *   {"camera_id": 3, "status": "offline", "host": "...", "ts": ...}
-         * Returns null if the payload isn't valid JSON or lacks
-         * the camera_id field.
-         */
         private fun parseCameraId(payload: String): Long? {
             if (payload.isBlank()) return null
             return try {
-                JSONObject(payload).optLong("camera_id", -1L)
-                    .takeIf { it > 0 }
-            } catch (_: Exception) {
-                null
-            }
+                JSONObject(payload).optLong("camera_id", -1L).takeIf { it > 0 }
+            } catch (_: Exception) { null }
         }
 
-        /**
-         * Pick an icon based on the log's event_type. The backend
-         * groups events by `category.event` (e.g. `device.status`,
-         * `camera.online`, `user.login`). Falls back to the history
-         * icon for unknown types.
-         */
-        private fun iconForEventType(eventType: String): Int {
-            return when {
-                eventType.startsWith("device.") -> R.drawable.ic_devices
-                eventType.startsWith("camera.") -> R.drawable.ic_camera
-                eventType.startsWith("user.") -> R.drawable.ic_admin_users
-                else -> R.drawable.ic_history
-            }
+        private fun iconForEventType(eventType: String): Int = when {
+            eventType.startsWith("device.") -> R.drawable.ic_devices
+            eventType.startsWith("camera.") -> R.drawable.ic_camera
+            eventType.startsWith("user.") -> R.drawable.ic_admin_users
+            else -> R.drawable.ic_history
         }
 
-        /**
-         * v1.6.36: tint color for the icon by severity level.
-         * critical -> red (error), normal -> primary (orange),
-         * info / unknown -> text_secondary (grey).
-         */
         private fun colorForLevel(level: String): Int {
             val ctx = binding.root.context
             return when (level) {
@@ -200,11 +174,39 @@ class ServiceLogAdapter :
         }
     }
 
-    class DiffCallback : DiffUtil.ItemCallback<SystemLog>() {
-        override fun areItemsTheSame(oldItem: SystemLog, newItem: SystemLog) =
-            oldItem.id == newItem.id
+    class DiffCallback : DiffUtil.ItemCallback<LogListItem>() {
+        override fun areItemsTheSame(oldItem: LogListItem, newItem: LogListItem): Boolean =
+            when {
+                oldItem is LogListItem.Header && newItem is LogListItem.Header ->
+                    oldItem.section == newItem.section
+                oldItem is LogListItem.LogEntry && newItem is LogListItem.LogEntry ->
+                    oldItem.log.id == newItem.log.id
+                else -> false
+            }
 
-        override fun areContentsTheSame(oldItem: SystemLog, newItem: SystemLog) =
+        override fun areContentsTheSame(oldItem: LogListItem, newItem: LogListItem): Boolean =
             oldItem == newItem
     }
+
+    companion object {
+        private const val TYPE_HEADER = 0
+        private const val TYPE_LOG = 1
+    }
+}
+
+/**
+ * v1.6.39: Sealed class representing items in the service logs list.
+ * Either a section header or an individual log entry.
+ */
+sealed class LogListItem {
+    enum class Section { IMPORTANT, OTHER }
+
+    data class Header(
+        val section: Section,
+        val title: String,
+        val count: Int,
+        val collapsed: Boolean,
+    ) : LogListItem()
+
+    data class LogEntry(val log: SystemLog) : LogListItem()
 }

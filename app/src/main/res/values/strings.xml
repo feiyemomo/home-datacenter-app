@@ -56,6 +56,9 @@
     <string name="btn_revoke">吊销</string>
     <string name="confirm_revoke_title">确认吊销</string>
     <string name="confirm_revoke_message">确定要吊销此设备吗？吊销后该设备将无法访问系统。</string>
+    <string name="btn_delete">删除</string>
+    <string name="confirm_delete_title">确认删除</string>
+    <string name="confirm_delete_message">此操作不可恢复，确定删除该设备？</string>
     <string name="btn_cancel">取消</string>
     <string name="btn_confirm">确定</string>
 
@@ -189,6 +192,13 @@
     <string name="camera_delete_confirm">确定要删除此摄像头吗？该操作会从服务器移除并停止推流。</string>
     <string name="camera_admin_required">此操作需要管理员权限</string>
     <string name="camera_register_title">注册摄像头</string>
+
+    <!-- Camera sharing (admin or camera owner) -->
+    <string name="camera_share_title">共享摄像头</string>
+    <string name="camera_share_subtitle">管理可访问此摄像头的用户</string>
+    <string name="camera_share_empty">暂无共享用户</string>
+    <string name="camera_share_add">添加共享</string>
+    <string name="camera_share_revoke">取消共享</string>
 
     <!-- Users management (admin) -->
     <string name="users_title">用户管理</string>

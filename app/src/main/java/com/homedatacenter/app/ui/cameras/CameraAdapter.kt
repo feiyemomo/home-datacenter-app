@@ -134,6 +134,15 @@ class CameraAdapter(
         }
 
         private fun loadThumbnail(camera: Camera) {
+            // v1.8.x: skip loading for offline cameras — the HTTP
+            // request will fail anyway (go2rtc can't reach the camera),
+            // and the loading spinner would stay spinning until the
+            // connect timeout fires (~10s). Show "无预览" immediately.
+            if (!camera.isOnline) {
+                thumbnailLoading = false
+                thumbnailError = true
+                return
+            }
             val snapshotUrl = buildSnapshotUrl(camera.id)
             if (snapshotUrl.isEmpty()) {
                 thumbnailLoading = false
@@ -199,7 +208,12 @@ class CameraAdapter(
 
         private fun buildSnapshotUrl(cameraId: Long): String {
             if (baseUrl.isNullOrBlank()) return ""
-            return "${baseUrl.trimEnd('/')}/api/v1/cameras/$cameraId/frame"
+            // Request a downscaled, low-quality JPEG for the list
+            // thumbnail — quality=30 & width=480 is much smaller than
+            // the full-resolution frame, so it loads fast on slow
+            // Cloudflare Tunnel links. The detail page uses its own
+            // larger preview frame (width=640).
+            return "${baseUrl.trimEnd('/')}/api/v1/cameras/$cameraId/frame?quality=30&width=480"
         }
 
         fun recycle() {

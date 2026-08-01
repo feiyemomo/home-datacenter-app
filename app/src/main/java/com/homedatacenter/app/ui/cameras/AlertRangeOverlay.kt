@@ -40,15 +40,18 @@ class AlertRangeOverlay @JvmOverloads constructor(
     defStyleAttr: Int = 0,
 ) : View(context, attrs, defStyleAttr) {
 
-    // Legacy paints — kept for backward compat with callers that
-    // use the original [setAlertRanges] (no tier info).
+    // v1.6.39: all overlay paints use 60% alpha so the SeekBar's
+    // progress track and thumb remain visible underneath the colored
+    // annotations, instead of being fully obscured.
     private val alertPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#E53935") // Material Red 600
+        alpha = 153
         strokeWidth = 0f
         isDither = true
     }
     private val aiAlertPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#FF5252")
+        alpha = 153
         strokeWidth = 0f
         isDither = true
     }
@@ -61,26 +64,25 @@ class AlertRangeOverlay @JvmOverloads constructor(
     // v1.6.5 rev7: per-tier paints matching the chip backgrounds.
     private val lowTierPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#4DB6AC") // teal
+        alpha = 153
         strokeWidth = 0f
         isDither = true
     }
     private val midTierPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#FFB300") // amber
+        alpha = 153
         strokeWidth = 0f
         isDither = true
     }
     private val highTierPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        // v1.6.8: merged with midTierPaint — both MID and HIGH render
-        // as amber/yellow per user request "黄，橙色chip统一合并为黄色".
-        // The HIGH tier is still tracked internally so backend merging
-        // logic (curTier upgrade rules) keeps working, but visually
-        // MID+HIGH are a single yellow tier.
         color = Color.parseColor("#FFB300") // amber (same as midTierPaint)
+        alpha = 153
         strokeWidth = 0f
         isDither = true
     }
     private val alertTierPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#EF5350") // red
+        alpha = 153
         strokeWidth = 0f
         isDither = true
     }

@@ -17,6 +17,7 @@ import com.google.android.exoplayer2.source.hls.HlsMediaSource
 import com.google.android.exoplayer2.ui.StyledPlayerView
 import com.google.android.exoplayer2.upstream.DefaultHttpDataSource
 import com.homedatacenter.app.R
+import com.homedatacenter.app.data.api.NetworkFactory
 
 class ExoPlayerDialogFragment : DialogFragment() {
 
@@ -83,6 +84,7 @@ class ExoPlayerDialogFragment : DialogFragment() {
         android.util.Log.d("ExoPlayer", "Initializing player for: $url")
 
         val dataSourceFactory = DefaultHttpDataSource.Factory().apply {
+            setUserAgent(NetworkFactory.USER_AGENT)
             setConnectTimeoutMs(10000)
             setReadTimeoutMs(30000)
             setAllowCrossProtocolRedirects(true)

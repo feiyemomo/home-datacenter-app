@@ -13,6 +13,7 @@ import com.homedatacenter.app.R
 import com.homedatacenter.app.data.api.NetworkFactory
 import com.homedatacenter.app.data.model.SystemLog
 import com.homedatacenter.app.data.model.SystemLogListData
+import com.homedatacenter.app.data.model.SystemLogLevel
 import com.homedatacenter.app.data.model.WsMessage
 import com.homedatacenter.app.data.model.WsMessageType
 import com.homedatacenter.app.data.ws.HomeCenterWebSocket
@@ -22,25 +23,17 @@ import com.homedatacenter.app.ui.main.MainActivity
 import kotlinx.coroutines.launch
 
 /**
- * "服务日志" tab — replaces the old "报警" tab in the bottom nav.
+ * "服务日志" tab — v1.6.39 redesign with two-section collapsible display.
  *
- * Displays system event logs (device online/offline, user login /
- * logout, camera status changes) fetched from
- * `GET /api/v1/system/logs` with offset-based pagination, and
- * live-prepends new entries pushed over the WebSocket `system.log`
- * topic.
+ * Logs are split by severity:
+ *   - "待处理日志" (critical/pending): camera/device offline — always visible
+ *   - "所有日志" (all): normal + info + critical — collapsed by default,
+ *     expandable via header tap. Critical logs are highlighted with
+ *     a red icon tint within this section.
  *
- * v1.6.37: also fetches the camera list (`GET /api/v1/cameras`) and
- * feeds it to [ServiceLogAdapter.updateCameraMap] so camera-related
- * log rows show the camera's CURRENT status as a subtitle. The
- * camera list is refreshed:
- *   - on initial load
- *   - on pull-to-refresh
- *   - after a WS camera.* event arrives (so the subtitle updates in
- *     real time when a camera recovers)
- *
- * Alert viewing is preserved elsewhere — the Dashboard's "最近报警"
- * card and the CameraDetail "报警记录" dialog still surface alerts.
+ * Data is fetched from `GET /api/v1/system/logs` with offset-based
+ * pagination, and live-prepended via the WebSocket `system.log` topic.
+ * Incoming logs are routed to the appropriate section based on level.
  */
 class ServiceLogsFragment : Fragment() {
 
@@ -53,6 +46,11 @@ class ServiceLogsFragment : Fragment() {
     private var totalKnown = Long.MAX_VALUE
     private var isLoading = false
     private var hasMore = true
+
+    // v1.6.39: two separate lists for the two sections.
+    private val criticalLogs = mutableListOf<SystemLog>()
+    private val otherLogs = mutableListOf<SystemLog>()
+    private var otherCollapsed = true
 
     private var logsWebSocket: HomeCenterWebSocket? = null
 
@@ -68,7 +66,19 @@ class ServiceLogsFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        adapter = ServiceLogAdapter()
+        adapter = ServiceLogAdapter(
+            onHeaderClick = { section ->
+                if (section == LogListItem.Section.OTHER) {
+                    otherCollapsed = !otherCollapsed
+                    rebuildDisplayList()
+                }
+            },
+            // v1.8.14: handle "核查并删除" — delete the log entry
+            // after the user has verified the offline issue.
+            onVerifyDelete = { log ->
+                deleteLogEntry(log)
+            },
+        )
         val layoutManager = LinearLayoutManager(context)
         binding.recyclerView.layoutManager = layoutManager
         binding.recyclerView.adapter = adapter
@@ -89,9 +99,6 @@ class ServiceLogsFragment : Fragment() {
 
     override fun onHiddenChanged(hidden: Boolean) {
         super.onHiddenChanged(hidden)
-        // Reconnect the WebSocket when the tab becomes visible so
-        // live prepend resumes after the user switches tabs. Matches
-        // DashboardFragment's onHiddenChanged pattern.
         if (!hidden && isAdded && _binding != null) {
             logsWebSocket?.connect()
         }
@@ -104,20 +111,17 @@ class ServiceLogsFragment : Fragment() {
 
     // --- Pagination ---
 
-    /** Pull-to-refresh: drop state and reload from offset 0. */
     private fun resetAndLoad() {
         currentOffset = 0
         totalKnown = Long.MAX_VALUE
         hasMore = true
-        adapter.submitList(emptyList())
+        criticalLogs.clear()
+        otherLogs.clear()
+        rebuildDisplayList()
         loadNextPage()
-        // v1.6.37: refresh the camera snapshot on each reset so the
-        // status subtitles reflect the current fleet state, not a
-        // stale copy from the last tab visit.
         loadCameraSnapshot()
     }
 
-    /** Fetch one page (pageLimit rows starting at currentOffset). */
     private fun loadNextPage() {
         if (isLoading) return
         val mainActivity = activity as? MainActivity ?: return
@@ -137,13 +141,20 @@ class ServiceLogsFragment : Fragment() {
                 val logs = data?.logs ?: emptyList()
                 if (data != null) totalKnown = data.total
 
-                val merged = adapter.currentList + logs
-                adapter.submitList(merged)
+                // v1.6.39: route each log to its section by level.
+                for (log in logs) {
+                    if (log.level == SystemLogLevel.CRITICAL) {
+                        criticalLogs.add(log)
+                    } else {
+                        otherLogs.add(log)
+                    }
+                }
+                rebuildDisplayList()
 
                 currentOffset += logs.size
-                hasMore = logs.size >= pageLimit && merged.size < totalKnown
-                showEmpty(merged.isEmpty())
-                if (!hasMore && merged.isNotEmpty()) {
+                hasMore = logs.size >= pageLimit && (criticalLogs.size + otherLogs.size) < totalKnown
+                showEmpty(criticalLogs.isEmpty() && otherLogs.isEmpty())
+                if (!hasMore && (criticalLogs.isNotEmpty() || otherLogs.isNotEmpty())) {
                     Toast.makeText(requireContext(),
                         R.string.logs_all_loaded, Toast.LENGTH_SHORT).show()
                 }
@@ -158,27 +169,49 @@ class ServiceLogsFragment : Fragment() {
     }
 
     /**
-     * v1.6.37: fetch the current camera list and feed it to the
-     * adapter so camera-related log rows can show the camera's
-     * current status as a subtitle.
+     * v1.6.39: Build the display list from the two section lists,
+     * inserting section headers and respecting collapse state.
      *
-     * Best-effort: failures are silently ignored (the subtitle just
-     * stays hidden until the next successful fetch). Runs on the
-     * lifecycle scope so it's cancelled when the fragment is
-     * destroyed.
-     *
-     * Uses the repository's cached path with refreshCache=true so:
-     *   - the first call hits the network (we need fresh status)
-     *   - subsequent WS-triggered calls also hit the network (the
-     *     whole point is to get the NEW status after an event)
-     * The repository's cache is updated as a side effect, so the
-     * Cameras tab also benefits from this refresh.
-     *
-     * Called from:
-     *   - [resetAndLoad] (initial load + pull-to-refresh)
-     *   - [handleWsMessage] when a camera.* event arrives (so the
-     *     subtitle updates in real time)
+     * v1.8.x: renamed sections as requested:
+     *   - "重要日志" → "待处理日志" (pending/critical logs)
+     *   - "其他日志" → "所有日志" (all logs, including critical ones)
+     * Critical logs are shown in BOTH sections: "待处理日志" for quick
+     * action items, "所有日志" for full history browsing.
      */
+    private fun rebuildDisplayList() {
+        val items = mutableListOf<LogListItem>()
+
+        // Pending section (always visible) — shows only critical logs.
+        if (criticalLogs.isNotEmpty()) {
+            items.add(LogListItem.Header(
+                section = LogListItem.Section.IMPORTANT,
+                title = "待处理日志",
+                count = criticalLogs.size,
+                collapsed = false,
+            ))
+            criticalLogs.forEach { items.add(LogListItem.LogEntry(it)) }
+        }
+
+        // All logs section (collapsed by default) — shows ALL logs
+        // including critical ones, so the user can browse the full
+        // history. Critical logs are visually highlighted with the
+        // red icon tint (see colorForLevel in LogViewHolder).
+        val allLogs = (criticalLogs + otherLogs).sortedByDescending { it.ts }
+        if (allLogs.isNotEmpty()) {
+            items.add(LogListItem.Header(
+                section = LogListItem.Section.OTHER,
+                title = "所有日志",
+                count = allLogs.size,
+                collapsed = otherCollapsed,
+            ))
+            if (!otherCollapsed) {
+                allLogs.forEach { items.add(LogListItem.LogEntry(it)) }
+            }
+        }
+
+        adapter.submitList(items)
+    }
+
     private fun loadCameraSnapshot() {
         val mainActivity = activity as? MainActivity ?: return
         val token = mainActivity.container.prefsManager.token ?: return
@@ -189,7 +222,6 @@ class ServiceLogsFragment : Fragment() {
                 val map = cameras.associateBy { it.id }
                 adapter.updateCameraMap(map)
             } catch (_: Exception) {
-                // Best-effort — the subtitle stays hidden.
             }
         }
     }
@@ -197,6 +229,34 @@ class ServiceLogsFragment : Fragment() {
     private fun showEmpty(show: Boolean) {
         binding.tvEmpty.visibility = if (show) View.VISIBLE else View.GONE
         binding.recyclerView.visibility = if (show) View.GONE else View.VISIBLE
+    }
+
+    // v1.8.14: delete a log entry after the user has verified it.
+    // Removes the entry from the local list and calls the backend
+    // DELETE /api/v1/system/logs/:id endpoint.
+    private fun deleteLogEntry(log: SystemLog) {
+        val mainActivity = activity as? MainActivity ?: return
+        val token = mainActivity.container.prefsManager.token ?: return
+        lifecycleScope.launch {
+            try {
+                val auth = "Bearer $token"
+                val resp = mainActivity.container.getApi()
+                    .deleteSystemLog(auth, log.id)
+                if (resp.isSuccess) {
+                    criticalLogs.removeAll { it.id == log.id }
+                    otherLogs.removeAll { it.id == log.id }
+                    rebuildDisplayList()
+                    showEmpty(criticalLogs.isEmpty() && otherLogs.isEmpty())
+                    Toast.makeText(requireContext(), "已删除", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(requireContext(),
+                        "删除失败: ${resp.message}", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                Toast.makeText(requireContext(),
+                    "删除失败: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     // --- WebSocket live prepend ---
@@ -241,32 +301,28 @@ class ServiceLogsFragment : Fragment() {
             return
         }
 
-        // Dedupe by id — the backend may replay a log we already
-        // fetched via the REST endpoint.
-        val existing = adapter.currentList
-        if (existing.any { it.id == log.id && log.id != 0L }) return
+        // Dedupe by id.
+        if (criticalLogs.any { it.id == log.id && log.id != 0L }) return
+        if (otherLogs.any { it.id == log.id && log.id != 0L }) return
 
-        val wasAtTop = (binding.recyclerView.layoutManager as? LinearLayoutManager)
-            ?.findFirstVisibleItemPosition() == 0
-
-        val merged = listOf(log) + existing
-        adapter.submitList(merged)
+        // v1.6.39: route to the appropriate section.
+        if (log.level == SystemLogLevel.CRITICAL) {
+            criticalLogs.add(0, log)
+        } else {
+            otherLogs.add(0, log)
+        }
+        rebuildDisplayList()
         showEmpty(false)
 
+        // Auto-scroll to top if the user was already at the top.
+        val wasAtTop = (binding.recyclerView.layoutManager as? LinearLayoutManager)
+            ?.findFirstVisibleItemPosition() == 0
         if (wasAtTop) {
-            // Auto-scroll to top so the new entry is visible. Post
-            // so the submitList diff has flushed to the layout.
             binding.recyclerView.post {
                 if (_binding != null) binding.recyclerView.scrollToPosition(0)
             }
         }
 
-        // v1.6.37: when a camera.* event arrives, refresh the camera
-        // snapshot so the "当前状态" subtitle on the new row (and any
-        // existing camera rows) reflects the latest status. This is
-        // what makes the subtitle useful: the moment a camera comes
-        // back online, the previously-shown "摄像头 X 离线" row flips
-        // its subtitle from "当前状态：离线" to "当前状态：在线".
         if (log.event_type.startsWith("camera.")) {
             loadCameraSnapshot()
         }

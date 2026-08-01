@@ -244,7 +244,7 @@
                  have layout_columnWeight=1 + fill_horizontal so they
                  reflow correctly when columnCount changes. -->
             <!-- v1.6.10: stat grid — every card uses identical
-                 layout_height (120dp) + symmetric 4dp start/end
+                 layout_height (128dp) + symmetric 4dp start/end
                  margins so the 4 cards have uniform height AND
                  uniform horizontal spacing. Previous layout had
                  asymmetric margins (left column marginEnd=6, right
@@ -267,9 +267,9 @@
                 app:orientation="horizontal"
                 android:layout_marginTop="10dp">
 
-                <!-- v1.5.4: include layout_height MUST be "120dp" (not
+                <!-- v1.5.4: include layout_height MUST be "128dp" (not
                  wrap_content) — otherwise it overrides item_stat_card.xml's
-                 root FrameLayout height=120dp and the fixed-height
+                 root FrameLayout height=128dp and the fixed-height
                  grid alignment breaks (uptime string gets clipped).
                  v1.6.10: all 4 cards use IDENTICAL layout params so
                  they render at exactly the same height + width.
@@ -278,7 +278,7 @@
             <include layout="@layout/item_stat_card"
                 android:id="@+id/cardDevices"
                 android:layout_width="0dp"
-                android:layout_height="120dp"
+                android:layout_height="128dp"
                 app:layout_columnWeight="1"
                 app:layout_gravity="fill_horizontal"
                 android:layout_marginStart="4dp"
@@ -288,7 +288,7 @@
             <include layout="@layout/item_stat_card"
                 android:id="@+id/cardMqtt"
                 android:layout_width="0dp"
-                android:layout_height="120dp"
+                android:layout_height="128dp"
                 app:layout_columnWeight="1"
                 app:layout_gravity="fill_horizontal"
                 android:layout_marginStart="4dp"
@@ -298,7 +298,7 @@
             <include layout="@layout/item_stat_card"
                 android:id="@+id/cardWs"
                 android:layout_width="0dp"
-                android:layout_height="120dp"
+                android:layout_height="128dp"
                 app:layout_columnWeight="1"
                 app:layout_gravity="fill_horizontal"
                 android:layout_marginStart="4dp"
@@ -307,7 +307,7 @@
             <include layout="@layout/item_stat_card"
                 android:id="@+id/cardUptime"
                 android:layout_width="0dp"
-                android:layout_height="120dp"
+                android:layout_height="128dp"
                 app:layout_columnWeight="1"
                 app:layout_gravity="fill_horizontal"
                 android:layout_marginStart="4dp"
@@ -359,6 +359,7 @@
                 </LinearLayout>
 
                 <LinearLayout
+                    android:id="@+id/networkStrategyRow"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
@@ -433,6 +434,7 @@
                 </LinearLayout>
 
                 <LinearLayout
+                    android:id="@+id/networkDetailRow"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"

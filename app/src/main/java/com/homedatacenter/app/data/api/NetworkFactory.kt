@@ -1,5 +1,6 @@
 package com.homedatacenter.app.data.api
 
+import com.homedatacenter.app.BuildConfig
 import kotlinx.serialization.json.Json
 import okhttp3.ConnectionPool
 import okhttp3.MediaType.Companion.toMediaType
@@ -10,6 +11,11 @@ import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFact
 import java.util.concurrent.TimeUnit
 
 object NetworkFactory {
+
+    // Unified User-Agent for every HTTP path (Retrofit, WebRTC signaling,
+    // ExoPlayer, preview-frame fetches). Reading VERSION_NAME keeps the
+    // UA in sync with the version shown to users without manual edits.
+    const val USER_AGENT = "HomeDatacenter/${BuildConfig.VERSION_NAME} (Android)"
 
     val json: Json = Json {
         ignoreUnknownKeys = true
@@ -60,6 +66,17 @@ object NetworkFactory {
             .pingInterval(30, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
             .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
+            // Unified User-Agent: .header() (not .addHeader()) overwrites
+            // OkHttp's default UA so every Retrofit request and any
+            // direct newCall() sharing this client advertises the same
+            // app identity to the backend / Cloudflare Tunnel.
+            .addInterceptor { chain ->
+                chain.proceed(
+                    chain.request().newBuilder()
+                        .header("User-Agent", USER_AGENT)
+                        .build()
+                )
+            }
 
         if (enableLogging) {
             builder.addInterceptor(

@@ -33,8 +33,8 @@
     <color name="gradient_mid">#FFF1E6</color>
     <color name="gradient_end">#F0F9FF</color>
 
-    <color name="card_bg">#F5F0FF</color>
-    <color name="card_stroke">#E8E0FF</color>
+    <color name="card_bg">#FFFCF8</color>
+    <color name="card_stroke">#FFE0D0</color>
     <color name="camera_bg">#1A1A1A</color>
     <color name="card_bottom_bg">#FFFFFF</color>
     <color name="red">#EF5350</color>

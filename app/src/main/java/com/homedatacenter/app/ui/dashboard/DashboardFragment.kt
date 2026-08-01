@@ -125,6 +125,26 @@ class DashboardFragment : Fragment() {
             startActivity(Intent(requireContext(), NetworkDetailActivity::class.java))
         }
 
+        // Non-admin users see a simplified dashboard: the 4 stat
+        // cards and the network quality detail rows are hidden, so
+        // only the weather card, network stars + title, recent alerts
+        // and recent logs remain.
+        val isAdmin = (activity as? MainActivity)?.container?.prefsManager?.isAdmin == true
+        if (!isAdmin) {
+            binding.gridStats.visibility = View.GONE
+            // Network card: keep the title + stars row, hide all
+            // detail rows (strategy label, upgrade hint, path chip,
+            // IPv6/P2P/Relay capability dots).
+            binding.networkStrategyRow.visibility = View.GONE
+            binding.networkDetailRow.visibility = View.GONE
+            // v1.6.40: hide the "最近日志" section for non-admin users
+            // (the logs tab is also hidden in the bottom nav).
+            binding.tvRecentLogsTitle.visibility = View.GONE
+            binding.btnViewAllLogs.visibility = View.GONE
+            binding.rvRecentLogs.visibility = View.GONE
+            binding.tvRecentLogsEmpty.visibility = View.GONE
+        }
+
         loadUserName()
         setupDashboardWebSocket()
     }
@@ -412,7 +432,7 @@ class DashboardFragment : Fragment() {
         devicesCard.ivIcon.setImageResource(R.drawable.ic_devices)
         devicesCard.ivIcon.imageTintList =
             android.content.res.ColorStateList.valueOf(
-                resources.getColor(R.color.white, null))
+                resources.getColor(R.color.primary_dark, null))
         // Status dot: green if any devices online, gray otherwise.
         applyStatCardDot(devicesCard.statusDot, status.onlineDeviceCount > 0)
 
@@ -423,7 +443,7 @@ class DashboardFragment : Fragment() {
         mqttCard.ivIcon.setImageResource(R.drawable.ic_mqtt)
         mqttCard.ivIcon.imageTintList =
             android.content.res.ColorStateList.valueOf(
-                resources.getColor(R.color.white, null))
+                resources.getColor(R.color.primary_dark, null))
         applyStatCardDot(mqttCard.statusDot, status.mqttConnected)
 
         val wsCard = ItemStatCardBinding.bind(binding.cardWs.root)
@@ -432,7 +452,7 @@ class DashboardFragment : Fragment() {
         wsCard.ivIcon.setImageResource(R.drawable.ic_ws)
         wsCard.ivIcon.imageTintList =
             android.content.res.ColorStateList.valueOf(
-                resources.getColor(R.color.white, null))
+                resources.getColor(R.color.primary_dark, null))
         // WS clients dot: green if >0 clients, gray otherwise.
         applyStatCardDot(wsCard.statusDot, status.wsClients > 0)
 
@@ -442,7 +462,7 @@ class DashboardFragment : Fragment() {
         uptimeCard.ivIcon.setImageResource(R.drawable.ic_dashboard)
         uptimeCard.ivIcon.imageTintList =
             android.content.res.ColorStateList.valueOf(
-                resources.getColor(R.color.white, null))
+                resources.getColor(R.color.primary_dark, null))
         // Uptime dot: green if uptime > 1h, yellow otherwise (recently started).
         applyStatCardDot(uptimeCard.statusDot, on = status.uptimeSeconds >= 3_600,
             warning = status.uptimeSeconds in 1 until 3_600)

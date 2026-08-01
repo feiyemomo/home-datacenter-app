@@ -43,6 +43,12 @@ interface HomeCenterApi {
         @Path("id") id: Long
     ): ApiResponse
 
+    @DELETE("api/v1/device/{id}/hard")
+    suspend fun deleteDevice(
+        @Header("Authorization") auth: String,
+        @Path("id") id: Long
+    ): ApiResponse
+
     @GET("api/v1/system/status")
     suspend fun getSystemStatus(@Header("Authorization") auth: String): ApiResponse
 
@@ -52,6 +58,14 @@ interface HomeCenterApi {
         @Query("limit") limit: Int = 50,
         @Query("offset") offset: Int = 0,
         @Query("event_type") eventType: String? = null,
+    ): ApiResponse
+
+    // v1.8.14: delete a single system log entry after manual
+    // verification. Used by the "核查并删除" workflow.
+    @DELETE("api/v1/system/logs/{id}")
+    suspend fun deleteSystemLog(
+        @Header("Authorization") auth: String,
+        @Path("id") id: Long,
     ): ApiResponse
 
     @GET("api/v1/cameras")
@@ -198,6 +212,15 @@ interface HomeCenterApi {
         @Body request: com.homedatacenter.app.data.model.UpdateAudioRequest,
     ): ApiResponse
 
+    // Pre-warm the camera's RTSP/go2rtc connection so the first
+    // stream request (WebRTC offer / MP4 / preview frame) doesn't
+    // pay the cold-start RTSP handshake cost.
+    @POST("api/v1/cameras/{id}/preheat")
+    suspend fun preheat(
+        @Header("Authorization") auth: String,
+        @Path("id") id: Long,
+    ): ApiResponse
+
     // --- User management (admin except /me) ---
 
     @GET("api/v1/user")
@@ -226,5 +249,30 @@ interface HomeCenterApi {
     suspend fun deleteUser(
         @Header("Authorization") auth: String,
         @Path("id") id: Long,
+    ): ApiResponse
+
+    // --- Camera sharing (admin or camera owner) ---
+
+    /** POST /api/v1/cameras/:id/shares — share the camera with another user. */
+    @POST("api/v1/cameras/{id}/shares")
+    suspend fun shareCamera(
+        @Header("Authorization") auth: String,
+        @Path("id") cameraId: Long,
+        @Body body: com.homedatacenter.app.data.model.ShareCameraRequest,
+    ): ApiResponse
+
+    /** DELETE /api/v1/cameras/:id/shares/:user_id — revoke a user's access. */
+    @DELETE("api/v1/cameras/{id}/shares/{userId}")
+    suspend fun unshareCamera(
+        @Header("Authorization") auth: String,
+        @Path("id") cameraId: Long,
+        @Path("userId") userId: Long,
+    ): ApiResponse
+
+    /** GET /api/v1/cameras/:id/shares — list users the camera is shared with. */
+    @GET("api/v1/cameras/{id}/shares")
+    suspend fun listShares(
+        @Header("Authorization") auth: String,
+        @Path("id") cameraId: Long,
     ): ApiResponse
 }

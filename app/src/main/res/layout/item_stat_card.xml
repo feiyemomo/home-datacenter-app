@@ -1,16 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
     Stat card item for the dashboard grid (Devices, MQTT, WS Clients,
-    Uptime). v1.5.3: enforced a fixed 120dp height so all 4 cards in
+    Uptime). v1.5.3: enforced a fixed height so all 4 cards in
     the 2x2 grid align perfectly regardless of label/value length —
     previously wrap_content heights led to visibly uneven rows when
     "30天 5小时" uptime overflowed while "12" device count stayed
     short. Fixed height + maxLines + ellipsize on every text field
-    keeps the grid visually stable.
+    keeps the grid visually stable. v1.7.0: height 128dp; tvValue
+    uses autoSize (14-20sp) so "30天 5小时" shrinks to fit instead
+    of clipping; tvLabel allows 2 lines so "WebSocket 客户端" can
+    wrap. minSdk=29 so android:autoSizeTextType (API 26+) is safe.
 -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="120dp">
+    android:layout_height="128dp">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -26,7 +29,7 @@
             android:layout_height="32dp"
             android:orientation="horizontal"
             android:gravity="center_vertical"
-            android:layout_marginBottom="10dp">
+            android:layout_marginBottom="8dp">
 
             <ImageView
                 android:id="@+id/ivIcon"
@@ -50,19 +53,24 @@
                 android:visibility="gone" />
         </LinearLayout>
 
-        <!-- Value: fixed text size + maxLines=1 + ellipsize so long
-             uptime strings don't break the grid alignment. -->
+        <!-- Value: autoSize (14-20sp) + maxLines=1 + ellipsize so long
+             uptime strings shrink to fit instead of breaking grid
+             alignment. -->
         <TextView
             android:id="@+id/tvValue"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1"
             android:gravity="bottom|start"
-            android:textSize="20sp"
+            android:textSize="18sp"
             android:textStyle="bold"
             android:textColor="@color/text_primary"
             android:maxLines="1"
             android:ellipsize="end"
+            android:autoSizeTextType="uniform"
+            android:autoSizeMinTextSize="14sp"
+            android:autoSizeMaxTextSize="20sp"
+            android:autoSizeStepGranularity="1sp"
             android:layout_marginBottom="2dp" />
 
         <TextView
@@ -71,7 +79,7 @@
             android:layout_height="wrap_content"
             android:textSize="12sp"
             android:textColor="@color/text_secondary"
-            android:maxLines="1"
+            android:maxLines="2"
             android:ellipsize="end" />
 
     </LinearLayout>

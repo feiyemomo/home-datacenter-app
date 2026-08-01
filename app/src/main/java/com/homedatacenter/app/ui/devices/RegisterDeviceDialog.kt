@@ -4,10 +4,14 @@ import android.app.Dialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
+import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
@@ -81,6 +85,31 @@ class RegisterDeviceDialog : DialogFragment() {
         val dialog = super.onCreateDialog(savedInstanceState)
         dialog.setCanceledOnTouchOutside(false)
         return dialog
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // v1.6.42: expand dialog to near-full width so the access key
+        // and warning text are fully visible. The default Material3
+        // DialogFragment window has a built-in windowBackground drawable
+        // that insets the content by ~24-32dp on each side, so just
+        // setting MATCH_PARENT still leaves the dialog squeezed. We:
+        //  1. Clear the windowBackground to a transparent ColorDrawable
+        //     so no extra insets are applied (the ScrollView in the
+        //     layout uses bg_card_rounded via its background).
+        //  2. Set width to MATCH_PARENT with a small horizontal margin
+        //     (16dp) so the dialog doesn't touch screen edges.
+        //  3. Set gravity to CENTER so it stays vertically centered.
+        dialog?.window?.let { window ->
+            window.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            val params = window.attributes
+            params.gravity = Gravity.CENTER
+            val horizontalMarginDp = 16f
+            params.width = WindowManager.LayoutParams.MATCH_PARENT
+            params.horizontalMargin = horizontalMarginDp
+            params.height = WindowManager.LayoutParams.WRAP_CONTENT
+            window.attributes = params
+        }
     }
 
     private fun submit() {
