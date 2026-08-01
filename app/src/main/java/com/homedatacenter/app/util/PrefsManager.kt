@@ -22,6 +22,19 @@ class PrefsManager(context: Context) {
         get() = prefs.getString(KEY_TOKEN, null)
         set(value) = prefs.edit().putString(KEY_TOKEN, value).apply()
 
+    // v1.8.15: persisted access_key for silent token refresh.
+    // Stored so the OkHttp interceptor can re-bind automatically
+    // when the server returns "token version mismatch".
+    var accessKey: String?
+        get() = prefs.getString(KEY_ACCESS_KEY, null)
+        set(value) = prefs.edit().putString(KEY_ACCESS_KEY, value).apply()
+
+    // v1.8.15: last time the JWT was proactively refreshed (unix ms).
+    // Used by the monthly auto-refresh check on app startup.
+    var lastTokenRefreshTime: Long
+        get() = prefs.getLong(KEY_LAST_TOKEN_REFRESH, 0L)
+        set(value) = prefs.edit().putLong(KEY_LAST_TOKEN_REFRESH, value).apply()
+
     var baseUrl: String?
         get() = prefs.getString(KEY_BASE_URL, null)
         set(value) = prefs.edit().putString(KEY_BASE_URL, value).apply()
@@ -123,6 +136,8 @@ class PrefsManager(context: Context) {
     companion object {
         private const val PREFS_FILE = "home_datacenter_prefs"
         private const val KEY_TOKEN = "auth_token"
+        private const val KEY_ACCESS_KEY = "access_key"
+        private const val KEY_LAST_TOKEN_REFRESH = "last_token_refresh"
         private const val KEY_BASE_URL = "base_url"
         private const val KEY_USER_ID = "user_id"
         private const val KEY_USER_NAME = "user_name"

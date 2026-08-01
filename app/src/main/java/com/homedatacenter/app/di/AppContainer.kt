@@ -8,20 +8,32 @@ import com.homedatacenter.app.data.repository.HomeCenterRepository
 import com.homedatacenter.app.util.BaseUrlResolver
 import com.homedatacenter.app.util.PrefsManager
 import com.homedatacenter.app.util.RoleManager
+import com.homedatacenter.app.util.TokenRefreshInterceptor
 import com.homedatacenter.app.util.WebRtcClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import okhttp3.RequestBody.Companion.toRequestBody
 
 class AppContainer(private val context: Context) {
 
     val prefsManager: PrefsManager by lazy { PrefsManager(context) }
 
     val okHttpClient: OkHttpClient by lazy {
-        NetworkFactory.okHttpClient(enableLogging = true)
+        val baseClient = NetworkFactory.okHttpClient(enableLogging = true)
+        // v1.8.15: add token refresh interceptor AFTER the main
+        // builder so it wraps the User-Agent interceptor. The
+        // interceptor silently re-binds on 401 "token version
+        // mismatch" and retries the request with a fresh token.
+        baseClient.newBuilder()
+            .addInterceptor(TokenRefreshInterceptor(prefsManager) { getApiBaseUrl() })
+            .build()
     }
 
     /**
@@ -527,6 +539,75 @@ class AppContainer(private val context: Context) {
         } catch (e: Exception) {
             Log.w("AppContainer", "ICE config deserialize from prefs failed: ${e.message}")
             null
+        }
+    }
+
+    // --- v1.8.15: 每月自动静默刷新 JWT ---
+    //
+    // 在 App 启动时检查，如果距离上次刷新已超过 30 天，则用
+    // 存储的 access_key 重新绑定，获取新令牌。此刷新是静默的
+    // （用户无感知），且独立于服务端 token_version 旋转。
+    // 即使管理员没有手动旋转，客户端也会定期刷新 JWT，
+    // 缩短令牌泄露窗口期。
+    private val refreshScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var refreshJob: Job? = null
+
+    /**
+     * 检查并执行每月一次的 JWT 静默刷新。
+     * 在 HomeCenterApp.onCreate 中调用。
+     */
+    fun tryAutoRefreshToken() {
+        if (refreshJob?.isActive == true) return
+        val token = prefsManager.token ?: return
+        val accessKey = prefsManager.accessKey ?: return
+        val userId = prefsManager.userId
+        if (userId <= 0L) return
+
+        val lastRefresh = prefsManager.lastTokenRefreshTime
+        val now = System.currentTimeMillis()
+        val thirtyDaysMs = 30L * 24 * 60 * 60 * 1000
+
+        // 距离上次刷新不足 30 天，跳过
+        if (lastRefresh > 0 && (now - lastRefresh) < thirtyDaysMs) return
+
+        refreshJob = refreshScope.launch {
+            try {
+                val baseUrl = getApiBaseUrl().trimEnd('/')
+                val bindUrl = "$baseUrl/api/v1/auth/bind"
+                val bodyJson = """{"user_id":$userId,"access_key":"$accessKey"}"""
+                val requestBody = bodyJson.toRequestBody("application/json".toMediaType())
+
+                val request = okhttp3.Request.Builder()
+                    .url(bindUrl)
+                    .post(requestBody)
+                    .header("User-Agent", NetworkFactory.USER_AGENT)
+                    .build()
+
+                // 使用独立的 OkHttpClient（不要用主 client）
+                val client = okhttp3.OkHttpClient.Builder()
+                    .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                    .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                    .build()
+
+                val response = client.newCall(request).execute()
+                val body = response.body?.string() ?: return@launch
+
+                if (response.isSuccessful) {
+                    val root = NetworkFactory.json.parseToJsonElement(body).jsonObject
+                    val code = root["code"]?.jsonPrimitive?.content?.toIntOrNull() ?: -1
+                    if (code == 0) {
+                        val data = root["data"]?.jsonObject
+                        val newToken = data?.get("token")?.jsonPrimitive?.content
+                        if (newToken != null) {
+                            prefsManager.token = newToken
+                            prefsManager.lastTokenRefreshTime = now
+                            Log.d("AppContainer", "Token auto-refreshed (monthly)")
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("AppContainer", "Token auto-refresh failed: ${e.message}")
+            }
         }
     }
 

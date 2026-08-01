@@ -54,6 +54,11 @@ class LoginActivity : AppCompatActivity() {
                 val token = container.getRepository().bind(userId, accessKey)
                 container.prefsManager.token = token
                 container.prefsManager.userId = userId
+                // v1.8.15: persist the access_key for silent token
+                // refresh. The OkHttp interceptor uses it to re-bind
+                // automatically when the server rotates the token.
+                container.prefsManager.accessKey = accessKey
+                container.prefsManager.lastTokenRefreshTime = System.currentTimeMillis()
                 try {
                     val user = container.getRepository().getMe(token)
                     container.prefsManager.saveUserInfo(user.name, user.isAdmin)

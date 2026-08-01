@@ -16,8 +16,8 @@ android {
         applicationId = "com.homedatacenter.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = 80
-        versionName = "1.6.37"
+        versionCode = 90
+        versionName = "1.6.47"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -62,6 +62,9 @@ android {
     buildFeatures {
         viewBinding = true
         compose = true
+        // AGP 8.0+ defaults buildConfig to false; enable explicitly so
+        // BuildConfig.VERSION_NAME is generated for the unified UA.
+        buildConfig = true
     }
     // v1.5.4: packaging block — keep useLegacyPackaging=false so AGP
     // stores .so files uncompressed and page-aligned in the APK. This
