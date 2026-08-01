@@ -27,7 +27,7 @@ import kotlinx.coroutines.launch
  *
  * Logs are split by severity:
  *   - "待处理日志" (critical/pending): camera/device offline — always visible
- *   - "所有日志" (all): normal + info + critical — collapsed by default,
+ *   - "所有日志" (all): normal + info + critical — expanded by default,
  *     expandable via header tap. Critical logs are highlighted with
  *     a red icon tint within this section.
  *
@@ -50,7 +50,7 @@ class ServiceLogsFragment : Fragment() {
     // v1.6.39: two separate lists for the two sections.
     private val criticalLogs = mutableListOf<SystemLog>()
     private val otherLogs = mutableListOf<SystemLog>()
-    private var otherCollapsed = true
+    private var otherCollapsed = false
 
     private var logsWebSocket: HomeCenterWebSocket? = null
 
@@ -187,7 +187,7 @@ class ServiceLogsFragment : Fragment() {
             criticalLogs.forEach { items.add(LogListItem.LogEntry(it)) }
         }
 
-        // All logs section (collapsed by default) — shows ALL logs
+        // All logs section (expanded by default) — shows ALL logs
         // including critical ones, so the user can browse the full
         // history. Critical logs are visually highlighted with the
         // red icon tint (see colorForLevel in LogViewHolder).

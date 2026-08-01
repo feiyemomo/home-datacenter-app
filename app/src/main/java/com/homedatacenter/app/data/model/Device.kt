@@ -7,6 +7,7 @@ import kotlinx.serialization.Serializable
 data class Device(
     val id: Long,
     @SerialName("user_id") val userId: Long,
+    @SerialName("user_name") val userName: String = "",
     @SerialName("device_name") val deviceName: String,
     @SerialName("last_login_at") val lastLoginAt: String? = null,
     @SerialName("revoked_at") val revokedAt: String? = null,

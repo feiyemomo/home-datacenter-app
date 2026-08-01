@@ -25,7 +25,7 @@ import java.util.Locale
  *
  * Logs are split into:
  *   - "待处理日志" (critical/pending level): always visible
- *   - "所有日志" (all levels including critical): collapsed by default,
+ *   - "所有日志" (all levels including critical): expanded by default,
  *     expandable via header tap. Critical logs are highlighted
  *     with a red icon tint.
  *

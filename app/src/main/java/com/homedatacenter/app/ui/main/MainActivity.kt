@@ -12,7 +12,6 @@ import com.homedatacenter.app.databinding.ActivityMainBinding
 import com.homedatacenter.app.di.AppContainer
 import com.homedatacenter.app.ui.cameras.CamerasFragment
 import com.homedatacenter.app.ui.dashboard.DashboardFragment
-import com.homedatacenter.app.ui.devices.DevicesFragment
 import com.homedatacenter.app.ui.logs.ServiceLogsFragment
 import com.homedatacenter.app.ui.login.LoginActivity
 import com.homedatacenter.app.ui.settings.SettingsFragment
@@ -27,7 +26,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var dashboardFragment: Fragment
     private lateinit var camerasFragment: Fragment
     private lateinit var logsFragment: Fragment
-    private lateinit var devicesFragment: Fragment
     private lateinit var settingsFragment: Fragment
     private var activeFragment: Fragment? = null
 
@@ -109,7 +107,6 @@ class MainActivity : AppCompatActivity() {
         val target = when (binding.bottomNav.selectedItemId) {
             R.id.nav_cameras -> camerasFragment
             R.id.nav_logs -> logsFragment
-            R.id.nav_devices -> devicesFragment
             R.id.nav_settings -> settingsFragment
             else -> dashboardFragment
         }
@@ -144,7 +141,6 @@ class MainActivity : AppCompatActivity() {
         dashboardFragment = fm.findFragmentByTag("dashboard") ?: DashboardFragment()
         camerasFragment = fm.findFragmentByTag("cameras") ?: CamerasFragment()
         logsFragment = fm.findFragmentByTag("logs") ?: ServiceLogsFragment()
-        devicesFragment = fm.findFragmentByTag("devices") ?: DevicesFragment()
         settingsFragment = fm.findFragmentByTag("settings") ?: SettingsFragment()
 
         // v1.6.13: always add the dashboard as the initially-visible
@@ -155,7 +151,6 @@ class MainActivity : AppCompatActivity() {
         // restored yet at onCreate time.
         fm.commit {
             add(R.id.nav_host_fragment, settingsFragment, "settings").hide(settingsFragment)
-            add(R.id.nav_host_fragment, devicesFragment, "devices").hide(devicesFragment)
             add(R.id.nav_host_fragment, logsFragment, "logs").hide(logsFragment)
             add(R.id.nav_host_fragment, camerasFragment, "cameras").hide(camerasFragment)
             add(R.id.nav_host_fragment, dashboardFragment, "dashboard")
@@ -164,10 +159,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateMenuByPermission() {
-        // The backend allows every authenticated user to list and manage
-        // devices within their own scope. Administrator-only actions are
-        // gated inside their respective screens and by the server.
-        binding.bottomNav.menu.findItem(R.id.nav_devices)?.isVisible = true
         // Service logs tab is admin-only — non-admin users get a
         // simplified navigation bar without the logs entry.
         binding.bottomNav.menu.findItem(R.id.nav_logs)?.isVisible = container.prefsManager.isAdmin
@@ -179,7 +170,6 @@ class MainActivity : AppCompatActivity() {
                 R.id.nav_dashboard -> { showFragment(dashboardFragment); true }
                 R.id.nav_cameras -> { showFragment(camerasFragment); true }
                 R.id.nav_logs -> { showFragment(logsFragment); true }
-                R.id.nav_devices -> { showFragment(devicesFragment); true }
                 R.id.nav_settings -> { showFragment(settingsFragment); true }
                 else -> false
             }

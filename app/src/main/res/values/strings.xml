@@ -13,7 +13,6 @@
     <string name="login_invalid_input">请输入用户 ID 和访问密钥</string>
 
     <string name="nav_dashboard">主页</string>
-    <string name="nav_devices">设备</string>
     <string name="nav_cameras">摄像头</string>
     <string name="nav_logs">日志</string>
     <string name="no_logs">暂无日志</string>

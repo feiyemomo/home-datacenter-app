@@ -33,11 +33,9 @@ import kotlinx.coroutines.launch
  *     button. The server stores only the SHA-256 hash, so the key
  *     cannot be retrieved later.
  *
- * On "完成" the dialog dismisses and asks the host [DevicesFragment]
- * to refresh its list via [DevicesFragment.refreshDevices].
+ * On "完成" the dialog dismisses.
  *
- * Shown via `childFragmentManager` from DevicesFragment so that
- * `parentFragment` resolves to the host fragment.
+ * Previously shown via `childFragmentManager` from DevicesFragment.
  */
 class RegisterDeviceDialog : DialogFragment() {
 
@@ -76,7 +74,6 @@ class RegisterDeviceDialog : DialogFragment() {
         btnCreate.setOnClickListener { submit() }
         btnCopy.setOnClickListener { copyAccessKey() }
         btnDone.setOnClickListener {
-            (parentFragment as? DevicesFragment)?.refreshDevices()
             dismiss()
         }
     }

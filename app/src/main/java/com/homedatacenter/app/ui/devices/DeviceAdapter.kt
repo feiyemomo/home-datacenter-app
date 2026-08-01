@@ -74,6 +74,9 @@ class DeviceAdapter(
 
             val info = buildString {
                 append("ID: ${device.id}")
+                if (device.userName.isNotBlank()) {
+                    append("  |  ${device.userName}")
+                }
                 if (!device.lastLoginAt.isNullOrEmpty()) {
                     append("  |  ${device.lastLoginAt.take(16)}")
                 }
