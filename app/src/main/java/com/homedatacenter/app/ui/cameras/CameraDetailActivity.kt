@@ -271,26 +271,31 @@ class CameraDetailActivity : AppCompatActivity() {
 
     private fun setupHeader() {
         val cam = camera ?: return
-        binding.tvCameraName.text = cam.name
-        binding.tvCameraMeta.text = buildString {
-            if (cam.vendor.isNotBlank()) append(cam.vendor)
-            if (cam.host.isNotBlank()) {
-                if (isNotEmpty()) append(" · ")
-                append(cam.host)
-            }
-            if (cam.codec.isNotBlank()) {
-                if (isNotEmpty()) append(" · ")
-                append("codec=").append(cam.codec.uppercase())
-            }
-        }
-        binding.tvCameraStatus.text = if (cam.isOnline) {
+        val statusText = if (cam.isOnline) {
             getString(R.string.camera_online)
         } else {
             getString(R.string.camera_offline)
         }
-        binding.tvCameraStatus.setTextColor(
-            getColor(if (cam.isOnline) R.color.online else R.color.offline)
-        )
+        val statusColor = getColor(if (cam.isOnline) R.color.online else R.color.offline)
+        binding.toolbar.subtitle = buildString {
+            append(cam.name)
+            append(" · ")
+            append(statusText)
+            if (cam.vendor.isNotBlank()) {
+                append(" · ")
+                append(cam.vendor)
+            }
+            if (cam.host.isNotBlank()) {
+                append(" · ")
+                append(cam.host)
+            }
+            if (cam.codec.isNotBlank()) {
+                append(" · ")
+                append("codec=").append(cam.codec.uppercase())
+            }
+        }
+        // Set subtitle text color to match status
+        binding.toolbar.setSubtitleTextColor(statusColor)
     }
 
     private fun setupPtz() {
@@ -660,7 +665,6 @@ class CameraDetailActivity : AppCompatActivity() {
             hideOnFullscreen = listOf(
                 binding.toolbar,
                 binding.actionButtonsRow,
-                binding.cardHeader,
                 binding.cardPtz,
                 binding.rvPresets.parent.parent as View, // presets section LinearLayout
             ),

@@ -61,3 +61,33 @@ data class UpdateUserRequest(
 data class DeleteUserResult(
     @SerialName("deleted_devices") val deletedDevices: Int = 0,
 )
+
+/**
+ * Response data for POST /api/v1/user (create user).
+ *
+ * Backend returns the full user record plus the plaintext access_key
+ * (shown ONCE) and the auto-created device.
+ *
+ * @param device the device that was auto-created for this user (may be null).
+ * @param accessKey 64-char hex plaintext access key — null if the server
+ *   did not return one.
+ */
+@Serializable
+data class CreateUserResponse(
+    val id: Long,
+    val name: String,
+    @SerialName("is_admin") val isAdmin: Boolean,
+    @SerialName("created_at") val createdAt: String? = null,
+    @SerialName("updated_at") val updatedAt: String? = null,
+    @SerialName("access_key") val accessKey: String? = null,
+    val device: DeviceInfo? = null,
+)
+
+/**
+ * Nested device record inside [CreateUserResponse].
+ */
+@Serializable
+data class DeviceInfo(
+    val id: Long,
+    @SerialName("device_name") val deviceName: String? = null,
+)

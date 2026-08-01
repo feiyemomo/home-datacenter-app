@@ -6,6 +6,7 @@ import com.homedatacenter.app.data.model.BindData
 import com.homedatacenter.app.data.model.BindRequest
 import com.homedatacenter.app.data.model.Camera
 import com.homedatacenter.app.data.model.CreateUserRequest
+import com.homedatacenter.app.data.model.CreateUserResponse
 import com.homedatacenter.app.data.model.DeleteUserResult
 import com.homedatacenter.app.data.model.Device
 import com.homedatacenter.app.data.model.DeviceList
@@ -398,12 +399,13 @@ class HomeCenterRepository(
         token: String,
         name: String,
         isAdmin: Boolean,
-    ) {
+    ): String? {
         val resp = api.createUser(
             bearer(token),
             CreateUserRequest(name = name, isAdmin = isAdmin),
         )
         ensureSuccess(resp)
+        return resp.decodeData<CreateUserResponse>()?.accessKey
     }
 
     suspend fun getUser(token: String, userId: Long): User {

@@ -203,6 +203,7 @@
     <!-- Users management (admin) -->
     <string name="users_title">用户管理</string>
     <string name="users_create">新建用户</string>
+    <string name="add_user">添加用户</string>
     <string name="users_empty">暂无用户</string>
     <string name="user_name_label">用户名</string>
     <string name="user_admin_label">管理员</string>

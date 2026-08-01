@@ -246,41 +246,6 @@
                     app:icon="@drawable/ic_alerts" />
             </LinearLayout>
 
-            <!-- Camera header card: name / status / vendor -->
-            <LinearLayout
-                android:id="@+id/cardHeader"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/bg_glass_card"
-                android:orientation="vertical"
-                android:padding="16dp"
-                android:layout_marginBottom="16dp">
-
-                <TextView
-                    android:id="@+id/tvCameraName"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:textSize="20sp"
-                    android:textStyle="bold"
-                    android:textColor="@color/text_primary" />
-
-                <TextView
-                    android:id="@+id/tvCameraMeta"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:textSize="13sp"
-                    android:textColor="@color/text_secondary" />
-
-                <TextView
-                    android:id="@+id/tvCameraStatus"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="6dp"
-                    android:textSize="12sp"
-                    android:textColor="@color/online" />
-            </LinearLayout>
-
             <!-- PTZ section -->
             <TextView
                 android:id="@+id/tvPtzSectionTitle"
