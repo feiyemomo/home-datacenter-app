@@ -64,22 +64,21 @@
             android:visibility="gone" />
     </LinearLayout>
 
-    <!-- v1.8.14: 核查并删除 button — visible on critical logs
-         (camera/device offline). The user taps to confirm the
-         offline event has been handled, then the log entry is
-         deleted. -->
+    <!-- v1.8.x: 核查 button — visible on critical logs. Tapping
+         marks the log as verified locally; no API call is made. -->
     <TextView
         android:id="@+id/btnVerifyDelete"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:textSize="12sp"
         android:textColor="@color/error"
-        android:padding="8dp"
+        android:paddingHorizontal="8dp"
+        android:paddingVertical="4dp"
         android:gravity="center"
         android:clickable="true"
         android:focusable="true"
-        android:background="?attr/selectableItemBackground"
+        android:background="@drawable/btn_verify_bg"
         android:visibility="gone"
-        android:text="核查并删除" />
+        android:text="核查" />
 
 </LinearLayout>

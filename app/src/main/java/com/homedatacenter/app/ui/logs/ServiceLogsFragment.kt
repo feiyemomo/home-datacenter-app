@@ -73,11 +73,6 @@ class ServiceLogsFragment : Fragment() {
                     rebuildDisplayList()
                 }
             },
-            // v1.8.14: handle "核查并删除" — delete the log entry
-            // after the user has verified the offline issue.
-            onVerifyDelete = { log ->
-                deleteLogEntry(log)
-            },
         )
         val layoutManager = LinearLayoutManager(context)
         binding.recyclerView.layoutManager = layoutManager
@@ -229,34 +224,6 @@ class ServiceLogsFragment : Fragment() {
     private fun showEmpty(show: Boolean) {
         binding.tvEmpty.visibility = if (show) View.VISIBLE else View.GONE
         binding.recyclerView.visibility = if (show) View.GONE else View.VISIBLE
-    }
-
-    // v1.8.14: delete a log entry after the user has verified it.
-    // Removes the entry from the local list and calls the backend
-    // DELETE /api/v1/system/logs/:id endpoint.
-    private fun deleteLogEntry(log: SystemLog) {
-        val mainActivity = activity as? MainActivity ?: return
-        val token = mainActivity.container.prefsManager.token ?: return
-        lifecycleScope.launch {
-            try {
-                val auth = "Bearer $token"
-                val resp = mainActivity.container.getApi()
-                    .deleteSystemLog(auth, log.id)
-                if (resp.isSuccess) {
-                    criticalLogs.removeAll { it.id == log.id }
-                    otherLogs.removeAll { it.id == log.id }
-                    rebuildDisplayList()
-                    showEmpty(criticalLogs.isEmpty() && otherLogs.isEmpty())
-                    Toast.makeText(requireContext(), "已删除", Toast.LENGTH_SHORT).show()
-                } else {
-                    Toast.makeText(requireContext(),
-                        "删除失败: ${resp.message}", Toast.LENGTH_SHORT).show()
-                }
-            } catch (e: Exception) {
-                Toast.makeText(requireContext(),
-                    "删除失败: ${e.message}", Toast.LENGTH_SHORT).show()
-            }
-        }
     }
 
     // --- WebSocket live prepend ---

@@ -29,22 +29,20 @@ import java.util.Locale
  *     expandable via header tap. Critical logs are highlighted
  *     with a red icon tint.
  *
- * v1.8.14: Added "核查并删除" (verify and delete) action on
- * critical log entries. The user taps the button to confirm
- * the offline event has been handled, then the entry is deleted.
- * Uses a callback [onVerifyDelete] to trigger the API call from
- * the fragment.
+ * v1.8.x: "核查" button on critical log entries. Tapping marks the
+ * log as verified locally (hides the button) — no API call is made.
  *
  * Uses a sealed [LogListItem] to represent both section headers
  * and individual log entries in the same RecyclerView.
  */
 class ServiceLogAdapter(
     private val onHeaderClick: (LogListItem.Section) -> Unit,
-    private val onVerifyDelete: ((SystemLog) -> Unit)? = null,
 ) : ListAdapter<LogListItem, RecyclerView.ViewHolder>(DiffCallback()) {
 
     @Volatile
     private var cameraMap: Map<Long, Camera> = emptyMap()
+    // v1.8.x: IDs of logs that have been verified by the user.
+    private val verifiedIds = mutableSetOf<Long>()
 
     override fun getItemViewType(position: Int): Int = when (getItem(position)) {
         is LogListItem.Header -> TYPE_HEADER
@@ -112,14 +110,16 @@ class ServiceLogAdapter(
             binding.tvTime.text = timeFormat.format(Date(log.ts * 1000L))
             bindCameraStatus(log)
 
-            // v1.8.14: show "核查并删除" button for critical logs
-            // (camera/device offline). The user reviews the log and
-            // taps to confirm the issue has been handled, then the
-            // entry is deleted.
+            // v1.8.x: show "核查" button for critical logs. Tapping
+            // marks the log as verified locally (hides the button).
+            // No API call is made — the log stays in the list.
             val isCritical = log.level == SystemLogLevel.CRITICAL
-            binding.btnVerifyDelete.visibility = if (isCritical) View.VISIBLE else View.GONE
+            val isVerified = isCritical && verifiedIds.contains(log.id)
+            binding.btnVerifyDelete.visibility =
+                if (isCritical && !isVerified) View.VISIBLE else View.GONE
             binding.btnVerifyDelete.setOnClickListener {
-                onVerifyDelete?.invoke(log)
+                verifiedIds.add(log.id)
+                binding.btnVerifyDelete.visibility = View.GONE
             }
         }
 
