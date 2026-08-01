@@ -24,13 +24,13 @@ object SystemLogLevel {
 
 @Serializable
 data class SystemLog(
-    @SerialName("ID") val id: Long = 0,
+    @SerialName("id") val id: Long = 0,
     @SerialName("ts") val ts: Long = 0,
-    @SerialName("EventType") val event_type: String = "",
-    @SerialName("Level") val level: String = SystemLogLevel.NORMAL,
-    @SerialName("Source") val source: String = "",
-    @SerialName("Message") val message: String = "",
-    @SerialName("Payload") val payload: String = ""
+    @SerialName("event_type") val event_type: String = "",
+    @SerialName("level") val level: String = SystemLogLevel.NORMAL,
+    @SerialName("source") val source: String = "",
+    @SerialName("message") val message: String = "",
+    @SerialName("payload") val payload: String = ""
 )
 
 @Serializable
