@@ -1,7 +1,6 @@
 package com.homedatacenter.app.ui.settings
 
 import android.app.AlertDialog
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.Handler
@@ -14,7 +13,6 @@ import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.homedatacenter.app.R
 import com.homedatacenter.app.databinding.FragmentSettingsBinding
-import com.homedatacenter.app.ui.admin.UsersActivity
 import com.homedatacenter.app.ui.main.MainActivity
 import com.homedatacenter.app.util.ApkInstaller
 import com.homedatacenter.app.util.JwtUtil
@@ -70,9 +68,6 @@ class SettingsFragment : Fragment() {
         setupUpdateSection()
 
         binding.btnLogout.setOnClickListener { showLogoutDialog() }
-        binding.btnOpenUsers.setOnClickListener {
-            startActivity(Intent(requireContext(), UsersActivity::class.java))
-        }
 
         loadUserInfo()
         setupVersion()

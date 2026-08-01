@@ -35,37 +35,11 @@ data class UserList(
  *
  * @param name 1..32 runes; unicode letters/digits/_/-
  * @param isAdmin grant admin role
- * @param initialDeviceName optional — when set, the server creates a first
- *   auth device for the new user and returns the plaintext AccessKey once.
  */
 @Serializable
 data class CreateUserRequest(
     val name: String,
     @SerialName("is_admin") val isAdmin: Boolean = false,
-    @SerialName("initial_device_name") val initialDeviceName: String? = null,
-)
-
-/**
- * Response data for POST /api/v1/user when initialDeviceName is set.
- *
- * @param accessKey 64-char hex plaintext access key — shown only once at
- *   creation time. The server stores only the SHA-256 hash.
- */
-@Serializable
-data class CreateUserResult(
-    val id: Long,
-    val name: String,
-    @SerialName("is_admin") val isAdmin: Boolean,
-    @SerialName("created_at") val createdAt: String? = null,
-    @SerialName("updated_at") val updatedAt: String? = null,
-    val device: CreatedDeviceRef? = null,
-    @SerialName("access_key") val accessKey: String? = null,
-)
-
-@Serializable
-data class CreatedDeviceRef(
-    val id: Long,
-    @SerialName("device_name") val deviceName: String,
 )
 
 /**

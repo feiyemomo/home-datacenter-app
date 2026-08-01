@@ -14,6 +14,7 @@ import com.homedatacenter.app.ui.cameras.CamerasFragment
 import com.homedatacenter.app.ui.dashboard.DashboardFragment
 import com.homedatacenter.app.ui.logs.ServiceLogsFragment
 import com.homedatacenter.app.ui.login.LoginActivity
+import com.homedatacenter.app.ui.admin.UsersFragment
 import com.homedatacenter.app.ui.settings.SettingsFragment
 import kotlinx.coroutines.launch
 
@@ -27,6 +28,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var camerasFragment: Fragment
     private lateinit var logsFragment: Fragment
     private lateinit var settingsFragment: Fragment
+    private lateinit var usersFragment: Fragment
     private var activeFragment: Fragment? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -107,6 +109,7 @@ class MainActivity : AppCompatActivity() {
         val target = when (binding.bottomNav.selectedItemId) {
             R.id.nav_cameras -> camerasFragment
             R.id.nav_logs -> logsFragment
+            R.id.nav_users -> usersFragment
             R.id.nav_settings -> settingsFragment
             else -> dashboardFragment
         }
@@ -141,6 +144,7 @@ class MainActivity : AppCompatActivity() {
         dashboardFragment = fm.findFragmentByTag("dashboard") ?: DashboardFragment()
         camerasFragment = fm.findFragmentByTag("cameras") ?: CamerasFragment()
         logsFragment = fm.findFragmentByTag("logs") ?: ServiceLogsFragment()
+        usersFragment = fm.findFragmentByTag("users") ?: UsersFragment()
         settingsFragment = fm.findFragmentByTag("settings") ?: SettingsFragment()
 
         // v1.6.13: always add the dashboard as the initially-visible
@@ -151,6 +155,7 @@ class MainActivity : AppCompatActivity() {
         // restored yet at onCreate time.
         fm.commit {
             add(R.id.nav_host_fragment, settingsFragment, "settings").hide(settingsFragment)
+            add(R.id.nav_host_fragment, usersFragment, "users").hide(usersFragment)
             add(R.id.nav_host_fragment, logsFragment, "logs").hide(logsFragment)
             add(R.id.nav_host_fragment, camerasFragment, "cameras").hide(camerasFragment)
             add(R.id.nav_host_fragment, dashboardFragment, "dashboard")
@@ -162,6 +167,7 @@ class MainActivity : AppCompatActivity() {
         // Service logs tab is admin-only — non-admin users get a
         // simplified navigation bar without the logs entry.
         binding.bottomNav.menu.findItem(R.id.nav_logs)?.isVisible = container.prefsManager.isAdmin
+        binding.bottomNav.menu.findItem(R.id.nav_users)?.isVisible = container.prefsManager.isAdmin
     }
 
     private fun setupNavigation() {
@@ -170,6 +176,7 @@ class MainActivity : AppCompatActivity() {
                 R.id.nav_dashboard -> { showFragment(dashboardFragment); true }
                 R.id.nav_cameras -> { showFragment(camerasFragment); true }
                 R.id.nav_logs -> { showFragment(logsFragment); true }
+                R.id.nav_users -> { showFragment(usersFragment); true }
                 R.id.nav_settings -> { showFragment(settingsFragment); true }
                 else -> false
             }

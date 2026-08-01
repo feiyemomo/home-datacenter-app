@@ -2,12 +2,14 @@ package com.homedatacenter.app.ui.admin
 
 import android.app.AlertDialog
 import android.os.Bundle
+import android.view.LayoutInflater
 import android.view.View
+import android.view.ViewGroup
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.Toast
-import androidx.appcompat.app.AppCompatActivity
+import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.homedatacenter.app.HomeCenterApp
@@ -18,7 +20,7 @@ import com.homedatacenter.app.di.AppContainer
 import kotlinx.coroutines.launch
 
 /**
- * Admin-only user management screen.
+ * Admin-only user management fragment, shown as a tab in [com.homedatacenter.app.ui.main.MainActivity].
  *
  * Shows the full user list (GET /api/v1/user), lets the admin create
  * new users (POST /api/v1/user), rename / toggle admin (PUT), and
@@ -28,25 +30,30 @@ import kotlinx.coroutines.launch
  * surface the error message verbatim. The last-admin guard is also
  * enforced by the server.
  */
-class UsersActivity : AppCompatActivity() {
+class UsersFragment : Fragment() {
 
-    private lateinit var binding: ActivityUsersBinding
+    private var _binding: ActivityUsersBinding? = null
+    private val binding get() = _binding!!
     private lateinit var container: AppContainer
     private lateinit var adapter: UserListAdapter
 
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        binding = ActivityUsersBinding.inflate(layoutInflater)
-        setContentView(binding.root)
+    override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
+        _binding = ActivityUsersBinding.inflate(inflater, container, false)
+        return binding.root
+    }
 
-        container = (application as HomeCenterApp).container
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        this.container = (requireContext().applicationContext as HomeCenterApp).container
 
-        binding.toolbar.setNavigationOnClickListener { finish() }
+        // No back button since it's a tab
+        binding.toolbar.setNavigationIcon(null)
+        binding.toolbar.title = getString(R.string.users_title)
         binding.fabAddUser.setOnClickListener { showCreateUserDialog() }
         binding.swipeRefresh.setOnRefreshListener { loadUsers() }
 
         adapter = UserListAdapter { user -> showEditUserDialog(user) }
-        binding.rvUsers.layoutManager = LinearLayoutManager(this)
+        binding.rvUsers.layoutManager = LinearLayoutManager(requireContext())
         binding.rvUsers.adapter = adapter
 
         loadUsers()
@@ -70,18 +77,18 @@ class UsersActivity : AppCompatActivity() {
     private fun showCreateUserDialog() {
         val token = container.prefsManager.token ?: return
 
-        val dialogContainer = LinearLayout(this).apply {
-            orientation = android.widget.LinearLayout.VERTICAL
+        val dialogContainer = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
             setPadding(50, 30, 50, 10)
         }
-        val etName = EditText(this).apply { hint = getString(R.string.user_name_label) }
-        val cbAdmin = CheckBox(this).apply { text = getString(R.string.user_admin_label) }
+        val etName = EditText(requireContext()).apply { hint = getString(R.string.user_name_label) }
+        val cbAdmin = CheckBox(requireContext()).apply { text = getString(R.string.user_admin_label) }
         dialogContainer.apply {
             addView(etName)
             addView(cbAdmin)
         }
 
-        AlertDialog.Builder(this)
+        AlertDialog.Builder(requireContext())
             .setTitle(R.string.users_create)
             .setView(dialogContainer)
             .setPositiveButton(R.string.action_create) { _, _ ->
@@ -112,15 +119,15 @@ class UsersActivity : AppCompatActivity() {
         val token = container.prefsManager.token ?: return
         val currentUserId = container.prefsManager.userId
 
-        val dialogContainer = LinearLayout(this).apply {
-            orientation = android.widget.LinearLayout.VERTICAL
+        val dialogContainer = LinearLayout(requireContext()).apply {
+            orientation = LinearLayout.VERTICAL
             setPadding(50, 30, 50, 10)
         }
-        val etName = EditText(this).apply {
+        val etName = EditText(requireContext()).apply {
             setText(user.name)
             hint = getString(R.string.user_name_label)
         }
-        val cbAdmin = CheckBox(this).apply {
+        val cbAdmin = CheckBox(requireContext()).apply {
             text = getString(R.string.user_admin_label)
             isChecked = user.isAdmin
             // Disable if editing self — backend rejects self-demote.
@@ -134,7 +141,7 @@ class UsersActivity : AppCompatActivity() {
             addView(cbAdmin)
         }
 
-        AlertDialog.Builder(this)
+        AlertDialog.Builder(requireContext())
             .setTitle(R.string.user_action_edit)
             .setView(dialogContainer)
             .setPositiveButton(R.string.action_save) { _, _ ->
@@ -175,7 +182,7 @@ class UsersActivity : AppCompatActivity() {
             return
         }
 
-        AlertDialog.Builder(this)
+        AlertDialog.Builder(requireContext())
             .setTitle(R.string.user_action_delete)
             .setMessage(getString(R.string.user_delete_confirm) + "\n\n" + user.name)
             .setPositiveButton(R.string.btn_confirm) { _, _ ->
@@ -199,6 +206,11 @@ class UsersActivity : AppCompatActivity() {
     }
 
     private fun toast(msg: String) {
-        Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
+        Toast.makeText(requireContext(), msg, Toast.LENGTH_SHORT).show()
+    }
+
+    override fun onDestroyView() {
+        super.onDestroyView()
+        _binding = null
     }
 }

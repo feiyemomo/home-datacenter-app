@@ -17,6 +17,7 @@
     <string name="nav_logs">日志</string>
     <string name="no_logs">暂无日志</string>
     <string name="logs_all_loaded">已加载全部</string>
+    <string name="nav_users">用户管理</string>
     <string name="nav_settings">设置</string>
 
     <string name="dashboard_title">系统概览</string>
@@ -208,11 +209,6 @@
     <string name="user_devices_count">设备数: %1$d</string>
     <string name="user_action_edit">编辑</string>
     <string name="user_action_delete">删除</string>
-    <string name="user_create_initial_device">同时创建首个设备</string>
-    <string name="user_device_name_hint">设备名称 (可选)</string>
-    <string name="user_access_key_label">访问密钥 (仅显示一次)</string>
-    <string name="user_access_key_copy">复制密钥</string>
-    <string name="user_access_key_copied">已复制到剪贴板</string>
     <string name="user_delete_confirm">删除此用户将吊销其所有设备。该操作不可撤销。</string>
     <string name="user_last_admin_guard">无法删除最后一个管理员</string>
     <string name="user_self_delete_guard">无法删除当前登录用户</string>
