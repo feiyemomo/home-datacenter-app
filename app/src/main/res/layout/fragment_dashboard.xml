@@ -323,7 +323,7 @@
                 android:orientation="vertical"
                 android:background="@drawable/bg_card_rounded"
                 android:padding="14dp"
-                android:layout_marginTop="6dp"
+                android:layout_marginTop="10dp"
                 android:clickable="true"
                 android:focusable="true"
                 android:foreground="?attr/selectableItemBackground">

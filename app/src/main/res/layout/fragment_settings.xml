@@ -61,6 +61,37 @@
                 android:textColor="@color/text_primary"
                 android:layout_marginTop="4dp" />
 
+            <!-- Account management - logout -->
+            <LinearLayout
+                android:id="@+id/btnAccountManagement"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="?attr/selectableItemBackground"
+                android:paddingVertical="12dp"
+                android:layout_marginTop="4dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="账号管理"
+                    android:textSize="15sp"
+                    android:textColor="@color/text_primary" />
+
+                <TextView
+                    android:id="@+id/tvAccountAction"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="退出登录"
+                    android:textSize="13sp"
+                    android:textColor="@color/error"
+                    android:visibility="gone" />
+            </LinearLayout>
+
             <View
                 android:layout_width="match_parent"
                 android:layout_height="1dp"
@@ -213,16 +244,6 @@
                 android:textSize="11sp"
                 android:textColor="@color/text_hint" />
         </LinearLayout>
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnLogout"
-            android:layout_width="match_parent"
-            android:layout_height="36dp"
-            android:text="@string/setting_logout"
-            android:textColor="@color/text_hint"
-            android:layout_marginTop="-8dp"
-            android:layout_marginBottom="24dp"
-            style="@style/Widget.MaterialComponents.Button.TextButton" />
 
         <TextView
             android:id="@+id/tvVersion"

@@ -126,17 +126,13 @@ class DashboardFragment : Fragment() {
         }
 
         // Non-admin users see a simplified dashboard: the 4 stat
-        // cards and the network quality detail rows are hidden, so
-        // only the weather card, network stars + title, recent alerts
-        // and recent logs remain.
+        // cards are hidden, but the network quality card with more
+        // details is shown. The recent logs section is hidden.
         val isAdmin = (activity as? MainActivity)?.container?.prefsManager?.isAdmin == true
         if (!isAdmin) {
             binding.gridStats.visibility = View.GONE
-            // Network card: keep the title + stars row, hide all
-            // detail rows (strategy label, upgrade hint, path chip,
-            // IPv6/P2P/Relay capability dots).
-            binding.networkStrategyRow.visibility = View.GONE
-            binding.networkDetailRow.visibility = View.GONE
+            // v1.6.40: show the network quality card with more details
+            // for non-admin users (strategy label, path chip, IPv6/P2P/Relay dots).
             // v1.6.40: hide the "最近日志" section for non-admin users
             // (the logs tab is also hidden in the bottom nav).
             binding.tvRecentLogsTitle.visibility = View.GONE

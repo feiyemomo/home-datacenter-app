@@ -66,7 +66,14 @@ class SettingsFragment : Fragment() {
         setupJwtInfo(prefs)
         setupUpdateSection()
 
-        binding.btnLogout.setOnClickListener { showLogoutDialog() }
+        binding.btnAccountManagement.setOnClickListener {
+            if (binding.tvAccountAction.visibility == View.VISIBLE) {
+                binding.tvAccountAction.visibility = View.GONE
+            } else {
+                binding.tvAccountAction.visibility = View.VISIBLE
+            }
+        }
+        binding.tvAccountAction.setOnClickListener { showLogoutDialog() }
 
         loadUserInfo()
         setupVersion()
