@@ -1,21 +1,41 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- v1.6.8: warmed up the alert/recording card background. Was
-     pure white + cold gray border (#E0E0E0), which read as sterile
-     next to the warm gradient background of fragment_dashboard and
-     the warm glass tiles of the recordings list. Now uses @color/card_bg
-     (warm cream in light mode, dark slate in dark mode) + soft peach
-     border (@color/card_stroke) so the card visually belongs to the
-     "液态玻璃，温馨" palette while still feeling like a neutral surface
-     (alerts shouldn't be overly warm since they represent urgent events). -->
-<shape xmlns:android="http://schemas.android.com/apk/res/android">
-    <solid android:color="@color/card_bg" />
-    <corners android:radius="16dp" />
-    <stroke
-        android:width="1dp"
-        android:color="@color/card_stroke" />
-    <padding
-        android:bottom="0dp"
-        android:left="0dp"
-        android:right="0dp"
-        android:top="0dp" />
-</shape>
+<!-- Subtle card surface for alerts/recordings — warm cream in light mode,
+     warm slate in dark mode, with soft border. Not full glass (alerts
+     should feel slightly more solid) but still part of the warm palette. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Soft shadow -->
+    <item android:top="1dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#0A000000" />
+            <corners android:radius="18dp" />
+        </shape>
+    </item>
+    <!-- Main card body -->
+    <item android:bottom="1dp">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/card_bg" />
+            <corners android:radius="18dp" />
+            <stroke
+                android:width="1dp"
+                android:color="@color/card_stroke" />
+        </shape>
+    </item>
+    <!-- Subtle top highlight for depth -->
+    <item
+        android:left="1dp"
+        android:right="1dp"
+        android:top="1dp"
+        android:bottom="17dp">
+        <shape android:shape="rectangle">
+            <gradient
+                android:type="linear"
+                android:angle="-90"
+                android:startColor="#0DFFFFFF"
+                android:endColor="@android:color/transparent" />
+            <corners
+                android:radius="17dp"
+                android:bottomLeftRadius="0dp"
+                android:bottomRightRadius="0dp" />
+        </shape>
+    </item>
+</layer-list>

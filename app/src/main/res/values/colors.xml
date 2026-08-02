@@ -1,41 +1,55 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="primary">#FF8A65</color>
-    <color name="primary_dark">#F4511E</color>
-    <color name="primary_light">#FFAB91</color>
-    <color name="secondary">#4FC3F7</color>
-    <color name="secondary_dark">#0288D1</color>
-    <color name="accent">#FFD54F</color>
+    <!-- Primary warm amber — matches web accent-warm: 215 160 100 -->
+    <color name="primary">#D7A064</color>
+    <color name="primary_dark">#C48D50</color>
+    <color name="primary_light">#E8C49A</color>
+    <!-- Secondary: warm peach-coral for highlights -->
+    <color name="secondary">#E8A87C</color>
+    <color name="secondary_dark">#D4956A</color>
+    <!-- Accent: warm amber glow (used for stars, alert pulses) -->
+    <color name="accent">#D4A055</color>
 
-    <color name="online">#66BB6A</color>
-    <color name="offline">#BDBDBD</color>
-    <color name="error">#EF5350</color>
-    <color name="warning">#FFA726</color>
+    <!-- Status colors — warm-toned variants -->
+    <color name="online">#5CB880</color>
+    <color name="offline">#9E9E9E</color>
+    <color name="error">#E07070</color>
+    <color name="warning">#D4A055</color>
 
     <color name="white">#FFFFFF</color>
     <color name="black">#000000</color>
 
-    <color name="text_primary">#2D3748</color>
-    <color name="text_secondary">#718096</color>
-    <color name="text_hint">#A0AEC0</color>
+    <!-- Text — warm dark slate (not cool blue-gray) -->
+    <color name="text_primary">#3D3530</color>
+    <color name="text_secondary">#8A7E72</color>
+    <color name="text_hint">#B0A394</color>
     <color name="text_on_primary">#FFFFFF</color>
 
-    <color name="bg_primary">#FFF5F0</color>
-    <color name="bg_secondary">#FFEFE6</color>
-    <color name="bg_surface">#FFFFFF</color>
-    <color name="divider">#E2E8F0</color>
+    <!-- Background — warm cream palette matching web bg: 246 241 234 (#F6F1EA) -->
+    <color name="bg_primary">#F6F1EA</color>
+    <color name="bg_secondary">#FDF8F2</color>
+    <color name="bg_surface">#FFFCF8</color>
+    <color name="divider">#E8DFD3</color>
 
-    <color name="glass_bg">#E6FFFFFF</color>
+    <!-- Glass effect — frosted warm white with top edge hint; matches web glass:
+         backdrop white at 45-62% + warm tint -->
+    <color name="glass_bg">#CCFFFFFF</color>
     <color name="glass_border">#33FFFFFF</color>
-    <color name="glass_shadow">#1A000000</color>
+    <color name="glass_shadow">#14000000</color>
+    <color name="glass_highlight">#26FFFFFF</color>
 
-    <color name="gradient_start">#FFE5D9</color>
-    <color name="gradient_mid">#FFF1E6</color>
-    <color name="gradient_end">#F0F9FF</color>
+    <!-- Page gradient: warm cream → soft peach → warm ivory (no cold blue) -->
+    <color name="gradient_start">#F8EDE0</color>
+    <color name="gradient_mid">#FDF4EA</color>
+    <color name="gradient_end">#F6F1EA</color>
 
+    <!-- Card surfaces -->
     <color name="card_bg">#FFFCF8</color>
-    <color name="card_stroke">#FFE0D0</color>
+    <color name="card_stroke">#F0E4D4</color>
     <color name="camera_bg">#1A1A1A</color>
-    <color name="card_bottom_bg">#FFFFFF</color>
-    <color name="red">#EF5350</color>
+    <color name="card_bottom_bg">#FFFCF8</color>
+    <color name="red">#E07070</color>
+
+    <!-- Icon circle warm tint (28% alpha of primary amber) -->
+    <color name="icon_circle_bg">#47D7A064</color>
 </resources>

@@ -53,17 +53,21 @@ import com.homedatacenter.app.data.model.Camera
 // constants below were the only code path — Compose doesn't see the
 // values-night/colors.xml resource overrides that the XML drawables
 // use, so the dark values must be declared explicitly here.
-private val CardBackgroundLight = Color(0xF2FFFFFF)     // 95% warm white
-private val CardBorderLight    = Color(0x66FFD4B8)      // warm peach edge
-private val TextPrimaryLight   = Color(0xFF2D3748)      // deep slate (warm-toned)
+// v1.7.x: warm liquid glass palette aligned with web frontend.
+// Light: frosted warm white + warm peach border + warm dark brown text.
+// Dark: warm deep slate + subtle white edge + warm off-white text.
+private val CardBackgroundLight = Color(0xCCFFFFFF)     // 80% frosted white (glass)
+private val CardBorderLight    = Color(0x33FFFFFF)      // soft white edge
+private val TextPrimaryLight   = Color(0xFF3D3530)      // warm dark brown
 
-private val CardBackgroundDark  = Color(0xFF1E293B)     // slate-800
-private val CardBorderDark      = Color(0x33FFFFFF)     // 20% white edge
-private val TextPrimaryDark     = Color(0xFFE2E8F0)     // slate-200
+private val CardBackgroundDark  = Color(0xFF2A2632)     // warm deep slate
+private val CardBorderDark      = Color(0x1AFFFFFF)     // 10% white edge
+private val TextPrimaryDark     = Color(0xFFEAE2D8)     // warm off-white
 
-private val OnlineColor   = Color(0xFF35C98A)
-private val OfflineColor  = Color(0xFFE05B65)
-private val AccentColor   = Color(0xFFFF8A65)      // coral — matches the app's primary
+private val OnlineColor   = Color(0xFF5CB880)
+private val OfflineColor  = Color(0xFFE07070)
+private val AccentLight   = Color(0xFFD7A064)      // warm amber — matches light primary
+private val AccentDark    = Color(0xFFD7A064)      // warm amber — stays warm in dark mode
 
 /**
  * v1.6.4 rev6: redesigned camera list card.
@@ -115,6 +119,7 @@ fun CameraCard(
     val cardBackground = if (isDark) CardBackgroundDark else CardBackgroundLight
     val cardBorder = if (isDark) CardBorderDark else CardBorderLight
     val textPrimary = if (isDark) TextPrimaryDark else TextPrimaryLight
+    val accentColor = if (isDark) AccentDark else AccentLight
 
     Card(
         modifier = modifier
@@ -220,7 +225,7 @@ fun CameraCard(
                 ) {
                     StatusBadge(
                         text = camera.codec.ifBlank { "H264" }.uppercase(),
-                        color = AccentColor,
+                        color = accentColor,
                     )
                     if (camera.hasAudio) {
                         StatusBadge(
