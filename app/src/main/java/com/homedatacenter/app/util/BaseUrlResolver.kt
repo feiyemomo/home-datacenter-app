@@ -13,6 +13,7 @@ import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.min
 
 /**
  * Result of a single URL probe. `rttMs` is the wall-clock time from
@@ -734,20 +735,39 @@ class BaseUrlResolver(
         // another, defeating the parallelism.
         val (lanResult, ipv6Result, remoteResult) = runBlocking {
             coroutineScope {
-                // 1. LAN probe (two-pronged: HTTP + TCP fallback)
+                // 1. LAN probe (two-pronged: HTTP + TCP in parallel).
+                // Previously HTTP and TCP were sequential (HTTP first,
+                // TCP fallback on failure), which could take up to
+                // 2 × LAN_TIMEOUT_MS = 2s. Now they run in parallel,
+                // so the LAN probe completes in max(HTTP, TCP) =
+                // LAN_TIMEOUT_MS = 1s worst case. The faster result
+                // wins: if either succeeds, the LAN is reachable.
                 val lanDeferred = async(Dispatchers.IO) {
-                    var lan = probeUrl(LAN_URL, LAN_TIMEOUT_MS)
-                    if (!lan.alive) {
+                    val httpDeferred = async {
+                        probeUrl(LAN_URL, LAN_TIMEOUT_MS)
+                    }
+                    val tcpDeferred = async {
                         val tcpRtt = probeTcpRtt(LAN_HOST, LAN_PORT, LAN_TIMEOUT_MS)
-                        if (tcpRtt >= 0) {
+                        if (tcpRtt >= 0) ProbeResult(alive = true, rttMs = tcpRtt)
+                        else ProbeResult(alive = false, rttMs = -1L)
+                    }
+                    val httpResult = httpDeferred.await()
+                    val tcpResult = tcpDeferred.await()
+                    // Pick the best result: prefer alive over dead, lower RTT on ties.
+                    when {
+                        httpResult.alive && tcpResult.alive ->
+                            if (httpResult.rttMs <= tcpResult.rttMs) httpResult else tcpResult
+                        httpResult.alive -> httpResult
+                        tcpResult.alive -> {
                             // HTTP failed but TCP succeeded — vendor HTTP policy
                             // is likely intercepting. Use TCP connect time as the
                             // RTT proxy. The next real API call will reveal if
                             // HTTP actually works.
-                            lan = ProbeResult(alive = true, rttMs = tcpRtt)
+                            android.util.Log.i(TAG, "LAN: HTTP dead (${httpResult.rttMs}ms) but TCP alive (${tcpResult.rttMs}ms) — using TCP RTT proxy")
+                            tcpResult
                         }
+                        else -> ProbeResult(alive = false, rttMs = min(httpResult.rttMs, tcpResult.rttMs))
                     }
-                    lan
                 }
 
                 // 2. IPv6 direct probe. OkHttp will fail immediately
@@ -1094,27 +1114,26 @@ class BaseUrlResolver(
         // networks in practice.
         private const val TTL_MS = 5L * 60 * 1000
 
-        // LAN probe timeout for async re-probes. Generous enough that
-        // a busy Wi-Fi router still answers, tight enough that the
-        // probe thread doesn't linger when off-LAN.
-        private const val LAN_TIMEOUT_MS = 1_500
+        // LAN probe timeout. 1s is more than enough for a local network
+        // (typical 10-50ms RTT). Reduced from 1.5s to speed up the
+        // overall probe cycle — the slowest probe (Remote) dominates
+        // the wall time anyway, but tightening LAN helps when the HTTP
+        // probe fails and we need the TCP fallback quickly.
+        private const val LAN_TIMEOUT_MS = 1_000
 
         // v1.6.23: IPv6 direct probe timeout. OkHttp fails immediately
         // (NoRouteToHostException) if the phone has no IPv6 route, so
         // this timeout only fires when the phone HAS IPv6 but the NAS
-        // is unreachable (e.g. NAS offline, prefix rotated). 2s is
+        // is unreachable (e.g. NAS offline, prefix rotated). 1.5s is
         // enough for a cross-carrier IPv6 TCP handshake (typical
         // 100-500ms on Chinese cellular IPv6).
-        private const val IPV6_TIMEOUT_MS = 2_000
+        private const val IPV6_TIMEOUT_MS = 1_500
 
-        // v1.6.23: remote probe timeout shortened 8s → 4s. The Tunnel
-        // is the last-resort fallback; if it's truly unreachable the
-        // user has bigger problems than which URL we picked. 4s is
-        // enough for a cold Cloudflare Tunnel connection (typical
-        // 1-2s, worst ~3s on Chinese cellular). The previous 8s
-        // timeout made the startup probe feel sluggish when both LAN
-        // and IPv6 were unavailable.
-        private const val REMOTE_TIMEOUT_MS = 4_000
+        // v1.6.23: remote probe timeout. The Tunnel is the last-resort
+        // fallback; 3s is enough for a cold Cloudflare Tunnel connection
+        // (typical 1-2s, worst ~3s on Chinese cellular). Reduced from
+        // 4s to minimize the total probe wall time.
+        private const val REMOTE_TIMEOUT_MS = 3_000
 
         // Escalating startup probe delays. Each entry schedules a
         // background probe at the given offset from app launch.

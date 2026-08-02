@@ -94,10 +94,12 @@ class SettingsFragment : Fragment() {
             }
             prefs.themeMode = mode
             ThemeManager.applyTheme(mode)
-            // setDefaultNightMode triggers Activity recreate automatically.
-            // Post the recreate to the next frame to avoid conflicts with the
-            // RadioGroup state restoration during the current frame.
-            binding.root.post { activity?.recreate() }
+            // setDefaultNightMode triggers Activity recreation automatically.
+            // Do NOT call activity?.recreate() here — it would cause a
+            // double-recreation race condition, crashing the app with a
+            // Fragment state conflict (the recreate triggered by
+            // setDefaultNightMode and the explicit recreate overlap,
+            // leaving the fragment in an inconsistent state).
         }
     }
 
