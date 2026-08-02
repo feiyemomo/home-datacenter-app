@@ -11,6 +11,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.homedatacenter.app.R
 import com.homedatacenter.app.data.api.NetworkFactory
+import com.homedatacenter.app.util.CacheManager
 import com.homedatacenter.app.data.model.SystemLog
 import com.homedatacenter.app.data.model.SystemLogListData
 import com.homedatacenter.app.data.model.SystemLogLevel
@@ -125,6 +126,24 @@ class ServiceLogsFragment : Fragment() {
         isLoading = true
         if (currentOffset > 0) binding.progressLoadMore.visibility = View.VISIBLE
 
+        // Check cache before making API call
+        val cacheKey = "logs.page.${currentOffset / pageLimit}"
+        val cached = CacheManager.getInstance(requireContext()).get<List<SystemLog>>(cacheKey, 60_000L)
+        if (cached != null) {
+            for (log in cached) {
+                if (log.level == SystemLogLevel.CRITICAL) {
+                    criticalLogs.add(log)
+                } else {
+                    otherLogs.add(log)
+                }
+            }
+            rebuildDisplayList()
+            currentOffset += cached.size
+            hasMore = cached.size >= pageLimit
+            isLoading = false
+            return
+        }
+
         lifecycleScope.launch {
             try {
                 val auth = "Bearer $token"
@@ -145,6 +164,9 @@ class ServiceLogsFragment : Fragment() {
                     }
                 }
                 rebuildDisplayList()
+
+                // Cache the fetched page
+                CacheManager.getInstance(requireContext()).set(cacheKey, logs)
 
                 currentOffset += logs.size
                 hasMore = logs.size >= pageLimit && (criticalLogs.size + otherLogs.size) < totalKnown

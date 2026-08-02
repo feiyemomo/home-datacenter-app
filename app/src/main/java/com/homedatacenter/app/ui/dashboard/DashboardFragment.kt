@@ -30,6 +30,10 @@ import com.homedatacenter.app.ui.cameras.CameraDetailActivity
 import com.homedatacenter.app.ui.main.MainActivity
 import com.homedatacenter.app.ui.network.NetworkDetailActivity
 import com.homedatacenter.app.util.AnimationHelper
+import com.homedatacenter.app.util.CacheManager
+import com.homedatacenter.app.util.NetworkMonitor
+import com.homedatacenter.app.util.StateLayout
+import com.homedatacenter.app.util.PrefetchManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -191,6 +195,22 @@ class DashboardFragment : Fragment() {
         // doesn't wait for an extra round-trip. Idempotent — the
         // AppContainer skips if already cached.
         (activity as? MainActivity)?.container?.prefetchIceConfig()
+
+        // Prefetch related data on idle
+        val mainActivity = activity as? MainActivity ?: return
+        val token = mainActivity.container.prefsManager.token
+        if (!token.isNullOrEmpty()) {
+            PrefetchManager.getInstance(requireContext()).prefetchOnIdle("cameras.list", {
+                withContext(Dispatchers.IO) {
+                    mainActivity.container.getRepository().listCameras(token, useCache = true)
+                }
+            }, 3000L)
+            PrefetchManager.getInstance(requireContext()).prefetchOnIdle("devices.list", {
+                withContext(Dispatchers.IO) {
+                    mainActivity.container.getRepository().listDevices(token, useCache = true)
+                }
+            }, 4000L)
+        }
     }
 
     /**
@@ -233,13 +253,25 @@ class DashboardFragment : Fragment() {
         )
     }
 
-    // --- 5-second status polling (matches web Dashboard) ---
+    // --- WebSocket event-driven + 30s fallback polling ---
 
     private fun startStatusPolling() {
         if (statusPollingJob?.isActive == true) return
         statusPollingJob = viewLifecycleOwner.lifecycleScope.launch {
             while (isActive && !isHidden) {
-                delay(5_000L)
+                delay(30_000L)
+                // Check network connectivity before fetching
+                if (!NetworkMonitor.getInstance(requireContext()).isOnlineNow()) {
+                    // Offline: skip fetch and show offline indicator
+                    latestSystemStatus?.let {
+                        updateStatusBanner(it.copy(
+                            mqttConnected = false,
+                            wsClients = 0,
+                            onlineDeviceCount = 0,
+                        ))
+                    }
+                    continue
+                }
                 loadSystemStatus()
                 // Keep the LAN/Remote path chip in sync with the
                 // resolver's most recent result. Cheap (just reads a
@@ -264,6 +296,11 @@ class DashboardFragment : Fragment() {
         val baseUrl = mainActivity.container.getApiBaseUrl()
         val base = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
         val url = "${base}api/v1/weather"
+
+        // Cached first for instant display (via CacheManager)
+        CacheManager.getInstance(requireContext()).get<WeatherResponse>("dashboard.weather", 30_000L)?.let { weather ->
+            updateWeatherUI(weather)
+        }
 
         binding.progressWeather.visibility = View.VISIBLE
         binding.tvWeatherError.visibility = View.GONE
@@ -292,6 +329,8 @@ class DashboardFragment : Fragment() {
                 val weather = apiResp.decodeData<WeatherResponse>()
                     ?: throw RuntimeException("empty weather data")
                 updateWeatherUI(weather)
+                // Cache the successful response
+                CacheManager.getInstance(requireContext()).set("dashboard.weather", weather)
             } catch (e: Exception) {
                 android.util.Log.w("Dashboard", "Weather load failed: ${e.message}")
                 binding.tvWeatherError.visibility = View.VISIBLE
@@ -352,17 +391,9 @@ class DashboardFragment : Fragment() {
         val mainActivity = activity as? MainActivity ?: return
         val token = mainActivity.container.prefsManager.token ?: return
 
-        // Cached first for instant display
-        val cachedStatus = mainActivity.container.prefsManager.cachedSystemStatus
-        if (!cachedStatus.isNullOrEmpty()) {
-            try {
-                val status = NetworkFactory.json.decodeFromString(
-                    SystemStatus.serializer(),
-                    cachedStatus
-                )
-                updateStats(status)
-            } catch (_: Exception) {
-            }
+        // Cached first for instant display (via CacheManager)
+        CacheManager.getInstance(requireContext()).get<SystemStatus>("dashboard.status", 30_000L)?.let { status ->
+            updateStats(status)
         }
 
         viewLifecycleOwner.lifecycleScope.launch {
@@ -383,6 +414,8 @@ class DashboardFragment : Fragment() {
                 mainActivity.container.baseUrlResolver.updateRttFromApiCall(apiElapsed)
                 latestSystemStatus = status
                 updateStats(status)
+                // Cache the successful response
+                CacheManager.getInstance(requireContext()).set("dashboard.status", status)
             } catch (error: Exception) {
                 android.util.Log.w("Dashboard", "System status load failed: ${error.message}")
             } finally {
@@ -519,17 +552,9 @@ class DashboardFragment : Fragment() {
         val mainActivity = activity as? MainActivity ?: return
         val token = mainActivity.container.prefsManager.token ?: return
 
-        // Cached first
-        val cached = mainActivity.container.prefsManager.cachedNetworkStatus
-        if (!cached.isNullOrEmpty()) {
-            try {
-                val status = NetworkFactory.json.decodeFromString(
-                    NetworkStatus.serializer(),
-                    cached
-                )
-                updateNetworkStatus(status)
-            } catch (_: Exception) {
-            }
+        // Cached first for instant display (via CacheManager)
+        CacheManager.getInstance(requireContext()).get<NetworkStatus>("network.status", 30_000L)?.let { status ->
+            updateNetworkStatus(status)
         }
 
         lifecycleScope.launch {
@@ -541,6 +566,8 @@ class DashboardFragment : Fragment() {
                     refresh = forceRefresh,
                 )
                 updateNetworkStatus(status)
+                // Cache the successful response
+                CacheManager.getInstance(requireContext()).set("network.status", status)
             } catch (e: Exception) {
                 android.util.Log.w("Dashboard", "Network status load failed: ${e.message}")
                 updateNetworkStatusError()
@@ -901,6 +928,13 @@ class DashboardFragment : Fragment() {
         val mainActivity = activity as? MainActivity ?: return
         val token = mainActivity.container.prefsManager.token ?: return
 
+        // Cached first for instant display (via CacheManager)
+        CacheManager.getInstance(requireContext()).get<List<Alert>>("dashboard.alerts", 30_000L)?.let { alerts ->
+            alertAdapter.submitList(alerts)
+            binding.tvAlertsEmpty.visibility = if (alerts.isEmpty()) View.VISIBLE else View.GONE
+            binding.rvAlerts.visibility = if (alerts.isEmpty()) View.GONE else View.VISIBLE
+        }
+
         lifecycleScope.launch {
             try {
                 val resp = mainActivity.container.getApi().listAlerts("Bearer $token", limit = 5)
@@ -913,6 +947,8 @@ class DashboardFragment : Fragment() {
                 binding.tvAlertsEmpty.visibility = if (alerts.isEmpty()) View.VISIBLE else View.GONE
                 binding.rvAlerts.visibility = if (alerts.isEmpty()) View.GONE else View.VISIBLE
                 AnimationHelper.fadeIn(binding.rvAlerts, 300)
+                // Cache the successful response
+                CacheManager.getInstance(requireContext()).set("dashboard.alerts", alerts)
             } catch (_: Exception) {
                 binding.tvAlertsEmpty.visibility = View.VISIBLE
                 binding.rvAlerts.visibility = View.GONE

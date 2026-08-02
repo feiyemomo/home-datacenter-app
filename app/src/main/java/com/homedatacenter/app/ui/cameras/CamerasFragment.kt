@@ -14,7 +14,12 @@ import com.homedatacenter.app.data.api.NetworkFactory
 import com.homedatacenter.app.data.model.Camera
 import com.homedatacenter.app.databinding.FragmentCamerasBinding
 import com.homedatacenter.app.ui.main.MainActivity
+import com.homedatacenter.app.util.CacheManager
+import com.homedatacenter.app.util.NetworkMonitor
+import com.homedatacenter.app.util.PrefetchManager
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class CamerasFragment : Fragment() {
 
@@ -131,14 +136,10 @@ class CamerasFragment : Fragment() {
         val token = mainActivity.container.prefsManager.token ?: return
 
         // Immediately populate from cache
-        val cached = mainActivity.container.prefsManager.cachedCameras
+        val cached = CacheManager.getInstance(requireContext()).get<List<Camera>>("cameras.list", 30_000L)
         if (!cached.isNullOrEmpty()) {
-            try {
-                val cameras = NetworkFactory.json.decodeFromString<List<Camera>>(cached)
-                adapter.submitList(cameras)
-                showEmpty(cameras.isEmpty())
-            } catch (_: Exception) {
-            }
+            adapter.submitList(cached)
+            showEmpty(cached.isEmpty())
         }
 
         // Silent background refresh
@@ -151,11 +152,29 @@ class CamerasFragment : Fragment() {
 
         lifecycleScope.launch {
             try {
+                // If offline, skip network call and just show cached data
+                if (!NetworkMonitor.getInstance(requireContext()).isOnlineNow()) {
+                    val cached = CacheManager.getInstance(requireContext()).get<List<Camera>>("cameras.list", 30_000L)
+                    if (!cached.isNullOrEmpty()) {
+                        adapter.submitList(cached)
+                        showEmpty(cached.isEmpty())
+                    }
+                    return@launch
+                }
+
                 val cameras = mainActivity.container.getRepository().listCameras(
                     token, useCache = false, refreshCache = true
                 )
                 adapter.submitList(cameras)
                 showEmpty(cameras.isEmpty())
+
+                // Cache the result for offline access
+                CacheManager.getInstance(requireContext()).set("cameras.list", cameras)
+
+                // Prefetch ICE config for faster camera detail loading
+                PrefetchManager.getInstance(requireContext()).prefetchOnIdle("cameras.ice", {
+                    mainActivity.container.getRepository().getIceConfig(token)
+                }, 2000L)
             } catch (_: Exception) {
                 // Network failure: keep cached data
             } finally {

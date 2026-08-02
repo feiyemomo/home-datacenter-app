@@ -4,6 +4,7 @@ import android.app.Application
 import com.homedatacenter.app.di.AppContainer
 import com.homedatacenter.app.util.NetworkChangeMonitor
 import com.homedatacenter.app.util.PrefsManager
+import com.homedatacenter.app.util.NetworkMonitor
 import com.homedatacenter.app.util.ThemeManager
 
 class HomeCenterApp : Application() {
@@ -27,6 +28,8 @@ class HomeCenterApp : Application() {
         networkMonitor = NetworkChangeMonitor(this, container).also {
             it.register()
         }
+        // Initialize NetworkMonitor for UI state
+        NetworkMonitor.getInstance(this)
         // Synchronously probe the LAN (NAS) URL only when the user
         // hasn't set a manual baseUrl override. probeLanOnStartup
         // now runs on background daemon threads (no main-thread

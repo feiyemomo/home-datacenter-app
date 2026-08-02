@@ -13,6 +13,9 @@ import com.homedatacenter.app.R
 import com.homedatacenter.app.data.model.Device
 import com.homedatacenter.app.databinding.FragmentDevicesBinding
 import com.homedatacenter.app.ui.main.MainActivity
+import com.homedatacenter.app.util.CacheManager
+import com.homedatacenter.app.util.NetworkMonitor
+import com.homedatacenter.app.util.StateLayout
 import kotlinx.coroutines.launch
 
 class DevicesFragment : Fragment() {
@@ -152,9 +155,21 @@ class DevicesFragment : Fragment() {
         val mainActivity = activity as? MainActivity ?: return
         val token = mainActivity.container.prefsManager.token ?: return
 
-        val hasCache = !mainActivity.container.prefsManager.cachedDevices.isNullOrEmpty()
-        if (!hasCache) {
+        val cacheManager = CacheManager.getInstance(requireContext())
+        val cachedDevices = cacheManager.get<List<Device>>("devices.list", 30_000L)
+        if (!cachedDevices.isNullOrEmpty()) {
+            adapter.submitList(cachedDevices)
+            applyOnlineSnapshot()
+        } else {
             showLoading(true)
+        }
+
+        if (!NetworkMonitor.getInstance(requireContext()).isOnlineNow()) {
+            showLoading(false)
+            if (cachedDevices.isNullOrEmpty()) {
+                showEmpty(true)
+            }
+            return
         }
 
         lifecycleScope.launch {
@@ -166,6 +181,7 @@ class DevicesFragment : Fragment() {
                 )
                 adapter.submitList(devices)
                 applyOnlineSnapshot()
+                cacheManager.set("devices.list", devices)
                 showEmpty(devices.isEmpty())
             } catch (e: Exception) {
                 showEmpty(true)
@@ -188,6 +204,7 @@ class DevicesFragment : Fragment() {
                     useCache = false,
                     refreshCache = true
                 )
+                CacheManager.getInstance(requireContext()).set("devices.list", devices)
                 activity?.runOnUiThread {
                     adapter.submitList(devices)
                     applyOnlineSnapshot()

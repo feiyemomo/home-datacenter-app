@@ -1,6 +1,7 @@
 package com.homedatacenter.app.data.api
 
 import com.homedatacenter.app.BuildConfig
+import com.homedatacenter.app.util.RetryInterceptor
 import kotlinx.serialization.json.Json
 import okhttp3.ConnectionPool
 import okhttp3.MediaType.Companion.toMediaType
@@ -77,6 +78,11 @@ object NetworkFactory {
                         .build()
                 )
             }
+            // RetryInterceptor: automatically retries GET requests on
+            // transient failures (5xx, timeout, DNS failure, reset).
+            // Added AFTER the User-Agent interceptor but BEFORE the
+            // logging interceptor so retries are logged.
+            .addInterceptor(RetryInterceptor())
 
         if (enableLogging) {
             builder.addInterceptor(

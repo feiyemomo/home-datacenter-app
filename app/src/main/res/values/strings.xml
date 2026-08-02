@@ -132,6 +132,10 @@
     <string name="retry">重试</string>
     <string name="error">错误</string>
     <string name="success">成功</string>
+    <string name="error_occurred">操作失败</string>
+    <string name="error_icon">错误图标</string>
+    <string name="empty_icon">空状态图标</string>
+    <string name="no_data">暂无数据</string>
 
     <string name="badge_clip">查看录像</string>
     <string name="badge_snapshot">截图</string>
