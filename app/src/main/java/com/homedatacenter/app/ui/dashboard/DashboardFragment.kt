@@ -696,7 +696,7 @@ class DashboardFragment : Fragment() {
             message.topic == "camera.motion" -> showLiveDetection(message)
             message.topic == "system.log" -> {
                 // v1.7.10: skip processing system.log for non-admin users
-                if (!(activity as? MainActivity)?.container?.prefsManager?.isAdmin == true) return
+                if ((activity as? MainActivity)?.container?.prefsManager?.isAdmin != true) return
                 try {
                     val log = NetworkFactory.json.decodeFromJsonElement(
                         SystemLog.serializer(),
