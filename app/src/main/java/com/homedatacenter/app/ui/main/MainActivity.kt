@@ -43,17 +43,13 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // v1.6.13: pass null savedInstanceState to setupFragments so the
-        // else-branch never reads bottomNav.selectedItemId during onCreate
-        // — at this point BottomNavigationView's saved state hasn't been
-        // restored yet (restoration happens in onRestoreInstanceState,
-        // which runs AFTER onCreate). Reading selectedItemId here returns
-        // the menu's default (nav_dashboard), which desyncs the indicator
-        // from the actually-shown fragment after a config change / process
-        // death recovery. We now ALWAYS start with the dashboard + a
-        // hidden set of other fragments, and onRestoreInstanceState
-        // re-syncs the active fragment to the user's last tab.
-        setupFragments(null)
+        // Pass the real savedInstanceState so setupFragments can skip
+        // re-adding fragments after a config change (e.g. theme switch
+        // via recreate()). super.onCreate has already restored fragment
+        // state, so the fragments are added and their show/hide state is
+        // preserved. Calling add() again would throw
+        // IllegalStateException: Fragment already added.
+        setupFragments(savedInstanceState)
         setupNavigation()
         updateMenuByPermission()
         // Kick off a LAN probe on UI entry. By the time MainActivity
@@ -147,20 +143,27 @@ class MainActivity : AppCompatActivity() {
         usersFragment = fm.findFragmentByTag("users") ?: UsersFragment()
         settingsFragment = fm.findFragmentByTag("settings") ?: SettingsFragment()
 
-        // v1.6.13: always add the dashboard as the initially-visible
-        // fragment. onRestoreInstanceState (if there's saved state)
-        // re-syncs the active fragment to the user's last tab once
-        // BottomNavigationView's selection has been restored. Reading
-        // selectedItemId here is wrong — view state hasn't been
-        // restored yet at onCreate time.
-        fm.commit {
-            add(R.id.nav_host_fragment, settingsFragment, "settings").hide(settingsFragment)
-            add(R.id.nav_host_fragment, usersFragment, "users").hide(usersFragment)
-            add(R.id.nav_host_fragment, logsFragment, "logs").hide(logsFragment)
-            add(R.id.nav_host_fragment, camerasFragment, "cameras").hide(camerasFragment)
-            add(R.id.nav_host_fragment, dashboardFragment, "dashboard")
+        if (savedInstanceState == null) {
+            // First creation: add all fragments, show dashboard.
+            fm.commit {
+                add(R.id.nav_host_fragment, settingsFragment, "settings").hide(settingsFragment)
+                add(R.id.nav_host_fragment, usersFragment, "users").hide(usersFragment)
+                add(R.id.nav_host_fragment, logsFragment, "logs").hide(logsFragment)
+                add(R.id.nav_host_fragment, camerasFragment, "cameras").hide(camerasFragment)
+                add(R.id.nav_host_fragment, dashboardFragment, "dashboard")
+            }
+            activeFragment = dashboardFragment
+        } else {
+            // After recreation (e.g. theme switch), super.onCreate has
+            // already restored fragment state — fragments are added and
+            // their show/hide state is preserved. Do NOT call add() again
+            // or it throws IllegalStateException: Fragment already added.
+            // Determine the currently-visible fragment from restored state.
+            activeFragment = listOf(
+                dashboardFragment, camerasFragment, logsFragment,
+                usersFragment, settingsFragment
+            ).firstOrNull { it.isAdded && !it.isHidden } ?: dashboardFragment
         }
-        activeFragment = dashboardFragment
     }
 
     private fun updateMenuByPermission() {

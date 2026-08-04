@@ -3,7 +3,7 @@
 家庭数据中心 Android 客户端 — 一个用 **Kotlin + Jetpack Compose + ExoPlayer + WebRTC** 实现的家庭 NVR / IoT 控制台，配合 [home-datacenter](https://github.com/feiyemomo/home-datacenter) 后端使用，提供摄像头预览、WebRTC/MP4/HLS 直播（含音频）、录像回放、报警查看、设备状态、天气信息、局域网/远程自动切换和实时 WebSocket 推送。
 
 > 服务端项目：<https://github.com/feiyemomo/home-datacenter>
-> 当前版本：**v1.6.7**（versionCode 50）
+> 当前版本：**v1.7.17**（versionCode 111）
 
 ---
 
@@ -35,7 +35,7 @@
 | Compile SDK | 36 |
 | Java / Kotlin | 17 / 2.0 |
 | AGP | 9.2.1 |
-| 当前版本 | 1.6.7 (versionCode 50) |
+| 当前版本 | 1.7.17 (versionCode 111) |
 | 默认服务器 | `https://api.feiyemomo.top/`（远程） / `http://192.168.31.234:8088/`（局域网，自动探测） |
 
 App 通过 `(user_id, access_key)` 换取 JWT 后访问 `home-datacenter` 的 REST API 与 WebSocket。**BaseUrlResolver** 在启动时通过后台守护线程异步探测局域网 `http://192.168.31.234:8088/` 是否可达（TTFB ~10ms vs Cloudflare Tunnel 1.4s+），可达则切到局域网，否则走远程 Cloudflare Tunnel。启动调度采用指数退避重试（1.5s → 4s → 9s → 16s），覆盖真机「WiFi connected but not validated」窗口；同时附加 TCP socket 直连探测作为 OkHttp cleartext 拒绝时的兜底。NetworkChangeMonitor 注册 ConnectivityManager.NetworkCallback，在 WiFi/移动网络切换时立即触发 re-probe，无需等 5 分钟 TTL。摄像头直播走 go2rtc 暴露的 MP4（主）+ HLS（备），后端根据摄像头 `capabilities.audio` 在 go2rtc 流 URL 上自动追加 `#audio=aac` 启用音频转码，前端通过 ExoPlayer `volume` 控制静音/取消静音。
@@ -557,6 +557,96 @@ newPlayer.setAudioAttributes(
 16. **ExoPlayer prepare() 时无 surface** → MediaCodec `setOutputSurface BAD_INDEX` + 98% buffer 未取出，必须在 `prepare()` 前设置 `playerView.player`
 17. **HLS Init() 只等 3 秒** → 冷流 404，ExoPlayer 不重试 init.mp4，改为 MP4 优先策略
 18. **HEAD 探测 Gin GET 路由返回 404** → 探测后端端点必须用 GET，详见错误教训 §6 附加发现
+
+---
+
+## 更新日志
+
+### v1.7.17 — 主题切换 CancellationException 修复 (2026-08-02)
+
+#### 修复
+- **主题切换闪退**：Activity 重建时取消所有 Fragment `lifecycleScope` 协程，`CancellationException` 被通用 `catch (e: Exception)` 捕获并显示为"job was cancelled"
+- **ViewBinding 空指针**：`catch`/`finally` 块在 `onDestroyView` 后访问已销毁的 binding 导致 NPE
+- **Fragment 重复添加**：`setupFragments()` 无条件调用 `add()` 导致已恢复的 Fragment 抛出 `IllegalStateException`
+
+#### 修复方式
+- 所有 6 个 Fragment 添加 `catch (e: CancellationException) { throw e }` 在通用 Exception 捕获之前
+- 所有 `catch`/`finally` 块添加 `view != null` 检查
+- `setupFragments()` 仅在 `savedInstanceState == null` 时添加 Fragment
+
+### v1.7.15 — 主题切换 Gradient 角度修复 (2026-08-02)
+
+#### 修复
+- 5 个 drawable 文件中 `angle="-90"` 导致 Android 崩溃（要求非负 45 的倍数），改为 `angle="270"`
+- 补全暗色主题 Missing Material3 颜色属性（`colorSurface`, `colorOnSurface`, `colorSurfaceVariant`, `colorOnSurfaceVariant`, `colorOutline`）
+
+### v1.7.14 — 液态玻璃暖色风格升级 (2026-08-02)
+
+#### 新增
+- **颜色系统**：主色从珊瑚橙改为暖琥珀色（`colors.xml` 明暗双模式）
+- **玻璃效果**：软阴影 + 顶部高光 drawable（`bg_glass_card.xml`, `bg_button_primary.xml` 等）
+- **组件更新**：主按钮暖色渐变、CameraCard Compose 暗色模式适配、底部导航玻璃样式
+- 14 个文件修改（+341/-188 行）
+
+### v1.6.36 — 服务日志系统 + 摄像头预热 (2026-07-31)
+
+#### 新增
+- **服务日志 Tab**：`SystemLog` 模型，显示后端事件日志（设备/摄像头上下线）
+- **摄像头当前状态显示**：日志列表中每条 `camera.*` 日志显示"当前状态：在线/离线"副标题
+- **Dashboard 最近日志卡片**：显示最近 5 条服务日志，WebSocket 实时更新
+
+#### 修复
+- **心跳误判为设备上线**：`SetOnline()`/`SetOffline()` 缺少转换守卫，每次 WebSocket 重连都发布重复事件
+- **MQTT 心跳冗余日志**：`handleStatus()` 尾部无条件重发 `device.status` 事件
+
+#### 优化
+- **日志分级**：`SystemLog` 新增 `Level` 字段（critical/normal/info），图标着色
+- **ICE 配置预取提前**：从 `DashboardFragment.onResume` 提前到 `HomeCenterApp.onCreate`
+
+### v1.6.33 — DDNS 域名统一识别 (2026-07-30)
+
+#### 修复
+- **`fetchDynamicIpv6Url()` 返回字面量 URL**：改为返回 `IPV6_DIRECT_URL`（DDNS 域名），DDNS 提供商自动跟踪前缀轮换
+
+### v1.6.30 — Android 网络策略同步 (2026-07-30)
+
+#### 修复
+- **`BaseUrlResolver` IPv6 回退地址陈旧**：更新为当前 ISP 前缀
+- **Dashboard 首次网络状态缓存**：首次调用传 `refresh=true` 强制后端刷新
+
+### v1.6.29 — 延迟显示修复 (2026-07-22)
+
+#### 修复
+- Dashboard 网络质量卡片显示值从 ~500ms 降到 ~250ms
+- `updateRttFromApiCall()` 让真实 API 调用 RTT 写回显示值
+- `probeSync()` 在 probe 前先 warmup 当前 resolved URL
+- ConnectionPool keep-alive 5 分钟 → 10 分钟
+
+### v1.6.28 — IPv6 直连延迟优化 (2026-07-22)
+
+#### 优化
+- **OkHttp ConnectionPool**：显式配置 `.connectionPool(ConnectionPool(5, 5, TimeUnit.MINUTES))`
+- **warmupConnection**：`probeSync()` 检测到 URL 变化时通过 `HEAD` 请求预建 TCP 连接
+
+### v1.6.27 — 动态 IPv6 地址获取 (2026-07-22)
+
+#### 新增
+- **`fetchDynamicIpv6Url()`**：从后端 `/api/v1/network/ipv6` 动态获取 NAS IPv6 地址
+- **`tokenProvider`**：late-binding lambda 注入 JWT，登录后立即生效
+
+### v1.6.24 — Tunnel 路径尝试 WebRTC + HLS 延迟提示 (2026-07-21)
+
+#### 变更
+- **WebRTC 在所有路径尝试**：不再在调用 `startWebRtcStream()` 前检查 `isDirectPath()`
+- **HLS 延迟提示**：HLS 激活时显示"网络质量差，延迟较大"提示
+
+### v1.6.7 — Chip 合并 + 进度条并集 + 移除浅灰背景 (2026-07-19)
+
+#### 优化
+- **Chip ⋯ 合并**：连续 LOW-tier chip 折叠为"⋯"字符
+- **进度条区间并集**：连续同 tier 且 gap ≤ 30s 的 range 合并
+- **移除浅灰背景**：motionChipScroller 背景透明
+- **btnBack 提高对比度**：filled pill 样式
 
 ---
 

@@ -1138,3 +1138,152 @@ v1.5.3 只给 `CameraDetailActivity` 加了 `fitsSystemWindows`，但 `MainActiv
 
 保留：72×48 缩略图 + 标签 + 摄像头名 + 时间 + "查看录像" Chip（点击跳转摄像头 tab）。修复了原布局因 metadata 行过多导致"前门"等长摄像头名截断、Chip 文字溢出问题。
 
+---
+
+## 15. 液态玻璃暖色风格升级 (v1.7.14)
+
+### 设计动机
+
+用户要求"记住设计风格：液态玻璃，温馨"。从冷暗/珊瑚橙主题切换到暖色调液态玻璃风格，保持通信逻辑不变。
+
+### 颜色系统变更
+
+| 角色 | 旧值 | 新值 |
+|------|------|------|
+| 主色 (primary) | 珊瑚橙 `#FF6B35` | 暖琥珀 `#FFB300` |
+| 主色暗色 (primary dark) | `#E55A2B` | `#FF8F00` |
+| 表面色 (surface) | 冷白 `#F5F5F5` | 暖奶油 `#FFF8F0` |
+| 卡片背景 (card) | 冷暗 `#171C24` | 暖白 `#F2FFFFFF` + 暖桃描边 `#66FFD4B8` |
+
+### Drawable 新增
+
+- `bg_liquid_glass_warm.xml`：warm cream→soft blue 渐变 + 18% 白色覆盖层
+- `bg_glass_dark_panel.xml`：60% 深蓝灰 + 1dp 20% 白色描边
+- `bg_glass_card_warm.xml`：95% 暖白 + 1.2dp 暖桃色描边 + 22dp 圆角
+- `bg_button_primary.xml`：暖色渐变按钮背景
+
+### 文件统计
+
+14 个文件修改（+341/-188 行），涵盖 drawable、values/colors.xml、values-night/colors.xml、CameraCard.kt、activity_camera_detail.xml 等。
+
+---
+
+## 16. 主题切换修复 (v1.7.15–v1.7.17)
+
+### 问题一：Gradient 角度负值崩溃 (v1.7.15)
+
+**根因**：5 个 drawable 文件中 `angle="-90"`。Android 要求 gradient angle 为非负的 45 的倍数，负值导致 `InflationException`。
+
+**修复**：所有 `angle="-90"` 改为 `angle="270"`（等效角度）。
+
+**涉及文件**：
+- `bg_glass_card.xml`
+- `bg_glass_card_warm.xml`
+- `bg_card.xml`
+- `bg_card_rounded.xml`
+- `bg_bottom_nav_container.xml`
+
+### 问题二：Missing Material3 颜色属性 (v1.7.15)
+
+**根因**：`values-night/themes.xml` 缺少 `colorSurface`、`colorOnSurface`、`colorSurfaceVariant`、`colorOnSurfaceVariant`、`colorOutline` 五个 Material3 必需属性，导致暗色主题下某些组件渲染异常。
+
+**修复**：补全所有缺失属性。
+
+### 问题三：CancellationException + Fragment 重复添加 (v1.7.17)
+
+**根因**：主题切换通过 `Activity.recreate()` 实现，这会：
+1. 取消所有 Fragment `lifecycleScope` 协程（抛出 `CancellationException`）
+2. 通用 `catch (e: Exception)` 捕获并显示给用户
+3. `catch`/`finally` 块在 `onDestroyView` 后访问已销毁的 `binding` 导致 NPE
+4. `setupFragments()` 无条件调用 `add()` 导致已恢复的 Fragment 抛出 `IllegalStateException: Fragment already added`
+
+**修复**：
+
+```kotlin
+// 1. 在所有 Fragment 协程中，CancellationException 必须重新抛出
+lifecycleScope.launch {
+    try {
+        // ... network call
+    } catch (e: CancellationException) {
+        throw e  // 不要捕获，让协程正常取消
+    } catch (e: Exception) {
+        if (view != null) {  // 2. 检查 binding 是否仍然有效
+            toast("加载失败: ${e.message}")
+        }
+    } finally {
+        if (view != null) {
+            binding.swipeRefresh.isRefreshing = false
+        }
+    }
+}
+
+// 3. 仅在首次创建时 add Fragment
+private fun setupFragments(savedInstanceState: Bundle?) {
+    if (savedInstanceState == null) {
+        // 首次创建：添加所有 Fragment
+        fm.commit {
+            add(R.id.nav_host_fragment, dashboardFragment, "dashboard")
+            add(R.id.nav_host_fragment, camerasFragment, "cameras").hide(camerasFragment)
+            // ...
+        }
+    } else {
+        // 重建后 Fragment 已被 super.onCreate 恢复，不要再次 add
+        activeFragment = listOf(dashboardFragment, camerasFragment, ...)
+            .firstOrNull { it.isAdded && !it.isHidden } ?: dashboardFragment
+    }
+}
+```
+
+**涉及 Fragment**：DashboardFragment、SettingsFragment、UsersFragment、DevicesFragment、CamerasFragment、ServiceLogsFragment
+
+---
+
+## 17. 令牌轮换客户端处理 (v1.8.15)
+
+### 设计动机
+
+管理员需要一种方式立即使某台设备的所有 JWT 失效，而不必等到 365 天过期。
+
+### 机制
+
+后端 `Device` 模型新增 `TokenVersion int` 字段（默认 1）。JWT 中携带 `token_version` 声明。管理员调用 `POST /api/v1/device/:id/rotate-token` 时递增该设备的 `TokenVersion`。
+
+### 客户端处理
+
+`TokenRefreshInterceptor` 检测到 401 响应中包含 `"token version mismatch"` 时，自动使用存储的 `access_key` 调用 `/auth/bind` 重新绑定，获取新的 JWT，然后重试原始请求。整个过程对用户无感。
+
+```kotlin
+// TokenRefreshInterceptor.kt
+class TokenRefreshInterceptor(
+    private val prefsManager: PrefsManager,
+    private val repository: Lazy<HomeCenterRepository>,
+) : Interceptor {
+    override fun intercept(chain: Interceptor.Chain): Response {
+        val request = chain.request()
+        val response = chain.proceed(request)
+        
+        if (response.code == 401) {
+            val body = response.body?.string()
+            if (body?.contains("token version mismatch") == true) {
+                // 自动重新绑定
+                val token = prefsManager.token ?: return response
+                val userId = prefsManager.userId ?: return response
+                val accessKey = prefsManager.accessKey ?: return response
+                
+                val bindResult = runBlocking {
+                    repository.get().bindDevice(userId, accessKey)
+                }
+                // 更新 token 并重试
+            }
+        }
+        return response
+    }
+}
+```
+
+---
+
+## 文档版本
+
+**最后更新：** 2026-08-02 (v1.7.17: 液态玻璃 + 主题切换修复 + 令牌轮换)
+

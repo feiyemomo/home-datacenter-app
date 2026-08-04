@@ -34,6 +34,7 @@ import com.homedatacenter.app.util.CacheManager
 import com.homedatacenter.app.util.NetworkMonitor
 import com.homedatacenter.app.util.StateLayout
 import com.homedatacenter.app.util.PrefetchManager
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -331,12 +332,18 @@ class DashboardFragment : Fragment() {
                 updateWeatherUI(weather)
                 // Cache the successful response
                 CacheManager.getInstance(requireContext()).set("dashboard.weather", weather)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 android.util.Log.w("Dashboard", "Weather load failed: ${e.message}")
-                binding.tvWeatherError.visibility = View.VISIBLE
-                binding.tvWeatherError.text = getString(R.string.weather_failed)
+                if (view != null) {
+                    binding.tvWeatherError.visibility = View.VISIBLE
+                    binding.tvWeatherError.text = getString(R.string.weather_failed)
+                }
             } finally {
-                binding.progressWeather.visibility = View.GONE
+                if (view != null) {
+                    binding.progressWeather.visibility = View.GONE
+                }
             }
         }
     }
@@ -416,6 +423,8 @@ class DashboardFragment : Fragment() {
                 updateStats(status)
                 // Cache the successful response
                 CacheManager.getInstance(requireContext()).set("dashboard.status", status)
+            } catch (e: CancellationException) {
+                throw e
             } catch (error: Exception) {
                 android.util.Log.w("Dashboard", "System status load failed: ${error.message}")
             } finally {
@@ -568,9 +577,13 @@ class DashboardFragment : Fragment() {
                 updateNetworkStatus(status)
                 // Cache the successful response
                 CacheManager.getInstance(requireContext()).set("network.status", status)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 android.util.Log.w("Dashboard", "Network status load failed: ${e.message}")
-                updateNetworkStatusError()
+                if (view != null) {
+                    updateNetworkStatusError()
+                }
             }
         }
     }
@@ -911,6 +924,8 @@ class DashboardFragment : Fragment() {
                     putExtra(CameraDetailActivity.EXTRA_INITIAL_TIMESTAMP, startTs)
                 }
                 startActivity(intent)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 android.util.Log.w("DashboardFragment",
                     "jumpToCamerasWithAlert failed: ${e.message}", e)
@@ -949,9 +964,13 @@ class DashboardFragment : Fragment() {
                 AnimationHelper.fadeIn(binding.rvAlerts, 300)
                 // Cache the successful response
                 CacheManager.getInstance(requireContext()).set("dashboard.alerts", alerts)
+            } catch (e: CancellationException) {
+                throw e
             } catch (_: Exception) {
-                binding.tvAlertsEmpty.visibility = View.VISIBLE
-                binding.rvAlerts.visibility = View.GONE
+                if (view != null) {
+                    binding.tvAlertsEmpty.visibility = View.VISIBLE
+                    binding.rvAlerts.visibility = View.GONE
+                }
             }
         }
     }
@@ -978,9 +997,13 @@ class DashboardFragment : Fragment() {
                 binding.tvRecentLogsEmpty.visibility = if (logs.isEmpty()) View.VISIBLE else View.GONE
                 binding.rvRecentLogs.visibility = if (logs.isEmpty()) View.GONE else View.VISIBLE
                 AnimationHelper.fadeIn(binding.rvRecentLogs, 300)
+            } catch (e: CancellationException) {
+                throw e
             } catch (_: Exception) {
-                binding.tvRecentLogsEmpty.visibility = View.VISIBLE
-                binding.rvRecentLogs.visibility = View.GONE
+                if (view != null) {
+                    binding.tvRecentLogsEmpty.visibility = View.VISIBLE
+                    binding.rvRecentLogs.visibility = View.GONE
+                }
             }
         }
     }

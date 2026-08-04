@@ -17,6 +17,7 @@ import com.homedatacenter.app.ui.main.MainActivity
 import com.homedatacenter.app.util.CacheManager
 import com.homedatacenter.app.util.NetworkMonitor
 import com.homedatacenter.app.util.PrefetchManager
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -175,10 +176,14 @@ class CamerasFragment : Fragment() {
                 PrefetchManager.getInstance(requireContext()).prefetchOnIdle("cameras.ice", {
                     mainActivity.container.getRepository().getIceConfig(token)
                 }, 2000L)
+            } catch (e: CancellationException) {
+                throw e
             } catch (_: Exception) {
                 // Network failure: keep cached data
             } finally {
-                binding.swipeRefresh.isRefreshing = false
+                if (view != null) {
+                    binding.swipeRefresh.isRefreshing = false
+                }
             }
         }
     }

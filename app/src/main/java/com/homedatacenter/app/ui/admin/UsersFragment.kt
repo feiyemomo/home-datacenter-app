@@ -23,6 +23,7 @@ import com.homedatacenter.app.R
 import com.homedatacenter.app.data.model.User
 import com.homedatacenter.app.databinding.ActivityUsersBinding
 import com.homedatacenter.app.di.AppContainer
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 /**
@@ -88,10 +89,14 @@ class UsersFragment : Fragment() {
                 val users = container.getRepository().listUsers(token)
                 adapter.submitList(users)
                 binding.tvEmpty.visibility = if (users.isEmpty()) View.VISIBLE else View.GONE
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 toast("加载失败: ${e.message}")
             } finally {
-                binding.swipeRefresh.isRefreshing = false
+                if (view != null) {
+                    binding.swipeRefresh.isRefreshing = false
+                }
             }
         }
     }
@@ -132,6 +137,8 @@ class UsersFragment : Fragment() {
                         } else {
                             toast("用户已创建")
                         }
+                    } catch (e: CancellationException) {
+                        throw e
                     } catch (e: Exception) {
                         toast("创建失败: ${e.message}")
                     }
@@ -227,6 +234,8 @@ class UsersFragment : Fragment() {
                         )
                         toast("已更新")
                         loadUsers()
+                    } catch (e: CancellationException) {
+                        throw e
                     } catch (e: Exception) {
                         toast("更新失败: ${e.message}")
                     }
@@ -257,6 +266,8 @@ class UsersFragment : Fragment() {
                         val deleted = container.getRepository().deleteUser(token, user.id)
                         toast("已删除 (吊销 $deleted 个设备)")
                         loadUsers()
+                    } catch (e: CancellationException) {
+                        throw e
                     } catch (e: Exception) {
                         val msg = e.message.orEmpty()
                         if (msg.contains("last", ignoreCase = true)) {

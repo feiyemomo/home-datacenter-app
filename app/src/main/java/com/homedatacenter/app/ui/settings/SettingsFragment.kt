@@ -18,6 +18,7 @@ import com.homedatacenter.app.util.ApkInstaller
 import com.homedatacenter.app.util.JwtUtil
 import com.homedatacenter.app.util.PrefsManager
 import com.homedatacenter.app.util.ThemeManager
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -172,6 +173,8 @@ class SettingsFragment : Fragment() {
                 } else ""
                 binding.tvUserName.text = user.name + adminLabel
                 // Admin section was removed — no refresh needed.
+            } catch (e: CancellationException) {
+                throw e
             } catch (_: Exception) {
             }
         }
@@ -246,12 +249,18 @@ class SettingsFragment : Fragment() {
                             if (info == null) {
                                 binding.tvUpdateStatus.text = getString(R.string.update_latest)
                             }
+                        } catch (e: CancellationException) {
+                            throw e
                         } catch (_: Exception) {
-                            binding.tvUpdateStatus.text = getString(R.string.update_check_failed)
+                            if (view != null) {
+                                binding.tvUpdateStatus.text = getString(R.string.update_check_failed)
+                            }
                         } finally {
-                            binding.btnCheckUpdate.isEnabled = true
-                            renderCachedUpdateStatus()
-                            startUpdatePollingIfNeeded()
+                            if (view != null) {
+                                binding.btnCheckUpdate.isEnabled = true
+                                renderCachedUpdateStatus()
+                                startUpdatePollingIfNeeded()
+                            }
                         }
                     }
                 }

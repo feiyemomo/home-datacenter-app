@@ -21,6 +21,7 @@ import com.homedatacenter.app.data.ws.HomeCenterWebSocket
 import com.homedatacenter.app.data.ws.WsEventListener
 import com.homedatacenter.app.databinding.FragmentServiceLogsBinding
 import com.homedatacenter.app.ui.main.MainActivity
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 /**
@@ -175,12 +176,16 @@ class ServiceLogsFragment : Fragment() {
                     Toast.makeText(requireContext(),
                         R.string.logs_all_loaded, Toast.LENGTH_SHORT).show()
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (_: Exception) {
-                if (currentOffset == 0) showEmpty(true)
+                if (currentOffset == 0 && view != null) showEmpty(true)
             } finally {
                 isLoading = false
-                binding.progressLoadMore.visibility = View.GONE
-                binding.swipeRefresh.isRefreshing = false
+                if (view != null) {
+                    binding.progressLoadMore.visibility = View.GONE
+                    binding.swipeRefresh.isRefreshing = false
+                }
             }
         }
     }
@@ -238,6 +243,8 @@ class ServiceLogsFragment : Fragment() {
                     .listCameras(token, useCache = false, refreshCache = true)
                 val map = cameras.associateBy { it.id }
                 adapter.updateCameraMap(map)
+            } catch (e: CancellationException) {
+                throw e
             } catch (_: Exception) {
             }
         }

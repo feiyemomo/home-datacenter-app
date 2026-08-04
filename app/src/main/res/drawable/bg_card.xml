@@ -29,7 +29,7 @@
         <shape android:shape="rectangle">
             <gradient
                 android:type="linear"
-                android:angle="-90"
+                android:angle="270"
                 android:startColor="#0DFFFFFF"
                 android:endColor="@android:color/transparent" />
             <corners

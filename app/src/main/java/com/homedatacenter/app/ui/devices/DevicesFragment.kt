@@ -16,6 +16,7 @@ import com.homedatacenter.app.ui.main.MainActivity
 import com.homedatacenter.app.util.CacheManager
 import com.homedatacenter.app.util.NetworkMonitor
 import com.homedatacenter.app.util.StateLayout
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 class DevicesFragment : Fragment() {
@@ -130,6 +131,8 @@ class DevicesFragment : Fragment() {
                     refreshCache = true,
                 )
                 activity?.runOnUiThread { applyOnlineSnapshot() }
+            } catch (e: CancellationException) {
+                throw e
             } catch (_: Exception) {
             }
         }
@@ -183,11 +186,17 @@ class DevicesFragment : Fragment() {
                 applyOnlineSnapshot()
                 cacheManager.set("devices.list", devices)
                 showEmpty(devices.isEmpty())
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                showEmpty(true)
+                if (view != null) {
+                    showEmpty(true)
+                }
             } finally {
-                showLoading(false)
-                binding.swipeRefresh.isRefreshing = false
+                if (view != null) {
+                    showLoading(false)
+                    binding.swipeRefresh.isRefreshing = false
+                }
             }
 
             refreshInBackground(token)
@@ -210,6 +219,8 @@ class DevicesFragment : Fragment() {
                     applyOnlineSnapshot()
                     showEmpty(devices.isEmpty())
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (_: Exception) {
             }
         }
@@ -234,6 +245,8 @@ class DevicesFragment : Fragment() {
                 mainActivity.container.getRepository().revokeDevice(token, device.id)
                 loadDevices()
                 refreshSystemStatus()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 // ignore
             }
@@ -261,6 +274,8 @@ class DevicesFragment : Fragment() {
                 mainActivity.container.getRepository().deleteDevice(token, device.id)
                 loadDevices()
                 refreshSystemStatus()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 // ignore
             }
