@@ -27,6 +27,7 @@ import com.homedatacenter.app.databinding.ItemStatCardBinding
 import com.homedatacenter.app.ui.alerts.AlertListAdapter
 import com.homedatacenter.app.ui.alerts.AlertSnapshotDialogFragment
 import com.homedatacenter.app.ui.cameras.CameraDetailActivity
+import com.homedatacenter.app.ui.cameras.CamerasFragment
 import com.homedatacenter.app.ui.main.MainActivity
 import com.homedatacenter.app.ui.network.NetworkDetailActivity
 import com.homedatacenter.app.util.AnimationHelper
@@ -112,11 +113,13 @@ class DashboardFragment : Fragment() {
         binding.swipeRefresh.setOnRefreshListener { refreshAll() }
         binding.btnViewAllAlerts.setOnClickListener {
             (activity as? MainActivity)?.let {
-                // v1.6.13: the standalone "报警" tab was replaced by
-                // the "服务日志" tab. The dashboard still hosts its own
-                // recent-alerts preview, so "全部" now jumps to the logs
-                // tab where the user can browse system activity.
-                it.binding.bottomNav.selectedItemId = R.id.nav_logs
+                // The service logs tab does NOT contain alert data, so
+                // "全部" for recent alerts jumps to the cameras tab's
+                // "全部报警" section instead. Set the pending-scroll flag
+                // so CamerasFragment scrolls to the alerts section when
+                // it becomes visible.
+                CamerasFragment.pendingScrollToAlerts = true
+                it.binding.bottomNav.selectedItemId = R.id.nav_cameras
             }
         }
         binding.btnViewAllLogs.setOnClickListener {

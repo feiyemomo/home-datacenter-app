@@ -9,11 +9,17 @@ import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import com.homedatacenter.app.R
 import com.homedatacenter.app.data.api.NetworkFactory
+import com.homedatacenter.app.data.model.Alert
+import com.homedatacenter.app.data.model.AlertListData
 import com.homedatacenter.app.data.model.Camera
 import com.homedatacenter.app.databinding.FragmentCamerasBinding
+import com.homedatacenter.app.ui.alerts.AlertListAdapter
+import com.homedatacenter.app.ui.alerts.AlertSnapshotDialogFragment
 import com.homedatacenter.app.ui.main.MainActivity
+import com.homedatacenter.app.util.AnimationHelper
 import com.homedatacenter.app.util.CacheManager
 import com.homedatacenter.app.util.NetworkMonitor
 import com.homedatacenter.app.util.PrefetchManager
@@ -27,6 +33,23 @@ class CamerasFragment : Fragment() {
     private var _binding: FragmentCamerasBinding? = null
     private val binding get() = _binding!!
     private lateinit var adapter: CameraAdapter
+    private lateinit var allAlertsAdapter: AlertListAdapter
+
+    // Set by DashboardFragment's "全部" button before switching to the
+    // cameras tab. When this fragment becomes visible it scrolls to the
+    // "全部报警" section and resets the flag.
+    companion object {
+        @Volatile
+        var pendingScrollToAlerts = false
+    }
+
+    // Pagination state for the "全部报警" section. listAlerts only
+    // supports a limit (no offset), so we page by growing the limit
+    // (20, 40, 60...) and stop when a page returns fewer than the
+    // requested count.
+    private var alertsLimit = 20
+    private var alertsLoading = false
+    private var alertsHasMore = true
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -68,6 +91,32 @@ class CamerasFragment : Fragment() {
             if (columnCount <= 1) LinearLayoutManager(context)
             else GridLayoutManager(context, columnCount)
         binding.recyclerView.adapter = adapter
+
+        // "全部报警" section: reuse AlertListAdapter. Tap thumbnail →
+        // snapshot modal; tap "查看录像" chip → jump to the camera's
+        // recording page at the alert's timestamp.
+        allAlertsAdapter = AlertListAdapter(
+            baseUrl = baseUrl,
+            token = token,
+            okHttpClient = okHttpClient,
+            onSnapshotClick = { alert -> showSnapshotDialog(alert) },
+            onJumpCamera = { alert -> jumpToCameraWithAlert(alert) },
+            onRowClick = null,
+        )
+        binding.rvAllAlerts.layoutManager = LinearLayoutManager(context)
+        binding.rvAllAlerts.adapter = allAlertsAdapter
+        // Load more alerts when the user scrolls to the bottom of the
+        // "全部报警" list.
+        binding.rvAllAlerts.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+            override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
+                val lm = rv.layoutManager as? LinearLayoutManager ?: return
+                val total = lm.itemCount
+                val lastVisible = lm.findLastVisibleItemPosition()
+                if (alertsHasMore && !alertsLoading && lastVisible >= total - 3) {
+                    loadMoreAlerts()
+                }
+            }
+        })
 
         binding.swipeRefresh.setOnRefreshListener { loadCamerasFromNetwork() }
 
@@ -113,6 +162,8 @@ class CamerasFragment : Fragment() {
         super.onResume()
         if (isAdded) {
             loadCamerasFromCache()
+            loadAllAlerts()
+            maybeScrollToAlerts()
         }
     }
 
@@ -120,6 +171,8 @@ class CamerasFragment : Fragment() {
         super.onHiddenChanged(hidden)
         if (!hidden && isAdded) {
             loadCamerasFromCache()
+            loadAllAlerts()
+            maybeScrollToAlerts()
         } else if (hidden) {
             adapter.releaseAllPlayers()
         }
@@ -168,6 +221,8 @@ class CamerasFragment : Fragment() {
                 )
                 adapter.submitList(cameras)
                 showEmpty(cameras.isEmpty())
+                // v1.7.18: gentle fade-in once the network list lands.
+                AnimationHelper.fadeIn(binding.recyclerView, 300)
 
                 // Cache the result for offline access
                 CacheManager.getInstance(requireContext()).set("cameras.list", cameras)
@@ -191,6 +246,126 @@ class CamerasFragment : Fragment() {
     private fun showEmpty(show: Boolean) {
         binding.tvEmpty.visibility = if (show) View.VISIBLE else View.GONE
         binding.recyclerView.visibility = if (show) View.GONE else View.VISIBLE
+    }
+
+    // --- "全部报警" section ---
+
+    /** Load the first page of all alerts (limit = 20). */
+    private fun loadAllAlerts() {
+        if (alertsLoading) return
+        alertsLimit = 20
+        alertsHasMore = true
+        loadMoreAlerts()
+    }
+
+    /** Fetch the next page of alerts, growing the limit since the API
+     *  has no offset parameter. */
+    private fun loadMoreAlerts() {
+        val mainActivity = activity as? MainActivity ?: return
+        val token = mainActivity.container.prefsManager.token ?: return
+        if (alertsLoading || !alertsHasMore) return
+        alertsLoading = true
+
+        lifecycleScope.launch {
+            try {
+                val resp = mainActivity.container.getApi()
+                    .listAlerts("Bearer $token", limit = alertsLimit)
+                val alerts = if (resp.isSuccess) {
+                    resp.decodeData<AlertListData>()?.alerts ?: emptyList()
+                } else {
+                    emptyList()
+                }
+                allAlertsAdapter.submitList(alerts)
+                binding.tvAllAlertsEmpty.visibility =
+                    if (alerts.isEmpty()) View.VISIBLE else View.GONE
+                // v1.7.18: fade the "全部报警" list in when its first
+                // page lands. Skip pagination — re-fading on every page
+                // would flash the list while the user scrolls.
+                if (alertsLimit == 20) {
+                    AnimationHelper.fadeIn(binding.rvAllAlerts, 300)
+                }
+                // If we got fewer than requested, there are no more pages.
+                alertsHasMore = alerts.size >= alertsLimit
+                alertsLimit += 20
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Network failure: keep whatever we already have.
+            } finally {
+                alertsLoading = false
+            }
+        }
+    }
+
+    /** Scroll to the "全部报警" section if DashboardFragment requested it. */
+    private fun maybeScrollToAlerts() {
+        if (!pendingScrollToAlerts) return
+        pendingScrollToAlerts = false
+        binding.nestedScroll.post {
+            // Guard against the view being destroyed before the posted
+            // runnable executes (e.g. rapid tab switching).
+            if (_binding != null) {
+                binding.nestedScroll.smoothScrollTo(
+                    0,
+                    binding.tvAllAlertsTitle.top
+                )
+            }
+        }
+    }
+
+    private fun showSnapshotDialog(alert: Alert) {
+        val mainActivity = activity as? MainActivity ?: return
+        val baseUrl = mainActivity.container.getApiBaseUrl()
+        val token = mainActivity.container.prefsManager.token
+        val client = mainActivity.container.okHttpClient
+        val dialog = AlertSnapshotDialogFragment.newInstance(alert, baseUrl, token, client)
+        dialog.show(parentFragmentManager, AlertSnapshotDialogFragment.TAG)
+    }
+
+    /** Jump from an alert row to the camera's recording page at the
+     *  alert's exact timestamp. Mirrors DashboardFragment's logic but
+     *  simplified: find the camera, then launch CameraDetailActivity. */
+    private fun jumpToCameraWithAlert(alert: Alert) {
+        val mainActivity = activity as? MainActivity ?: return
+        val token = mainActivity.container.prefsManager.token
+        if (token.isNullOrEmpty()) {
+            android.widget.Toast.makeText(requireContext(),
+                R.string.not_logged_in,
+                android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        val startTs = alert.startTime.toLong()
+
+        lifecycleScope.launch {
+            try {
+                val cameras = mainActivity.container.getRepository()
+                    .listCameras(token, useCache = true)
+                val cam = cameras.firstOrNull { it.id == alert.cameraId }
+                    ?: cameras.firstOrNull { alert.cameraName.isNotEmpty() && it.name == alert.cameraName }
+                    ?: cameras.firstOrNull { alert.cameraSlug.isNotEmpty() && it.stream?.streamName == alert.cameraSlug }
+                if (cam == null) {
+                    android.widget.Toast.makeText(requireContext(),
+                        R.string.alert_jump_camera_not_found,
+                        android.widget.Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
+                val cameraJson = NetworkFactory.json.encodeToString(
+                    com.homedatacenter.app.data.model.Camera.serializer(), cam)
+                val intent = Intent(requireContext(), CameraDetailActivity::class.java).apply {
+                    putExtra(CameraDetailActivity.EXTRA_CAMERA_JSON, cameraJson)
+                    putExtra(CameraDetailActivity.EXTRA_INITIAL_TIMESTAMP, startTs)
+                }
+                startActivity(intent)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.util.Log.w("CamerasFragment",
+                    "jumpToCameraWithAlert failed: ${e.message}", e)
+                android.widget.Toast.makeText(requireContext(),
+                    R.string.alert_jump_failed,
+                    android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     override fun onDestroyView() {
