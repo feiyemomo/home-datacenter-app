@@ -5,10 +5,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import org.json.JSONObject
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.util.concurrent.TimeUnit
@@ -124,35 +122,6 @@ class BaseUrlResolver(
      */
     @Volatile
     private var ipv6DirectAvailable: Boolean = false
-
-    /**
-     * v1.6.27: dynamically-fetched IPv6 base URL (from the backend
-     * `/api/v1/network/ipv6` endpoint). When non-null, takes priority
-     * over the hardcoded [IPV6_DIRECT_URL] constant — the constant
-     * only reflects the NAS IPv6 address at compile time and goes
-     * stale whenever the ISP rotates the /64 prefix (DHCPv6-PD
-     * renewal). The backend reports its current outbound IPv6
-     * address on every call, so preferring this field lets the app
-     * follow prefix rotations without an app rebuild.
-     *
-     * Written by [fetchDynamicIpv6Url] (called from
-     * [probeLanOnStartup] and [probeAsync]); read by [probeSync],
-     * [isIpv6Direct], [isDirectPath], and [onNetworkLost].
-     */
-    @Volatile
-    private var dynamicIpv6Url: String? = null
-
-    /**
-     * v1.6.27: supplies the JWT required to call the JWT-protected
-     * `/api/v1/network/ipv6` endpoint. Set by AppContainer after the
-     * auth state is initialized (BaseUrlResolver is constructed
-     * before the token is available, hence the late-binding lambda
-     * instead of a constructor parameter). When null or when the
-     * lambda returns null, [fetchDynamicIpv6Url] is a no-op and we
-     * fall back to the hardcoded [IPV6_DIRECT_URL].
-     */
-    @Volatile
-    var tokenProvider: (() -> String?)? = null
 
     private val probing = AtomicBoolean(false)
 
@@ -332,15 +301,8 @@ class BaseUrlResolver(
      * direct URL. Used by WebRTC code to decide whether to attempt
      * IPv6 P2P (skip STUN, gather IPv6 host candidates only) and by
      * CameraDetailActivity to gate the WebRTC-over-IPv6 path.
-     *
-     * v1.6.27: also returns true when `resolved` matches the
-     * dynamically-fetched IPv6 URL (from /api/v1/network/ipv6). The
-     * dynamic URL is functionally equivalent to [IPV6_DIRECT_URL] —
-     * same NAS, same port, just a fresher address after a prefix
-     * rotation — so all IPv6-specific WebRTC behavior applies.
      */
-    fun isIpv6Direct(): Boolean =
-        resolved == IPV6_DIRECT_URL || (dynamicIpv6Url != null && resolved == dynamicIpv6Url)
+    fun isIpv6Direct(): Boolean = resolved == IPV6_DIRECT_URL
 
     /**
      * v1.6.23: returns true if the resolved URL is a direct path to
@@ -348,11 +310,6 @@ class BaseUrlResolver(
      * Used by WebRTC code to decide whether to skip STUN/TURN servers
      * — direct paths only need host candidates, the Tunnel can't route
      * WebRTC media anyway.
-     *
-     * v1.6.27: delegates to [isIpv6Direct] so the dynamic IPv6 URL is
-     * also recognized as a direct path. Without this, WebRTC would
-     * incorrectly attempt STUN/TURN gathering when the resolver is
-     * pointed at the dynamic IPv6 URL.
      */
     fun isDirectPath(): Boolean = resolved == LAN_URL || isIpv6Direct()
 
@@ -375,10 +332,7 @@ class BaseUrlResolver(
      * potentially switch to LAN if the new network is the home WiFi.
      */
     fun onNetworkLost() {
-        // v1.6.27: prefer the dynamic IPv6 URL when available —
-        // matches probeSync's behavior and avoids switching to a
-        // stale hardcoded address that may have rotated.
-        val safeDefault = if (ipv6DirectAvailable) (dynamicIpv6Url ?: IPV6_DIRECT_URL) else REMOTE_URL
+        val safeDefault = if (ipv6DirectAvailable) IPV6_DIRECT_URL else REMOTE_URL
         if (resolved != safeDefault) {
             android.util.Log.i(
                 TAG,
@@ -466,31 +420,6 @@ class BaseUrlResolver(
      * happens on background daemon threads.
      */
     fun probeLanOnStartup() {
-        // v1.6.27: fetch dynamic IPv6 address from backend before
-        // first probe. This is best-effort — if it fails (no token
-        // yet, network not ready, backend unreachable), we fall back
-        // to the hardcoded IPV6_DIRECT_URL (which may be stale if
-        // the ISP rotated the prefix, but is better than nothing).
-        // When the fetch succeeds and the URL differs from the
-        // current one, we update dynamicIpv6Url and force a re-probe
-        // so probeSync picks up the new address immediately.
-        Thread {
-            try {
-                val newUrl = runBlocking { fetchDynamicIpv6Url() }
-                if (newUrl != null && newUrl != dynamicIpv6Url) {
-                    dynamicIpv6Url = newUrl
-                    android.util.Log.i(TAG, "probeLanOnStartup: dynamic IPv6 URL updated → $newUrl, forcing re-probe")
-                    forceProbe()
-                }
-            } catch (e: Exception) {
-                android.util.Log.w(TAG, "probeLanOnStartup: fetchDynamicIpv6Url failed: ${e.message}")
-            }
-        }.apply {
-            isDaemon = true
-            name = "BaseUrlResolver-ipv6-fetch"
-            start()
-        }
-
         // Kick off the first probe immediately (background).
         forceProbe()
         // Schedule escalating retries to absorb the real-phone
@@ -533,103 +462,6 @@ class BaseUrlResolver(
             name = "BaseUrlResolver-probe"
             start()
         }
-        // v1.6.27: async refresh of the dynamic IPv6 URL. Decoupled
-        // from probeSync so a slow /network/ipv6 call (3s timeout)
-        // doesn't delay the URL switch. If the URL changes, we
-        // update dynamicIpv6Url and force a re-probe — the next
-        // probeSync iteration will pick up the new address. When
-        // the URL is unchanged (common case) this is a no-op.
-        Thread {
-            try {
-                val newUrl = runBlocking { fetchDynamicIpv6Url() }
-                if (newUrl != null && newUrl != dynamicIpv6Url) {
-                    dynamicIpv6Url = newUrl
-                    android.util.Log.i(TAG, "probeAsync: dynamic IPv6 URL updated → $newUrl, forcing re-probe")
-                    forceProbe()
-                }
-            } catch (_: Exception) {
-                // Best-effort — swallow. Logged inside
-                // fetchDynamicIpv6Url if the request itself failed.
-            }
-        }.apply {
-            isDaemon = true
-            name = "BaseUrlResolver-ipv6-refresh"
-            start()
-        }
-    }
-
-    /**
-     * v1.6.27: fetches the NAS's current outbound IPv6 address from
-     * the backend `/api/v1/network/ipv6` endpoint to verify IPv6 is
-     * available, then returns [IPV6_DIRECT_URL] (the DDNS domain).
-     *
-     * v1.6.33: previously this returned a literal-IPv6 URL
-     * (`http://[<addr>]:8088/`) built from the backend's reported
-     * outbound address. Now that [IPV6_DIRECT_URL] is the DDNS domain
-     * `nas.feiyemomo.top`, the DDNS provider handles prefix rotations
-     * automatically via AAAA record updates — so there's no need to
-     * rebuild a literal URL. We still call the endpoint to verify the
-     * NAS has a live IPv6 address (if it returns a valid address,
-     * IPv6 direct is available; if not, we fall back to tunnel).
-     *
-     * JWT is required (the endpoint is auth-protected). The token is
-     * obtained via [tokenProvider] — AppContainer sets this after
-     * the auth state is initialized. When no token is available we
-     * bail out and the caller keeps using the hardcoded
-     * [IPV6_DIRECT_URL].
-     *
-     * Best-effort: any failure (network error, non-200 response,
-     * missing/malformed `outbound_address` field) returns null. The
-     * caller is responsible for keeping the previous value.
-     *
-     * @return [IPV6_DIRECT_URL] if the backend confirmed IPv6 is
-     *   available, or null if the fetch failed or no token was
-     *   available.
-     */
-    private suspend fun fetchDynamicIpv6Url(): String? {
-        val token = tokenProvider?.invoke() ?: return null
-        return withContext(Dispatchers.IO) {
-            try {
-                val url = "${resolved.trimEnd('/')}/api/v1/network/ipv6"
-                val request = Request.Builder()
-                    .url(url)
-                    .header("Authorization", "Bearer $token")
-                    .get()
-                    .build()
-                client.newBuilder()
-                    .callTimeout(3, TimeUnit.SECONDS)
-                    .connectTimeout(3, TimeUnit.SECONDS)
-                    .readTimeout(3, TimeUnit.SECONDS)
-                    .build()
-                    .newCall(request)
-                    .execute().use { response ->
-                        if (!response.isSuccessful) return@use null
-                        val body = response.body?.string() ?: return@use null
-                        val json = JSONObject(body)
-                        val data = json.optJSONObject("data") ?: return@use null
-                        val outbound = data.optString("outbound_address", "")
-                        if (outbound.isNotEmpty()) {
-                            // v1.6.33: return the DDNS domain (IPV6_DIRECT_URL)
-                            // instead of a literal-IPv6 URL. The domain's
-                            // AAAA record tracks prefix rotations via the
-                            // DDNS provider, so there's no need to rebuild
-                            // a literal URL from the backend's reported
-                            // outbound address. We still call the endpoint
-                            // to verify the NAS has a live IPv6 address
-                            // (if it returns a valid address, IPv6 direct
-                            // is available; if not, we fall back to tunnel).
-                            android.util.Log.i(TAG, "fetchDynamicIpv6Url: NAS outbound=$outbound → using DDNS domain $IPV6_DIRECT_URL")
-                            IPV6_DIRECT_URL
-                        } else {
-                            android.util.Log.w(TAG, "fetchDynamicIpv6Url: outbound_address empty")
-                            null
-                        }
-                    }
-            } catch (e: Exception) {
-                android.util.Log.w(TAG, "fetchDynamicIpv6Url: failed: ${e.javaClass.simpleName}: ${e.message}")
-                null
-            }
-        }
     }
 
     /**
@@ -645,223 +477,174 @@ class BaseUrlResolver(
     }
 
     private fun probeSync() {
-        // v1.6.26: three-tier probe with RTT measurement + manual
-        // preference override.
+        // v1.7.19: fast-path-first probing. Previously all three probes
+        // (LAN / IPv6 / Tunnel) were awaited before switching, which
+        // meant waiting for the Tunnel (3s timeout, ~1.4s typical from
+        // China) even when LAN was alive at 50ms. Now:
         //
-        // All three candidates (LAN / IPv6 direct / Tunnel) are probed
-        // every cycle so we can:
-        //   1. Measure RTT for each — needed for AUTO's lowest-RTT
-        //      selection AND for display in the UI ("局域网 (12ms)").
-        //   2. Cache IPv6 reachability for onNetworkLost's safe-default
-        //      logic (ipv6DirectAvailable).
-        //   3. Detect when a forced preference's URL has died and we
-        //      need to fall back to the next priority.
+        //   - Direct path probes (LAN + IPv6) are awaited first (max
+        //     ~1.5s). If either is alive, we switch immediately and
+        //     CANCEL the still-in-flight Tunnel probe — no need to wait.
+        //   - The Tunnel probe is only awaited as a fallback when both
+        //     direct paths are dead.
+        //   - RELAY preference is a special case: always Tunnel, so we
+        //     probe Tunnel directly (still cache IPv6 availability in
+        //     the background for onNetworkLost's safe-default logic).
         //
-        // Selection:
-        //   - If preference == AUTO: pick the alive candidate with the
-        //     lowest RTT. Tiebreaker is priority order (LAN > IPv6 >
-        //     Tunnel) — implemented by adding to the candidate list in
-        //     that order and using minByOrNull which returns the FIRST
-        //     minimum on ties.
-        //   - If preference == LAN: force LAN if alive, else IPv6 if
-        //     alive, else Tunnel.
-        //   - If preference == IPV6_DIRECT: force IPv6 if alive, else
-        //     LAN if alive, else Tunnel.
-        //   - If preference == RELAY: always Tunnel (always alive via
-        //     Cloudflare).
+        // This cuts the typical home-network probe from ~1.4s (waiting
+        // for Tunnel) to ~50ms (LAN only), and the typical cellular-
+        // IPv6 probe from ~1.4s to ~200ms (IPv6 only).
         //
         // LAN probe is two-pronged (HTTP + raw TCP socket connect) to
         // work around vendor HTTP policy on some ROMs (MIUI/ColorOS
         // intercept cleartext HTTP). When TCP succeeds but HTTP fails,
-        // we use the TCP connect time as the RTT proxy (the next real
-        // HTTP API call will be the true test — if it fails, the
-        // repository's error handling surfaces it).
-        //
-        // Probe order matters for the early-return fast path on AUTO
-        // when LAN is alive and obviously fastest: we still probe IPv6
-        // and Tunnel too so the RTT comparison is meaningful and
-        // ipv6DirectAvailable stays fresh for onNetworkLost. The total
-        // extra cost is ~50ms (IPv6 NoRouteToHostException on a
-        // non-IPv6 network) + the Tunnel probe (~1.4s on cellular).
-        // To keep startup feeling snappy we let the Tunnel probe run
-        // in the background — the resolver switches to LAN immediately
-        // when the LAN probe returns, and the Tunnel probe just
-        // updates RTT/availability caches when it finishes.
-        //
-        // Implementation note: the three probes (LAN, IPv6, Tunnel)
-        // run in PARALLEL via async(Dispatchers.IO), with all three
-        // Deferreds awaited before proceeding, so the worst-case wall
-        // time is the longest single timeout (REMOTE_TIMEOUT_MS = 4s)
-        // instead of the sum (1.5 + 2.0 + 4.0 = 7.5s). The async blocks
-        // only READ immutable state and return ProbeResults; all
-        // volatile-field writes (resolved, lastRttMs,
-        // ipv6DirectAvailable) happen in the sequential section after
-        // the parallel block returns. The selection logic below still
-        // picks the lowest-RTT alive candidate with the LAN > IPv6 >
-        // Tunnel tiebreaker — RTT comparison, not completion order,
-        // decides.
+        // we use the TCP connect time as the RTT proxy.
         //
         // v1.6.29: before probing, warm up the connection pool for the
-        // CURRENT resolved URL. This lets the probe for that URL reuse
-        // the warmed connection (skipping TCP handshake), so the probe
-        // RTT reflects steady-state latency (~250ms on cellular IPv6)
-        // instead of handshake-inclusive latency (~500ms). On the first
-        // startup probe, resolved is still REMOTE_URL so this warmup
-        // targets the Tunnel — the LAN/IPv6 probes still pay handshakes.
-        // But on every subsequent probe (every 5 min TTL), the current
-        // resolved URL (LAN or IPv6) gets warmed up first, and with
-        // keep-alive (10 min) exceeding TTL (5 min), the connection
-        // from the previous warmup is still alive in the pool.
+        // CURRENT resolved URL so the probe can reuse the warmed
+        // connection (skipping TCP handshake).
         setProbeInProgress(true)
         try {
-        if (resolved.isNotBlank()) {
-            warmupConnection(resolved)
-        }
+            if (resolved.isNotBlank()) {
+                warmupConnection(resolved)
+            }
 
-        // v1.6.27: prefer the dynamically-fetched IPv6 URL (from
-        // /api/v1/network/ipv6) over the hardcoded IPV6_DIRECT_URL
-        // constant. The dynamic URL tracks ISP prefix rotations; the
-        // constant only reflects the address at compile time and goes
-        // stale whenever the /64 prefix changes. When dynamicIpv6Url
-        // is null (tokenProvider not yet set, or last fetch failed)
-        // we fall back to the constant.
-        val ipv6Url = dynamicIpv6Url ?: IPV6_DIRECT_URL
+            val ipv6Url = IPV6_DIRECT_URL
 
-        // Launch the three probes in parallel. Each async block runs
-        // on Dispatchers.IO so the blocking OkHttp execute() / socket
-        // connect() calls don't serialize on the runBlocking thread —
-        // without an explicit dispatcher the async blocks would share
-        // runBlocking's single-threaded event loop and run one after
-        // another, defeating the parallelism.
-        val (lanResult, ipv6Result, remoteResult) = runBlocking {
-            coroutineScope {
-                // 1. LAN probe (two-pronged: HTTP + TCP in parallel).
-                // Previously HTTP and TCP were sequential (HTTP first,
-                // TCP fallback on failure), which could take up to
-                // 2 × LAN_TIMEOUT_MS = 2s. Now they run in parallel,
-                // so the LAN probe completes in max(HTTP, TCP) =
-                // LAN_TIMEOUT_MS = 1s worst case. The faster result
-                // wins: if either succeeds, the LAN is reachable.
-                val lanDeferred = async(Dispatchers.IO) {
-                    val httpDeferred = async {
-                        probeUrl(LAN_URL, LAN_TIMEOUT_MS)
-                    }
-                    val tcpDeferred = async {
-                        val tcpRtt = probeTcpRtt(LAN_HOST, LAN_PORT, LAN_TIMEOUT_MS)
-                        if (tcpRtt >= 0) ProbeResult(alive = true, rttMs = tcpRtt)
-                        else ProbeResult(alive = false, rttMs = -1L)
-                    }
-                    val httpResult = httpDeferred.await()
-                    val tcpResult = tcpDeferred.await()
-                    // Pick the best result: prefer alive over dead, lower RTT on ties.
-                    when {
-                        httpResult.alive && tcpResult.alive ->
-                            if (httpResult.rttMs <= tcpResult.rttMs) httpResult else tcpResult
-                        httpResult.alive -> httpResult
-                        tcpResult.alive -> {
-                            // HTTP failed but TCP succeeded — vendor HTTP policy
-                            // is likely intercepting. Use TCP connect time as the
-                            // RTT proxy. The next real API call will reveal if
-                            // HTTP actually works.
-                            android.util.Log.i(TAG, "LAN: HTTP dead (${httpResult.rttMs}ms) but TCP alive (${tcpResult.rttMs}ms) — using TCP RTT proxy")
-                            tcpResult
+            // RELAY preference: always Tunnel. Still cache IPv6
+            // availability in the background for onNetworkLost.
+            if (preference == NetworkPathPreference.RELAY) {
+                Thread {
+                    try {
+                        val r = probeUrl(ipv6Url, IPV6_TIMEOUT_MS)
+                        ipv6DirectAvailable = r.alive
+                    } catch (_: Exception) {}
+                }.apply {
+                    isDaemon = true
+                    name = "BaseUrlResolver-relay-cache"
+                    start()
+                }
+                val remoteResult = probeUrl(REMOTE_URL, REMOTE_TIMEOUT_MS)
+                android.util.Log.i(
+                    TAG,
+                    "probeSync: Tunnel=${remoteResult.alive}(${remoteResult.rttMs}ms) " +
+                        "preference=$preference (resolved=$resolved)",
+                )
+                lastRttMs = remoteResult.rttMs
+                applyResolved(REMOTE_URL)
+                return
+            }
+
+            // AUTO / LAN / IPV6_DIRECT: launch all three probes in
+            // parallel, but only await the direct path probes first.
+            // The Tunnel probe is cancelled if a direct path wins.
+            runBlocking {
+                coroutineScope {
+                    val lanDeferred = async(Dispatchers.IO) {
+                        // LAN probe: two-pronged (HTTP + TCP in parallel).
+                        val httpDeferred = async {
+                            probeUrl(LAN_URL, LAN_TIMEOUT_MS)
                         }
-                        else -> ProbeResult(alive = false, rttMs = min(httpResult.rttMs, tcpResult.rttMs))
+                        val tcpDeferred = async {
+                            val tcpRtt = probeTcpRtt(LAN_HOST, LAN_PORT, LAN_TIMEOUT_MS)
+                            if (tcpRtt >= 0) ProbeResult(alive = true, rttMs = tcpRtt)
+                            else ProbeResult(alive = false, rttMs = -1L)
+                        }
+                        val httpResult = httpDeferred.await()
+                        val tcpResult = tcpDeferred.await()
+                        when {
+                            httpResult.alive && tcpResult.alive ->
+                                if (httpResult.rttMs <= tcpResult.rttMs) httpResult else tcpResult
+                            httpResult.alive -> httpResult
+                            tcpResult.alive -> {
+                                android.util.Log.i(TAG, "LAN: HTTP dead (${httpResult.rttMs}ms) but TCP alive (${tcpResult.rttMs}ms) — using TCP RTT proxy")
+                                tcpResult
+                            }
+                            else -> ProbeResult(alive = false, rttMs = min(httpResult.rttMs, tcpResult.rttMs))
+                        }
+                    }
+                    val ipv6Deferred = async(Dispatchers.IO) {
+                        probeUrl(ipv6Url, IPV6_TIMEOUT_MS)
+                    }
+                    val remoteDeferred = async(Dispatchers.IO) {
+                        probeUrl(REMOTE_URL, REMOTE_TIMEOUT_MS)
+                    }
+
+                    // Await direct path probes first (max ~1.5s).
+                    val lanResult = lanDeferred.await()
+                    val ipv6Result = ipv6Deferred.await()
+                    ipv6DirectAvailable = ipv6Result.alive
+
+                    // Select a direct path based on preference.
+                    val directChosen: String? = when (preference) {
+                        NetworkPathPreference.LAN -> when {
+                            lanResult.alive -> LAN_URL
+                            ipv6Result.alive -> ipv6Url
+                            else -> null
+                        }
+                        NetworkPathPreference.IPV6_DIRECT -> when {
+                            ipv6Result.alive -> ipv6Url
+                            lanResult.alive -> LAN_URL
+                            else -> null
+                        }
+                        NetworkPathPreference.AUTO -> {
+                            val candidates = mutableListOf<Pair<String, Long>>()
+                            if (lanResult.alive) candidates.add(LAN_URL to lanResult.rttMs)
+                            if (ipv6Result.alive) candidates.add(ipv6Url to ipv6Result.rttMs)
+                            candidates.minByOrNull { it.second }?.first
+                        }
+                        NetworkPathPreference.RELAY -> null // handled above
+                    }
+
+                    if (directChosen != null) {
+                        // Fast path: switch immediately, cancel Tunnel probe.
+                        remoteDeferred.cancel()
+                        val chosenRtt = if (directChosen == LAN_URL) lanResult.rttMs else ipv6Result.rttMs
+                        android.util.Log.i(
+                            TAG,
+                            "probeSync: LAN=${lanResult.alive}(${lanResult.rttMs}ms) " +
+                                "IPv6=${ipv6Result.alive}(${ipv6Result.rttMs}ms) " +
+                                "Tunnel=cancelled " +
+                                "preference=$preference (resolved=$resolved)",
+                        )
+                        lastRttMs = chosenRtt
+                        applyResolved(directChosen)
+                    } else {
+                        // Fallback: both direct paths dead, wait for Tunnel.
+                        val remoteResult = remoteDeferred.await()
+                        android.util.Log.i(
+                            TAG,
+                            "probeSync: LAN=${lanResult.alive}(${lanResult.rttMs}ms) " +
+                                "IPv6=${ipv6Result.alive}(${ipv6Result.rttMs}ms) " +
+                                "Tunnel=${remoteResult.alive}(${remoteResult.rttMs}ms) " +
+                                "preference=$preference (resolved=$resolved)",
+                        )
+                        lastRttMs = remoteResult.rttMs
+                        applyResolved(REMOTE_URL)
                     }
                 }
-
-                // 2. IPv6 direct probe. OkHttp will fail immediately
-                // (NoRouteToHostException / UnknownHostException) if the
-                // phone has no IPv6 connectivity, so this is also an
-                // implicit phone-IPv6 check — no separate ConnectivityManager
-                // probe needed.
-                val ipv6Deferred = async(Dispatchers.IO) {
-                    probeUrl(ipv6Url, IPV6_TIMEOUT_MS)
-                }
-
-                // 3. Tunnel probe (always runs so we have a fresh RTT for the
-                // Tunnel and so AUTO can compare all three).
-                val remoteDeferred = async(Dispatchers.IO) {
-                    probeUrl(REMOTE_URL, REMOTE_TIMEOUT_MS)
-                }
-
-                // Await all three. They're already running in parallel,
-                // so the total wall time is max(LAN, IPv6, Tunnel) rather
-                // than the sum. Awaiting in this order is fine — once the
-                // first completes, the others are likely already done (or
-                // finish immediately on their own await).
-                Triple(lanDeferred.await(), ipv6Deferred.await(), remoteDeferred.await())
             }
+        } finally {
+            setProbeInProgress(false)
         }
-        ipv6DirectAvailable = ipv6Result.alive
+    }
 
-        android.util.Log.i(
-            TAG,
-            "probeSync: LAN=${lanResult.alive}(${lanResult.rttMs}ms) " +
-                "IPv6=${ipv6Result.alive}(${ipv6Result.rttMs}ms) " +
-                "Tunnel=${remoteResult.alive}(${remoteResult.rttMs}ms) " +
-                "preference=$preference (resolved=$resolved)",
-        )
-
-        // Determine chosen URL based on preference + alive state.
-        val chosen: String = when (preference) {
-            NetworkPathPreference.LAN -> when {
-                lanResult.alive -> LAN_URL
-                ipv6Result.alive -> ipv6Url
-                remoteResult.alive -> REMOTE_URL
-                else -> REMOTE_URL // last resort — Tunnel is always "reachable" in practice
-            }
-            NetworkPathPreference.IPV6_DIRECT -> when {
-                ipv6Result.alive -> ipv6Url
-                lanResult.alive -> LAN_URL
-                remoteResult.alive -> REMOTE_URL
-                else -> REMOTE_URL
-            }
-            NetworkPathPreference.RELAY -> REMOTE_URL
-            NetworkPathPreference.AUTO -> {
-                // Pick lowest RTT among alive candidates; LAN > IPv6 >
-                // Tunnel tiebreaker. Implemented by adding to the list
-                // in priority order — minByOrNull returns the FIRST
-                // minimum on ties, so a tie resolves to the
-                // earlier-added (higher-priority) candidate.
-                val candidates = mutableListOf<Pair<String, Long>>()
-                if (lanResult.alive) candidates.add(LAN_URL to lanResult.rttMs)
-                if (ipv6Result.alive) candidates.add(ipv6Url to ipv6Result.rttMs)
-                if (remoteResult.alive) candidates.add(REMOTE_URL to remoteResult.rttMs)
-                candidates.minByOrNull { it.second }?.first ?: REMOTE_URL
-            }
-        }
-
-        // Update RTT for the chosen URL. If the chosen URL's probe
-        // failed but we fell back to Tunnel, use the Tunnel RTT.
-        val chosenRtt = when (chosen) {
-            LAN_URL -> lanResult.rttMs
-            ipv6Url -> ipv6Result.rttMs
-            else -> remoteResult.rttMs
-        }
-        lastRttMs = chosenRtt
-
-        // Apply. We always assign resolved (even if unchanged) so
-        // lastProbedAt is fresh. onUrlChanged only fires on actual
-        // changes — AppContainer uses it to invalidate cached
-        // Retrofit/Repository instances.
+    /**
+     * Apply the chosen URL: update [resolved] and [lastProbedAt],
+     * fire [onUrlChanged] and warm up the connection pool when the
+     * URL actually changes.
+     */
+    private fun applyResolved(chosen: String) {
         val changed = chosen != resolved
         resolved = chosen
         lastProbedAt = System.currentTimeMillis()
         if (changed) {
             android.util.Log.i(
                 TAG,
-                "probeSync: switching resolved → $chosen (rtt=${chosenRtt}ms, preference=$preference)",
+                "probeSync: switching resolved → $chosen (preference=$preference)",
             )
             onUrlChanged?.invoke(chosen)
-            // v1.6.28: warm up the connection pool for the new URL so
-            // the first real API call doesn't pay the TCP handshake cost.
-            // This is especially valuable on cellular IPv6 where RTT is
-            // ~250ms — warmup saves one full RTT on the first request.
             warmupConnection(chosen)
-        }
-        } finally {
-            setProbeInProgress(false)
         }
     }
 
