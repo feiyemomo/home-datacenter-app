@@ -60,6 +60,11 @@ class HomeCenterApp : Application() {
             // available" hint. We do NOT auto-prompt here (would
             // interrupt the user on every cold start).
             container.checkUpdateOnStartup()
+            // v1.8.15: monthly JWT silent refresh — re-binds with
+            // stored access_key if 30+ days since last refresh.
+            // Shortens token leakage window independent of server-
+            // side token_version rotation.
+            container.tryAutoRefreshToken()
         }
     }
 }

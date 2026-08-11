@@ -160,15 +160,10 @@ class CameraDetailActivity : AppCompatActivity() {
         // The preview is hidden once any video surface becomes visible.
         loadPreviewFrame()
 
-        // Fire-and-forget preheat in parallel with loadPreviewFrame:
-        // warm up the backend's RTSP/go2rtc connection so the WebRTC
-        // offer / MP4 stream / preview frame request that follows
-        // doesn't wait for the cold-start RTSP handshake. Runs in a
-        // separate coroutine and never blocks the UI.
-        lifecycleScope.launch {
-            val token = container.prefsManager.token ?: return@launch
-            container.getRepository().preheatCamera(token, camera!!.id)
-        }
+        // preheatCamera is already fired by CamerasFragment.openCameraDetail
+        // when the user taps the camera card (< 100ms before this activity
+        // starts). No need to call it again here — the backend preheat is
+        // idempotent and the first call is already in flight.
 
         // v1.6.0: if launched with an initial timestamp (alert click
         // "查看录像"), auto-open the RecordingsDialog at that moment

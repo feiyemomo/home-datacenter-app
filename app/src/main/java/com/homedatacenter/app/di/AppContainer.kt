@@ -210,12 +210,6 @@ class AppContainer(private val context: Context) {
         }
     }
 
-    /** v1.6.10: legacy one-shot API kept for compatibility — delegates
-     *  to the shared instance and returns it WITHOUT removing from
-     *  the cache. Old call sites behave identically except the client
-     *  can now be reused. */
-    fun takeWarmWebRtcClient(): WebRtcClient? = sharedWebRtcClient
-
     // --- v1.6.11: in-app self-update ---
     //
     // On app startup we silently check the server for a newer APK.
@@ -450,6 +444,7 @@ class AppContainer(private val context: Context) {
     // round-trip before the first frame.
     @Volatile
     private var cachedIceConfig: com.homedatacenter.app.data.model.IceConfig? = null
+    private val iceFetchLock = java.util.concurrent.atomic.AtomicBoolean(false)
 
     /**
      * Returns the cached ICE config if available, null otherwise.
@@ -467,6 +462,7 @@ class AppContainer(private val context: Context) {
     fun prefetchIceConfig() {
         if (cachedIceConfig != null) return
         val token = prefsManager.token ?: return
+        if (!iceFetchLock.compareAndSet(false, true)) return
         warmScope.launch {
             try {
                 val config = getRepository().getIceConfig(token)
@@ -489,6 +485,7 @@ class AppContainer(private val context: Context) {
                 }
                 Log.d("AppContainer", "ICE config prefetched: ${config.ice_servers.size} servers")
             } catch (e: Exception) {
+                iceFetchLock.set(false)  // allow retry on failure
                 Log.w("AppContainer", "ICE config prefetch failed: ${e.message}")
             }
         }

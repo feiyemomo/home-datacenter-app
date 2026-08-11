@@ -704,17 +704,6 @@ class BaseUrlResolver(
         }
     }
 
-    private fun switchTo(url: String) {
-        // v1.6.26: retained for backward compatibility but no longer
-        // used by probeSync (which now applies `resolved` directly so
-        // it can also update lastRttMs / lastProbedAt atomically).
-        if (resolved != url) {
-            android.util.Log.i(TAG, "probeSync: switching resolved → $url")
-            resolved = url
-            onUrlChanged?.invoke(url)
-        }
-    }
-
     private fun probeUrl(url: String, timeoutMs: Int): ProbeResult {
         // Probe /api/v1/system/status. nginx routes /api/* to the
         // home-api container (see web/nginx.conf: location /api/ →

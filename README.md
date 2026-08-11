@@ -3,7 +3,7 @@
 家庭数据中心 Android 客户端 — 一个用 **Kotlin + Jetpack Compose + ExoPlayer + WebRTC** 实现的家庭 NVR / IoT 控制台，配合 [home-datacenter](https://github.com/feiyemomo/home-datacenter) 后端使用，提供摄像头预览、WebRTC/MP4/HLS 直播（含音频）、录像回放、报警查看、设备状态、天气信息、局域网/远程自动切换和实时 WebSocket 推送。
 
 > 服务端项目：<https://github.com/feiyemomo/home-datacenter>
-> 当前版本：**v1.7.19**（versionCode 113）
+> 当前版本：**v1.7.20**（versionCode 114）
 
 ---
 
@@ -35,7 +35,7 @@
 | Compile SDK | 36 |
 | Java / Kotlin | 17 / 2.0 |
 | AGP | 9.2.1 |
-| 当前版本 | 1.7.19 (versionCode 113) |
+| 当前版本 | 1.7.20 (versionCode 114) |
 | 默认服务器 | `https://api.feiyemomo.top/`（远程） / `http://192.168.31.234:8088/`（局域网，自动探测） |
 
 App 通过 `(user_id, access_key)` 换取 JWT 后访问 `home-datacenter` 的 REST API 与 WebSocket。**BaseUrlResolver** 在启动时通过后台守护线程异步探测局域网 `http://192.168.31.234:8088/` 是否可达（TTFB ~10ms vs Cloudflare Tunnel 1.4s+），可达则切到局域网，否则走远程 Cloudflare Tunnel。启动调度采用指数退避重试（1.5s → 4s → 9s → 16s），覆盖真机「WiFi connected but not validated」窗口；同时附加 TCP socket 直连探测作为 OkHttp cleartext 拒绝时的兜底。NetworkChangeMonitor 注册 ConnectivityManager.NetworkCallback，在 WiFi/移动网络切换时立即触发 re-probe，无需等 5 分钟 TTL。摄像头直播走 go2rtc 暴露的 MP4（主）+ HLS（备），后端根据摄像头 `capabilities.audio` 在 go2rtc 流 URL 上自动追加 `#audio=aac` 启用音频转码，前端通过 ExoPlayer `volume` 控制静音/取消静音。
@@ -561,6 +561,21 @@ newPlayer.setAudioAttributes(
 ---
 
 ## 更新日志
+
+### v1.7.20 — 全链路预加载清理 + 冗余修复 (2026-08-11)
+
+#### 死代码移除
+- 移除 `takeWarmWebRtcClient()`（v1.6.10 遗留兼容 API，零调用点）
+- 移除 `BaseUrlResolver.switchTo()`（v1.6.26 遗留，`probeSync` 已改用 `applyResolved`）
+- 移除 `PrefetchManager.cancelPending()`（零调用点）
+
+#### 修复
+- 接入 `tryAutoRefreshToken()` 到 `HomeCenterApp.onCreate`（v1.8.15 编写但从未调用，现为每月 JWT 静默刷新接入启动流程）
+- 移除 `CameraDetailActivity.onCreate` 中的 `preheatCamera` 冗余调用（`CamerasFragment` 已在 <100ms 前触发）
+- 给 `prefetchIceConfig` 加 `AtomicBoolean` 锁，防止首次启动多入口并发 2 次 GET
+
+#### 文档
+- 更新 `ARCHITECTURE.md` 第 4.6 节：移除已废弃的 `dynamicIpv6Url`/`tokenProvider`/`fetchDynamicIpv6Url` 描述，改为 v1.7.19 DDNS 域名方案
 
 ### v1.7.19 — 网络探测快速路径先行 + 开屏动画 (2026-08-11)
 

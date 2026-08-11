@@ -73,10 +73,4 @@ class PrefetchManager private constructor(context: Context) {
         }, idleMs)
     }
 
-    /**
-     * Cancel all pending idle prefetches.
-     */
-    fun cancelPending() {
-        mainHandler.removeCallbacksAndMessages(null)
-    }
 }
