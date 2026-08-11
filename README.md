@@ -3,7 +3,7 @@
 家庭数据中心 Android 客户端 — 一个用 **Kotlin + Jetpack Compose + ExoPlayer + WebRTC** 实现的家庭 NVR / IoT 控制台，配合 [home-datacenter](https://github.com/feiyemomo/home-datacenter) 后端使用，提供摄像头预览、WebRTC/MP4/HLS 直播（含音频）、录像回放、报警查看、设备状态、天气信息、局域网/远程自动切换和实时 WebSocket 推送。
 
 > 服务端项目：<https://github.com/feiyemomo/home-datacenter>
-> 当前版本：**v1.7.17**（versionCode 111）
+> 当前版本：**v1.7.19**（versionCode 113）
 
 ---
 
@@ -35,7 +35,7 @@
 | Compile SDK | 36 |
 | Java / Kotlin | 17 / 2.0 |
 | AGP | 9.2.1 |
-| 当前版本 | 1.7.17 (versionCode 111) |
+| 当前版本 | 1.7.19 (versionCode 113) |
 | 默认服务器 | `https://api.feiyemomo.top/`（远程） / `http://192.168.31.234:8088/`（局域网，自动探测） |
 
 App 通过 `(user_id, access_key)` 换取 JWT 后访问 `home-datacenter` 的 REST API 与 WebSocket。**BaseUrlResolver** 在启动时通过后台守护线程异步探测局域网 `http://192.168.31.234:8088/` 是否可达（TTFB ~10ms vs Cloudflare Tunnel 1.4s+），可达则切到局域网，否则走远程 Cloudflare Tunnel。启动调度采用指数退避重试（1.5s → 4s → 9s → 16s），覆盖真机「WiFi connected but not validated」窗口；同时附加 TCP socket 直连探测作为 OkHttp cleartext 拒绝时的兜底。NetworkChangeMonitor 注册 ConnectivityManager.NetworkCallback，在 WiFi/移动网络切换时立即触发 re-probe，无需等 5 分钟 TTL。摄像头直播走 go2rtc 暴露的 MP4（主）+ HLS（备），后端根据摄像头 `capabilities.audio` 在 go2rtc 流 URL 上自动追加 `#audio=aac` 启用音频转码，前端通过 ExoPlayer `volume` 控制静音/取消静音。
@@ -561,6 +561,26 @@ newPlayer.setAudioAttributes(
 ---
 
 ## 更新日志
+
+### v1.7.19 — 网络探测快速路径先行 + 开屏动画 (2026-08-11)
+
+#### 性能优化
+- **网络探测快速路径先行**：LAN/IPv6 探测完成且存活即立即切换，取消仍在等待的 Tunnel 探测，不再为等 Tunnel（~1.4s）而延迟切换
+- 典型场景提速：家庭网络 ~1.4s → ~50ms；蜂窝 IPv6 ~1.4s → ~200ms
+- 仅当两条直连路径（LAN + IPv6）都不可用时，才等待 Tunnel 作为兜底
+
+#### 重构
+- 移除 `/api/v1/network/ipv6` 冗余调用：`IPV6_DIRECT_URL` 已使用 DDNS 域名（`nas.feiyemomo.top`），AAAA 记录由 DDNS 提供商自动跟踪前缀轮换，无需再调后端接口验证
+- 删除 `fetchDynamicIpv6Url` 函数、`dynamicIpv6Url` 变量、`tokenProvider` 注入及相关后台刷新线程
+
+#### UI
+- 新增开屏动画（`SplashActivity`）：品牌入场动画，根据登录状态路由到 `MainActivity` 或 `LoginActivity`
+- 冷启动背景改为暖色渐变 + 居中 logo，消除渲染前的黑/白闪屏
+- Tab 切换动画由淡入淡出改为滑动过渡
+
+#### 修复
+- 修复首页"最近报警"卡片"全部"按钮跳转位置错误：原跳转到服务日志 tab（不含报警数据），改为跳转到摄像头 tab 的"全部报警"分区
+- 摄像头 tab 新增"全部报警"分区
 
 ### v1.7.17 — 主题切换 CancellationException 修复 (2026-08-02)
 
