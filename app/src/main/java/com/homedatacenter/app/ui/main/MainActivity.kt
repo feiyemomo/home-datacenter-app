@@ -111,7 +111,7 @@ class MainActivity : AppCompatActivity() {
         }
         if (target !== activeFragment) {
             supportFragmentManager.commit {
-                setCustomAnimations(R.anim.fade_in, R.anim.fade_out)
+                setCustomAnimations(R.anim.fragment_slide_in_right, R.anim.fragment_slide_out_left)
                 hide(activeFragment ?: return@commit)
                 show(target)
             }
@@ -189,7 +189,7 @@ class MainActivity : AppCompatActivity() {
     private fun showFragment(fragment: Fragment) {
         if (fragment === activeFragment) return
         supportFragmentManager.commit {
-            setCustomAnimations(R.anim.fade_in, R.anim.fade_out)
+            setCustomAnimations(R.anim.fragment_slide_in_right, R.anim.fragment_slide_out_left)
             hide(activeFragment ?: return@commit)
             show(fragment)
         }

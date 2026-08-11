@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Fragment enter animation: incoming fragment slides in from the
+     right (8% of its width) while fading in, 200ms decelerate —
+     lightweight liquid-glass feel for tab switches. -->
+<set xmlns:android="http://schemas.android.com/apk/res/android"
+    android:interpolator="@android:anim/decelerate_interpolator">
+    <alpha
+        android:fromAlpha="0.0"
+        android:toAlpha="1.0"
+        android:duration="200" />
+    <translate
+        android:fromXDelta="8%"
+        android:toXDelta="0%"
+        android:duration="200" />
+</set>

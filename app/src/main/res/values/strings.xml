@@ -2,6 +2,11 @@
 <resources>
     <string name="app_name">Home Datacenter</string>
 
+    <!-- Splash screen (v1.7.18) -->
+    <string name="splash_title">家庭数据中心</string>
+    <string name="splash_version_format">v%1$s</string>
+    <string name="splash_logo_desc">logo</string>
+
     <string name="login_title">欢迎回来</string>
     <string name="login_subtitle">绑定您的设备以访问家庭数据中心</string>
     <string name="hint_user_id">用户 ID</string>
@@ -72,6 +77,7 @@
     <string name="btn_recordings">录像</string>
     <string name="recent_alerts">最近报警</string>
     <string name="no_alerts">暂无报警</string>
+    <string name="all_alerts">全部报警</string>
     <string name="recent_logs">最近日志</string>
     <string name="no_recent_logs">暂无日志</string>
     <string name="view_all">全部</string>

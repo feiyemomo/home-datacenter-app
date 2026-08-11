@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Cold-start window background: warm cream gradient (same palette
+     as bg_gradient.xml) with a centered primary-tinted brand mark.
+     Assigned to Theme.HomeDatacenter's android:windowBackground so the
+     moment the launcher window appears it already shows the branded
+     splash backdrop instead of a flat color — no white/black flash. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Warm gradient base: cream -> soft peach -> warm ivory -->
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:type="linear"
+                android:angle="135"
+                android:startColor="@color/gradient_start"
+                android:centerColor="@color/gradient_mid"
+                android:endColor="@color/gradient_end" />
+        </shape>
+    </item>
+    <!-- Centered brand mark -->
+    <item
+        android:drawable="@drawable/splash_bg_icon"
+        android:gravity="center" />
+</layer-list>

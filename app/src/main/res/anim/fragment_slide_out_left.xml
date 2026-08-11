@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Fragment exit animation: outgoing fragment drifts slightly left
+     (4% of its width) while fading out, 200ms accelerate — the subtle
+     mirror of fragment_slide_in_right, kept light so tabs never feel
+     heavy. -->
+<set xmlns:android="http://schemas.android.com/apk/res/android"
+    android:interpolator="@android:anim/accelerate_interpolator">
+    <alpha
+        android:fromAlpha="1.0"
+        android:toAlpha="0.0"
+        android:duration="200" />
+    <translate
+        android:fromXDelta="0%"
+        android:toXDelta="-4%"
+        android:duration="200" />
+</set>

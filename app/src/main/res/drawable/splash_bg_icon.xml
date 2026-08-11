@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Centered brand mark used by the cold-start window background
+     (splash_background.xml). Same dashboard grid as ic_dashboard but
+     rendered at 64dp with the warm primary tint so it reads as a
+     branded backdrop instead of a flat color while the splash window
+     is being drawn. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="64dp"
+    android:height="64dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="@color/primary">
+    <path
+        android:fillColor="@android:color/black"
+        android:pathData="M5,3 L9,3 A2,2 0 0 1 11,5 L11,9 A2,2 0 0 1 9,11 L5,11 A2,2 0 0 1 3,9 L3,5 A2,2 0 0 1 5,3 Z M15,3 L19,3 A2,2 0 0 1 21,5 L21,9 A2,2 0 0 1 19,11 L15,11 A2,2 0 0 1 13,9 L13,5 A2,2 0 0 1 15,3 Z M5,13 L9,13 A2,2 0 0 1 11,15 L11,19 A2,2 0 0 1 9,21 L5,21 A2,2 0 0 1 3,19 L3,15 A2,2 0 0 1 5,13 Z M15,13 L19,13 A2,2 0 0 1 21,15 L21,19 A2,2 0 0 1 19,21 L15,21 A2,2 0 0 1 13,19 L13,15 A2,2 0 0 1 15,13 Z" />
+</vector>

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Splash logo container: warm amber gradient with rounded corners,
+     matching the app's liquid-glass warm theme (same palette as
+     bg_button_primary.xml). -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <gradient
+        android:type="linear"
+        android:angle="135"
+        android:startColor="@color/primary_light"
+        android:centerColor="@color/primary"
+        android:endColor="@color/primary_dark" />
+    <corners android:radius="28dp" />
+</shape>
