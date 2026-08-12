@@ -75,7 +75,7 @@ class ServiceLogsFragment : Fragment() {
                     rebuildDisplayList()
                 }
             },
-            onVerifyDelete = { log -> verifyAndDeleteLog(log) },
+            onVerify = { log -> verifyLog(log) },
         )
         val layoutManager = LinearLayoutManager(context)
         binding.recyclerView.layoutManager = layoutManager
@@ -143,6 +143,14 @@ class ServiceLogsFragment : Fragment() {
             currentOffset += cached.size
             hasMore = cached.size >= pageLimit
             isLoading = false
+            // v1.8.21: must stop the swipe-refresh spinner on the
+            // cache-hit path too — previously this early return
+            // skipped the finally block, leaving the spinner
+            // spinning forever after a pull-to-refresh.
+            if (view != null) {
+                binding.progressLoadMore.visibility = View.GONE
+                binding.swipeRefresh.isRefreshing = false
+            }
             return
         }
 
@@ -257,13 +265,17 @@ class ServiceLogsFragment : Fragment() {
     }
 
     /**
-     * v1.7.24: "核查" button handler — DELETEs the log via the API
-     * and removes it from both section lists on success. On failure
-     * the log stays in the list and a toast is shown so the user
-     * can retry. The adapter's [pendingDeleteIds] prevents duplicate
-     * taps while the request is in-flight.
+     * v1.8.21: "核查" button handler — PATCHes the log via the API
+     * to downgrade its level from critical to normal. On success
+     * the log is moved from [criticalLogs] to [otherLogs] so it
+     * disappears from the "待处理日志" section but stays in the
+     * "所有日志" section for full audit history.
+     *
+     * On failure the log stays in criticalLogs and a toast is
+     * shown so the user can retry. The adapter's [pendingVerifyIds]
+     * prevents duplicate taps while the request is in-flight.
      */
-    private fun verifyAndDeleteLog(log: SystemLog) {
+    private fun verifyLog(log: SystemLog) {
         val mainActivity = activity as? MainActivity ?: return
         val token = mainActivity.container.prefsManager.token ?: return
         lifecycleScope.launch {
@@ -271,17 +283,22 @@ class ServiceLogsFragment : Fragment() {
             try {
                 val auth = "Bearer $token"
                 val resp = mainActivity.container.getApi()
-                    .deleteSystemLog(auth, log.id)
+                    .verifySystemLog(auth, log.id)
                 success = resp.isSuccess
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
-                // Network failure — log stays in the list.
+                // Network failure — log stays in criticalLogs.
             }
             if (_binding == null) return@launch
             if (success) {
+                // Move the log from critical (pending) to other
+                // (all logs). The log is NOT removed — it stays
+                // in the audit trail, just no longer highlighted
+                // as pending.
                 criticalLogs.removeAll { it.id == log.id }
-                otherLogs.removeAll { it.id == log.id }
+                val verified = log.copy(level = SystemLogLevel.NORMAL)
+                otherLogs.add(0, verified)
                 rebuildDisplayList()
                 showEmpty(criticalLogs.isEmpty() && otherLogs.isEmpty())
                 Toast.makeText(requireContext(),

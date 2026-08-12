@@ -54,12 +54,11 @@ class HomeCenterApp : Application() {
             // to any camera the config is already in memory + persisted
             // to PrefsManager. Idempotent — no-ops if already cached.
             container.prefetchIceConfig()
-            // v1.6.11: silent background check for a new APK version.
-            // Result is cached in AppContainer.cachedUpdateInfo —
-            // SettingsFragment reads it to show a "new version
-            // available" hint. We do NOT auto-prompt here (would
-            // interrupt the user on every cold start).
-            container.checkUpdateOnStartup()
+            // v1.8.21: update check moved to SplashActivity so it
+            // runs in parallel with the dashboard prefetch after
+            // the user is confirmed logged in. Previously this ran
+            // in onCreate before the splash screen even rendered.
+            // container.checkUpdateOnStartup() — moved to SplashActivity
             // v1.8.15: monthly JWT silent refresh — re-binds with
             // stored access_key if 30+ days since last refresh.
             // Shortens token leakage window independent of server-

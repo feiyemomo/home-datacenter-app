@@ -13,9 +13,13 @@ import com.homedatacenter.app.databinding.ItemUserBinding
 /**
  * Adapter for the user list in [UsersActivity].
  *
- * Each row shows name + admin chip + device count + created/updated
+ * Each row shows name + admin chip + user ID + created/updated
  * timestamps. The settings button on each row opens the edit dialog
  * (rename / toggle admin / delete).
+ *
+ * v1.8.21: replaced device_count with user ID in the meta line,
+ * since device count is not actionable from this screen and the
+ * user ID is needed for binding new devices.
  */
 class UserListAdapter(
     private val onClick: (User) -> Unit,
@@ -43,13 +47,9 @@ class UserListAdapter(
             binding.chipAdmin.visibility = if (user.isAdmin) View.VISIBLE else View.GONE
 
             binding.tvUserMeta.text = buildString {
-                val count = user.deviceCount
-                if (count != null) {
-                    append(itemView.context.getString(R.string.user_devices_count, count))
-                }
+                append("ID: ").append(user.id)
                 if (!user.createdAt.isNullOrEmpty()) {
-                    if (isNotEmpty()) append(" · ")
-                    append("注册: ").append(user.createdAt)
+                    append(" · 注册: ").append(user.createdAt)
                 }
             }
         }

@@ -12,6 +12,7 @@ import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.Header
 import retrofit2.http.Headers
+import retrofit2.http.PATCH
 import retrofit2.http.POST
 import retrofit2.http.PUT
 import retrofit2.http.Path
@@ -64,6 +65,15 @@ interface HomeCenterApi {
     // verification. Used by the "核查并删除" workflow.
     @DELETE("api/v1/system/logs/{id}")
     suspend fun deleteSystemLog(
+        @Header("Authorization") auth: String,
+        @Path("id") id: Long,
+    ): ApiResponse
+
+    // v1.8.21: verify (downgrade) a critical log to normal level.
+    // The log stays in the audit trail but is removed from the
+    // "pending" section. Replaces the old DELETE-based workflow.
+    @PATCH("api/v1/system/logs/{id}")
+    suspend fun verifySystemLog(
         @Header("Authorization") auth: String,
         @Path("id") id: Long,
     ): ApiResponse

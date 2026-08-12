@@ -30,24 +30,29 @@ import java.util.Locale
  *     with a red icon tint.
  *
  * v1.7.24: "核查" button on critical log entries now calls the
- * [onVerifyDelete] callback which DELETEs the log via the API and
+ * [onVerify] callback which DELETEs the log via the API and
  * removes it from the list. Previously the button only marked the
  * log as verified in memory (lost on refresh) — now it actually
  * deletes the entry server-side.
+ *
+ * v1.8.21: "核查" button now calls PATCH /api/v1/system/logs/:id
+ * to downgrade the log level from critical to normal. The log is
+ * removed from the "待处理日志" section but kept in "所有日志"
+ * for full audit history.
  *
  * Uses a sealed [LogListItem] to represent both section headers
  * and individual log entries in the same RecyclerView.
  */
 class ServiceLogAdapter(
     private val onHeaderClick: (LogListItem.Section) -> Unit,
-    private val onVerifyDelete: (SystemLog) -> Unit,
+    private val onVerify: (SystemLog) -> Unit,
 ) : ListAdapter<LogListItem, RecyclerView.ViewHolder>(DiffCallback()) {
 
     @Volatile
     private var cameraMap: Map<Long, Camera> = emptyMap()
-    // v1.7.24: IDs of logs whose DELETE call is in-flight, to
-    // prevent duplicate taps while the request is running.
-    private val pendingDeleteIds = mutableSetOf<Long>()
+    // v1.8.21: IDs of logs whose PATCH (verify) call is in-flight,
+    // to prevent duplicate taps while the request is running.
+    private val pendingVerifyIds = mutableSetOf<Long>()
 
     override fun getItemViewType(position: Int): Int = when (getItem(position)) {
         is LogListItem.Header -> TYPE_HEADER
@@ -115,20 +120,21 @@ class ServiceLogAdapter(
             binding.tvTime.text = timeFormat.format(Date(log.ts * 1000L))
             bindCameraStatus(log)
 
-            // v1.7.24: "核查" button on critical logs now calls the
-            // onVerifyDelete callback to DELETE the log via the API.
-            // The callback is responsible for removing the log from
-            // the list after successful deletion. pendingDeleteIds
-            // prevents duplicate taps while the request is in-flight.
+            // v1.8.21: "核查" button on critical logs calls the
+            // onVerify callback to PATCH (downgrade) the log level
+            // from critical to normal. The callback moves the log
+            // from criticalLogs to otherLogs after success.
+            // pendingVerifyIds prevents duplicate taps while the
+            // request is in-flight.
             val isCritical = log.level == SystemLogLevel.CRITICAL
-            val isPending = pendingDeleteIds.contains(log.id)
+            val isPending = pendingVerifyIds.contains(log.id)
             binding.btnVerifyDelete.visibility =
                 if (isCritical && !isPending) View.VISIBLE else View.GONE
             binding.btnVerifyDelete.setOnClickListener {
-                if (pendingDeleteIds.contains(log.id)) return@setOnClickListener
-                pendingDeleteIds.add(log.id)
+                if (pendingVerifyIds.contains(log.id)) return@setOnClickListener
+                pendingVerifyIds.add(log.id)
                 binding.btnVerifyDelete.visibility = View.GONE
-                onVerifyDelete(log)
+                onVerify(log)
             }
         }
 

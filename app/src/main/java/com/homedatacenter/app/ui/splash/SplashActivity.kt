@@ -200,6 +200,20 @@ class SplashActivity : AppCompatActivity() {
                     Log.w(TAG, "Prefetch cameras.list failed: ${e.message}")
                 }
             },
+            // v1.8.21: check for app updates in parallel with the
+            // dashboard prefetch. Previously this ran in
+            // HomeCenterApp.onCreate before the splash even rendered.
+            // Moving it here means it overlaps with the splash
+            // animation + prefetch window, and the APK download
+            // starts as soon as the splash hands off to MainActivity.
+            prefetchScope.launch {
+                try {
+                    container.checkUpdateOnStartup()
+                    Log.d(TAG, "Update check completed")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Update check failed: ${e.message}")
+                }
+            },
         )
     }
 

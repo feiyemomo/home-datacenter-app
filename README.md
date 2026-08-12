@@ -3,7 +3,7 @@
 家庭数据中心 Android 客户端 — 一个用 **Kotlin + Jetpack Compose + ExoPlayer + WebRTC** 实现的家庭 NVR / IoT 控制台，配合 [home-datacenter](https://github.com/feiyemomo/home-datacenter) 后端使用，提供摄像头预览、WebRTC/MP4/HLS 直播（含音频）、录像回放、报警查看、设备状态、天气信息、局域网/远程自动切换和实时 WebSocket 推送。
 
 > 服务端项目：<https://github.com/feiyemomo/home-datacenter>
-> 当前版本：**v1.7.24**（versionCode 118）
+> 当前版本：**v1.7.25**（versionCode 119）
 
 ---
 
@@ -561,6 +561,23 @@ newPlayer.setAudioAttributes(
 ---
 
 ## 更新日志
+
+### v1.7.25 — 日志核查降级 + 下拉刷新修复 + 更新流程优化 (2026-08-12)
+
+#### 日志核查改为降级而非删除
+- 核查按钮不再删除日志，改为调用 `PATCH /api/v1/system/logs/:id` 将日志级别从 `critical` 降级为 `normal`
+- 日志从"待处理日志"栏移除，但在"所有日志"栏继续保留，完整审计轨迹不丢失
+- 持久化到服务端，刷新后仍然有效
+
+#### 下拉刷新持续转圈 bug 修复
+- 修复缓存命中路径（`loadNextPage` 中的 cache-hit early return）未调用 `swipeRefresh.isRefreshing = false` 导致下拉刷新永久转圈的问题
+
+#### 更新检查流程优化
+- 更新检查从 `HomeCenterApp.onCreate` 移至 `SplashActivity` 预加载阶段，与仪表盘预取并行执行
+- APK 下载断点续传增强：失败后自动重试 3 次（立即 → 5s → 15s），每次从 `.part` 文件断点继续，中断后自动重连
+
+#### 用户列表调整
+- 用户 tab 元信息行用"用户 ID"替换"设备数"显示
 
 ### v1.7.24 — 日志核查修复 + 审计日志扩展 (2026-08-12)
 

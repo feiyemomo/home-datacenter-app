@@ -349,8 +349,13 @@ class AppContainer(private val context: Context) {
      *   - If the APK is already on disk (isApkCached), just record
      *     the file path and return.
      *   - If a download is already in flight, return (no duplicate).
-     * On failure, silently retries once; if the retry also fails,
-     * sets [downloadFailed] so the UI can offer a manual retry.
+     *
+     * v1.8.21: On failure, auto-retries with exponential backoff
+     * (3 attempts: immediate → 5s → 15s). Each attempt resumes from
+     * the partial .part file left by the previous attempt, so a
+     * dropped connection mid-download doesn't waste the bytes
+     * already fetched. Only after all retries are exhausted does
+     * it set [downloadFailed] so the UI can offer a manual retry.
      */
     private fun startBackgroundDownload(info: com.homedatacenter.app.data.model.UpdateInfo) {
         // If the APK is already on disk from a previous session,
@@ -376,20 +381,21 @@ class AppContainer(private val context: Context) {
         downloadProgress = 0
 
         warmScope.launch {
-            var file = com.homedatacenter.app.util.ApkInstaller.downloadOnly(
-                context = context,
-                repo = getRepository(),
-                token = token,
-                info = info,
-                onProgress = { percent -> downloadProgress = percent },
-            )
-            if (file == null) {
-                // Silent single retry — transient network blips are
-                // common over Cloudflare Tunnel and the user hasn't
-                // been prompted yet, so a retry is cheaper than
-                // surfacing a failure state.
-                Log.w("AppContainer", "Background download failed, retrying once…")
-                downloadProgress = 0
+            // v1.8.21: auto-retry with exponential backoff.
+            //   attempt 1: immediate
+            //   attempt 2: 5s delay
+            //   attempt 3: 15s delay
+            // Each attempt resumes from the partial .part file,
+            // so interrupted downloads continue where they left off.
+            val delays = longArrayOf(0L, 5_000L, 15_000L)
+            var file: java.io.File? = null
+            for (attempt in delays.indices) {
+                if (attempt > 0) {
+                    Log.d("AppContainer",
+                        "Background download retry #$attempt after ${delays[attempt]}ms delay…")
+                    downloadProgress = 0
+                    kotlinx.coroutines.delay(delays[attempt])
+                }
                 file = com.homedatacenter.app.util.ApkInstaller.downloadOnly(
                     context = context,
                     repo = getRepository(),
@@ -397,6 +403,7 @@ class AppContainer(private val context: Context) {
                     info = info,
                     onProgress = { percent -> downloadProgress = percent },
                 )
+                if (file != null) break
             }
             if (file != null) {
                 cachedDownloadedApk = file
@@ -404,7 +411,7 @@ class AppContainer(private val context: Context) {
                 Log.d("AppContainer", "Background download ready: ${file.absolutePath}")
             } else {
                 downloadFailed = true
-                Log.w("AppContainer", "Background download failed after retry")
+                Log.w("AppContainer", "Background download failed after ${delays.size} attempts")
             }
             downloadingApk = false
         }
