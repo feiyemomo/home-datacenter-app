@@ -495,9 +495,16 @@ class HomeCenterRepository(
      * ResponseBody — the caller is responsible for writing it to
      * disk (see ApkInstaller.downloadApk) and closing the body to
      * release the connection.
+     *
+     * v1.7.22: optional [range] header enables HTTP Range requests
+     * for resumable downloads. Returns [retrofit2.Response] so the
+     * caller can distinguish 200 (full) from 206 (partial/resume).
      */
-    suspend fun downloadLatestApk(token: String): okhttp3.ResponseBody {
-        return api.downloadLatestApk(bearer(token))
+    suspend fun downloadLatestApk(
+        token: String,
+        range: String? = null,
+    ): retrofit2.Response<okhttp3.ResponseBody> {
+        return api.downloadLatestApk(bearer(token), range)
     }
 
     private fun bearer(token: String): String = "Bearer $token"

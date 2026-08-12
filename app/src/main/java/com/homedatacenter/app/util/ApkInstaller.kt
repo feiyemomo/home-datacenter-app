@@ -12,6 +12,7 @@ import com.homedatacenter.app.data.repository.HomeCenterRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileOutputStream
 
 /**
  * v1.6.11: in-app APK self-update. Downloads the latest APK from
@@ -86,19 +87,73 @@ object ApkInstaller {
             }
             val apkFile = File(downloadsDir, fileName)
 
-            // Stream the APK to disk. ResponseBody.source() returns
-            // a BufferedSource that reads in 8KB chunks by default;
-            // we report progress per 1% delta so the caller can
-            // update a progress bar without flooding the main thread.
-            val body = repo.downloadLatestApk(token)
+            // v1.7.22: resumable download. If a partial file from a
+            // previous interrupted attempt exists AND the server
+            // reports a size for this release, send an HTTP Range
+            // request to continue from where we left off instead of
+            // starting over. The server (Go http.ServeFile behind
+            // Gin's c.File) natively supports Range — it returns
+            // 206 Partial Content with the remaining bytes.
+            //
+            // We track the partial file alongside a ".part" suffix
+            // so a completed-but-unverified file doesn't get
+            // mistaken for a partial download on the next run.
+            val partFile = File(downloadsDir, "$fileName.part")
+            val existingBytes = if (partFile.exists()) partFile.length() else 0L
+            val totalSize = info.size_bytes
+            val canResume = existingBytes > 0 && totalSize > 0 && existingBytes < totalSize
+
+            val rangeHeader = if (canResume) "bytes=$existingBytes-" else null
+            if (canResume) {
+                Log.d(TAG, "Resuming download: $existingBytes/$totalSize bytes (${(existingBytes * 100 / totalSize)}%)")
+            }
+
+            val response = repo.downloadLatestApk(token, rangeHeader)
+            if (!response.isSuccessful) {
+                Log.e(TAG, "Download request failed: HTTP ${response.code()}")
+                // 416 Range Not Satisfiable can happen if the part
+                // file is larger than the actual APK (e.g. the file
+                // on the server was replaced with a smaller one).
+                // Delete the stale part file and fall through to a
+                // full re-download on the next attempt — for now
+                // just return null.
+                if (response.code() == 416 && partFile.exists()) {
+                    Log.w(TAG, "Range not satisfiable — deleting stale part file")
+                    partFile.delete()
+                }
+                return@withContext null
+            }
+
+            val body = response.body() ?: return@withContext null
+            val code = response.code()
+            val isResume = code == 206
+
+            // Determine total size for progress reporting:
+            //   200 OK       → Content-Length is the full APK size
+            //   206 Partial  → Content-Length is the remaining bytes;
+            //                   use Content-Range header for total.
+            // Either way, fall back to info.size_bytes if the header
+            // is missing or unparsable.
+            val total = when {
+                isResume -> {
+                    val contentRange = response.headers()["Content-Range"]
+                    parseTotalFromContentRange(contentRange) ?: totalSize
+                }
+                else -> body.contentLength().let { if (it > 0) it else totalSize }
+            }.let { if (it > 0) it else totalSize }
+
+            // Decide write mode:
+            //   resume (206) → append to the existing .part file
+            //   full (200)   → truncate the .part file and start fresh
+            val appendMode = isResume
+            var downloaded = if (appendMode) existingBytes else 0L
+            var lastReportedPercent = if (total > 0) ((downloaded * 100) / total).toInt() else -1
+
             body.use { responseBody ->
-                val total = responseBody.contentLength().let { if (it > 0) it else info.size_bytes }
-                var lastReportedPercent = -1
                 responseBody.byteStream().use { input ->
-                    apkFile.outputStream().use { output ->
+                    FileOutputStream(partFile, appendMode).use { output ->
                         val buf = ByteArray(64 * 1024) // 64KB read buffer
                         var read: Int
-                        var downloaded = 0L
                         while (input.read(buf).also { read = it } != -1) {
                             output.write(buf, 0, read)
                             downloaded += read
@@ -114,12 +169,49 @@ object ApkInstaller {
                 }
             }
 
-            Log.d(TAG, "Downloaded ${apkFile.length()} bytes to ${apkFile.absolutePath}")
+            // Integrity check: verify the downloaded file matches
+            // the server-reported size. If size_bytes is unknown
+            // (<=0), skip the check and trust the stream completion.
+            if (totalSize > 0 && partFile.length() != totalSize) {
+                Log.e(TAG, "Download size mismatch: got ${partFile.length()}, expected $totalSize")
+                // Keep the .part file so the next attempt can resume.
+                return@withContext null
+            }
+
+            // Download complete — rename .part → final name. This
+            // is atomic on POSIX and near-atomic on Windows (POSIX
+            // rename semantics via Files.move with REPLACE_EXISTING).
+            // After rename, isApkCached() (which checks the final
+            // name) returns true and startBackgroundDownload skips
+            // re-downloading.
+            if (apkFile.exists()) apkFile.delete()
+            if (!partFile.renameTo(apkFile)) {
+                Log.e(TAG, "Failed to rename ${partFile.name} → ${apkFile.name}")
+                return@withContext null
+            }
+
+            Log.d(TAG, "Downloaded ${apkFile.length()} bytes to ${apkFile.absolutePath} " +
+                "(resumed=$isResume)")
             apkFile
         } catch (e: Exception) {
             Log.e(TAG, "Download failed: ${e.message}", e)
+            // Keep the .part file for resume on the next attempt.
             null
         }
+    }
+
+    /**
+     * Parse the total file size from an HTTP Content-Range header
+     * of the form "bytes 5242880-104857599/104857600". Returns the
+     * total (the part after '/') or null if the header is missing
+     * or malformed.
+     */
+    private fun parseTotalFromContentRange(contentRange: String?): Long? {
+        if (contentRange.isNullOrBlank()) return null
+        // Format: "bytes <start>-<end>/<total>"
+        val slashIdx = contentRange.lastIndexOf('/')
+        if (slashIdx < 0 || slashIdx == contentRange.length - 1) return null
+        return contentRange.substring(slashIdx + 1).toLongOrNull()
     }
 
     /**

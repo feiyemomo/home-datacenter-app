@@ -198,10 +198,20 @@ interface HomeCenterApi {
      * GET /api/v1/release/latest/apk → APK file stream. Returns
      * ResponseBody so the caller can stream to disk without loading
      * the whole 90MB APK into memory. Caller MUST close the body.
+     *
+     * v1.7.22: optional [range] header enables HTTP Range requests
+     * for resumable downloads on flaky networks. The server (Go
+     * http.ServeFile) natively supports Range — when [range] is
+     * "bytes=N-" the server returns 206 Partial Content with the
+     * remaining bytes. Returns [retrofit2.Response] so the caller
+     * can distinguish 200 (full download) from 206 (resume).
      */
     @GET("api/v1/release/latest/apk")
     @retrofit2.http.Streaming
-    suspend fun downloadLatestApk(@Header("Authorization") auth: String): okhttp3.ResponseBody
+    suspend fun downloadLatestApk(
+        @Header("Authorization") auth: String,
+        @Header("Range") range: String? = null,
+    ): retrofit2.Response<okhttp3.ResponseBody>
 
     // --- Camera audio toggle (admin) ---
 

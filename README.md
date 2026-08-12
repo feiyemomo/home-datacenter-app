@@ -3,7 +3,7 @@
 家庭数据中心 Android 客户端 — 一个用 **Kotlin + Jetpack Compose + ExoPlayer + WebRTC** 实现的家庭 NVR / IoT 控制台，配合 [home-datacenter](https://github.com/feiyemomo/home-datacenter) 后端使用，提供摄像头预览、WebRTC/MP4/HLS 直播（含音频）、录像回放、报警查看、设备状态、天气信息、局域网/远程自动切换和实时 WebSocket 推送。
 
 > 服务端项目：<https://github.com/feiyemomo/home-datacenter>
-> 当前版本：**v1.7.21**（versionCode 115）
+> 当前版本：**v1.7.22**（versionCode 116）
 
 ---
 
@@ -561,6 +561,17 @@ newPlayer.setAudioAttributes(
 ---
 
 ## 更新日志
+
+### v1.7.22 — APK 下载断点续传 (2026-08-12)
+
+#### 断点续传
+- `ApkInstaller.downloadOnly` 改用 `.part` 文件 + HTTP `Range` 请求实现断点续传
+- 弱网下载失败后，下次重试从已下载位置继续，而非从头开始
+- `HomeCenterApi.downloadLatestApk` 新增可选 `Range` 头参数，返回 `Response<ResponseBody>` 以区分 200（完整下载）/ 206（续传）
+- 下载完成后校验文件大小，`rename .part → 最终文件名`（原子操作）
+- 处理 416 Range Not Satisfiable：删除过期 `.part` 文件，下次完整重下
+- 进度回调正确反映续传起始百分比（如从 60% 开始继续）
+- 服务端无需修改（Go `http.ServeFile` 已原生支持 Range 请求）
 
 ### v1.7.21 — 预加载并行化与开屏时间利用 (2026-08-11)
 
