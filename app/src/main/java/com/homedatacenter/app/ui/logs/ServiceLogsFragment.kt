@@ -292,6 +292,10 @@ class ServiceLogsFragment : Fragment() {
             }
             if (_binding == null) return@launch
             if (success) {
+                // Invalidate cached log pages so the next pull-to-refresh
+                // fetches fresh data from the server instead of showing
+                // stale entries whose level was just downgraded.
+                CacheManager.getInstance(requireContext()).clear("logs.page.")
                 // Move the log from critical (pending) to other
                 // (all logs). The log is NOT removed — it stays
                 // in the audit trail, just no longer highlighted

@@ -3,7 +3,7 @@
 家庭数据中心 Android 客户端 — 一个用 **Kotlin + Jetpack Compose + ExoPlayer + WebRTC** 实现的家庭 NVR / IoT 控制台，配合 [home-datacenter](https://github.com/feiyemomo/home-datacenter) 后端使用，提供摄像头预览、WebRTC/MP4/HLS 直播（含音频）、录像回放、报警查看、设备状态、天气信息、局域网/远程自动切换和实时 WebSocket 推送。
 
 > 服务端项目：<https://github.com/feiyemomo/home-datacenter>
-> 当前版本：**v1.7.25**（versionCode 119）
+> 当前版本：**v1.7.26**（versionCode 120）
 
 ---
 
@@ -561,6 +561,20 @@ newPlayer.setAudioAttributes(
 ---
 
 ## 更新日志
+
+### v1.7.26 — 核查缓存修复 + 审计日志大幅拓展 (2026-08-12)
+
+#### 核查后刷新回现 bug 修复
+- 修复核查日志后下拉刷新时被核查日志又出现在"待处理日志"栏的 bug
+- 根因：核查成功后未清除 `CacheManager` 中的 `logs.page.*` 分页缓存，刷新时读到旧 critical 级别数据
+- 修复：核查成功后调用 `CacheManager.clear("logs.page.")` 清除所有日志分页缓存
+
+#### 审计日志大幅拓展（配合服务端 v1.8.22）
+- **摄像头管理事件**：新增摄像头注册、更新编码/音频/录制计划的审计日志
+- **自动化规则事件**：新增规则触发、创建/更新/删除的审计日志
+- **设备管理事件**：新增设备硬删除、Token 轮换的审计日志
+- **运动检测报警**：摄像头检测到运动时记录 info 级别日志
+- **修复 dead topic**：`camera.status_changed` 事件之前已被订阅但从未发布，现在 health.go 在状态变更时补发
 
 ### v1.7.25 — 日志核查降级 + 下拉刷新修复 + 更新流程优化 (2026-08-12)
 
