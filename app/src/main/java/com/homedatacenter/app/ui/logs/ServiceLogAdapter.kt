@@ -29,20 +29,25 @@ import java.util.Locale
  *     expandable via header tap. Critical logs are highlighted
  *     with a red icon tint.
  *
- * v1.8.x: "核查" button on critical log entries. Tapping marks the
- * log as verified locally (hides the button) — no API call is made.
+ * v1.7.24: "核查" button on critical log entries now calls the
+ * [onVerifyDelete] callback which DELETEs the log via the API and
+ * removes it from the list. Previously the button only marked the
+ * log as verified in memory (lost on refresh) — now it actually
+ * deletes the entry server-side.
  *
  * Uses a sealed [LogListItem] to represent both section headers
  * and individual log entries in the same RecyclerView.
  */
 class ServiceLogAdapter(
     private val onHeaderClick: (LogListItem.Section) -> Unit,
+    private val onVerifyDelete: (SystemLog) -> Unit,
 ) : ListAdapter<LogListItem, RecyclerView.ViewHolder>(DiffCallback()) {
 
     @Volatile
     private var cameraMap: Map<Long, Camera> = emptyMap()
-    // v1.8.x: IDs of logs that have been verified by the user.
-    private val verifiedIds = mutableSetOf<Long>()
+    // v1.7.24: IDs of logs whose DELETE call is in-flight, to
+    // prevent duplicate taps while the request is running.
+    private val pendingDeleteIds = mutableSetOf<Long>()
 
     override fun getItemViewType(position: Int): Int = when (getItem(position)) {
         is LogListItem.Header -> TYPE_HEADER
@@ -110,16 +115,20 @@ class ServiceLogAdapter(
             binding.tvTime.text = timeFormat.format(Date(log.ts * 1000L))
             bindCameraStatus(log)
 
-            // v1.8.x: show "核查" button for critical logs. Tapping
-            // marks the log as verified locally (hides the button).
-            // No API call is made — the log stays in the list.
+            // v1.7.24: "核查" button on critical logs now calls the
+            // onVerifyDelete callback to DELETE the log via the API.
+            // The callback is responsible for removing the log from
+            // the list after successful deletion. pendingDeleteIds
+            // prevents duplicate taps while the request is in-flight.
             val isCritical = log.level == SystemLogLevel.CRITICAL
-            val isVerified = isCritical && verifiedIds.contains(log.id)
+            val isPending = pendingDeleteIds.contains(log.id)
             binding.btnVerifyDelete.visibility =
-                if (isCritical && !isVerified) View.VISIBLE else View.GONE
+                if (isCritical && !isPending) View.VISIBLE else View.GONE
             binding.btnVerifyDelete.setOnClickListener {
-                verifiedIds.add(log.id)
+                if (pendingDeleteIds.contains(log.id)) return@setOnClickListener
+                pendingDeleteIds.add(log.id)
                 binding.btnVerifyDelete.visibility = View.GONE
+                onVerifyDelete(log)
             }
         }
 

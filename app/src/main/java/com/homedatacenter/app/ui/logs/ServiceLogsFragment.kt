@@ -75,6 +75,7 @@ class ServiceLogsFragment : Fragment() {
                     rebuildDisplayList()
                 }
             },
+            onVerifyDelete = { log -> verifyAndDeleteLog(log) },
         )
         val layoutManager = LinearLayoutManager(context)
         binding.recyclerView.layoutManager = layoutManager
@@ -253,6 +254,43 @@ class ServiceLogsFragment : Fragment() {
     private fun showEmpty(show: Boolean) {
         binding.tvEmpty.visibility = if (show) View.VISIBLE else View.GONE
         binding.recyclerView.visibility = if (show) View.GONE else View.VISIBLE
+    }
+
+    /**
+     * v1.7.24: "核查" button handler — DELETEs the log via the API
+     * and removes it from both section lists on success. On failure
+     * the log stays in the list and a toast is shown so the user
+     * can retry. The adapter's [pendingDeleteIds] prevents duplicate
+     * taps while the request is in-flight.
+     */
+    private fun verifyAndDeleteLog(log: SystemLog) {
+        val mainActivity = activity as? MainActivity ?: return
+        val token = mainActivity.container.prefsManager.token ?: return
+        lifecycleScope.launch {
+            var success = false
+            try {
+                val auth = "Bearer $token"
+                val resp = mainActivity.container.getApi()
+                    .deleteSystemLog(auth, log.id)
+                success = resp.isSuccess
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Network failure — log stays in the list.
+            }
+            if (_binding == null) return@launch
+            if (success) {
+                criticalLogs.removeAll { it.id == log.id }
+                otherLogs.removeAll { it.id == log.id }
+                rebuildDisplayList()
+                showEmpty(criticalLogs.isEmpty() && otherLogs.isEmpty())
+                Toast.makeText(requireContext(),
+                    R.string.log_verified_deleted, Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(requireContext(),
+                    R.string.log_verify_failed, Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     // --- WebSocket live prepend ---

@@ -3,7 +3,7 @@
 家庭数据中心 Android 客户端 — 一个用 **Kotlin + Jetpack Compose + ExoPlayer + WebRTC** 实现的家庭 NVR / IoT 控制台，配合 [home-datacenter](https://github.com/feiyemomo/home-datacenter) 后端使用，提供摄像头预览、WebRTC/MP4/HLS 直播（含音频）、录像回放、报警查看、设备状态、天气信息、局域网/远程自动切换和实时 WebSocket 推送。
 
 > 服务端项目：<https://github.com/feiyemomo/home-datacenter>
-> 当前版本：**v1.7.23**（versionCode 117）
+> 当前版本：**v1.7.24**（versionCode 118）
 
 ---
 
@@ -561,6 +561,19 @@ newPlayer.setAudioAttributes(
 ---
 
 ## 更新日志
+
+### v1.7.24 — 日志核查修复 + 审计日志扩展 (2026-08-12)
+
+#### 日志核查按钮修复
+- 修复"核查"按钮无效 bug：原来仅在内存中标记已核查，刷新后失效；现在点击后调用 `DELETE /api/v1/system/logs/:id` 从服务端删除日志条目，并从列表实时移除
+- 新增 `pendingDeleteIds` 防重复点击机制：跟踪删除中的日志 ID，避免重复 API 调用
+- `ServiceLogAdapter` 新增 `onVerifyDelete` 回调接口，`ServiceLogsFragment.verifyAndDeleteLog` 负责调用 API 并更新 UI
+
+#### 审计日志扩展（配合服务端 v1.8.20）
+- 用户登录 / 登出事件重新纳入日志记录
+- 新增用户创建 / 更新 / 删除事件记录（管理员操作审计）
+- 新增摄像头删除事件记录
+- 日志消息使用中文人类可读格式（如"管理员 admin 创建用户 alice"、"用户 admin 登录（设备 我的手机）"）
 
 ### v1.7.23 — 对话框液态玻璃风格 (2026-08-12)
 
