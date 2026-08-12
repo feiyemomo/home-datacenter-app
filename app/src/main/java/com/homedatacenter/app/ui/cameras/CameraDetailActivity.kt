@@ -82,6 +82,14 @@ class CameraDetailActivity : AppCompatActivity() {
     // Live stream playback state. The player is created on demand
     // and released in onPause/onDestroy to free the MediaCodec.
     private var player: ExoPlayer? = null
+    // Pre-prepared ExoPlayer used as a fast fallback when WebRTC
+    // fails. Created with playWhenReady=false in prepareFallbackPlayer
+    // (called at the start of startWebRtcStream) so that on WebRTC
+    // onError the fallback can be promoted to the main `player` slot
+    // and start playing immediately, skipping the ExoPlayer cold-start
+    // delay. Released on WebRTC success (onConnected) and in
+    // releaseExoPlayerOnly.
+    private var fallbackPlayer: ExoPlayer? = null
     private var triedWebRtc = false
     private var triedMp4 = false
     private var triedHls = false
@@ -256,6 +264,12 @@ class CameraDetailActivity : AppCompatActivity() {
         player = null
         binding.playerView.player = null
         old?.release()
+        // Also release the pre-prepared fallback player if it's still
+        // waiting (not yet promoted). Once promoted it's tracked by
+        // `player` above. Covers releasePlayer / onPause / onDestroy.
+        val fb = fallbackPlayer
+        fallbackPlayer = null
+        fb?.release()
         // Reset fallback ladder flags so reload retries WebRTC first.
         triedMp4 = false
         triedHls = false
@@ -1074,6 +1088,13 @@ class CameraDetailActivity : AppCompatActivity() {
         webRtcMuted = false
         updateWebRtcControlButtons()
 
+        // Pre-prepare the ExoPlayer fallback (playWhenReady=false) so
+        // that if WebRTC fails we can promote it to the main player
+        // slot instantly, skipping the ExoPlayer cold-start delay.
+        // ExoPlayer.prepare() is async so this doesn't block the
+        // WebRTC negotiation below.
+        prepareFallbackPlayer(cam)
+
         // Fetch ICE config (cached after first call). The list may
         // be empty on LAN — host candidates are enough there.
         // v1.5.7: prefer container.getCachedIceConfig() to skip the
@@ -1129,6 +1150,10 @@ class CameraDetailActivity : AppCompatActivity() {
                         // v1.6.16: hide the JPEG preview frame once the
                         // real WebRTC video surface is live.
                         hidePreviewFrame()
+                        // WebRTC succeeded: release the pre-prepared
+                        // fallback player — it's no longer needed.
+                        fallbackPlayer?.release()
+                        fallbackPlayer = null
                         // v1.5.9: confirm the active transport once
                         // ICE reaches CONNECTED — the badge was already
                         // "WebRTC" from startWebRtcStream, this just
@@ -1141,13 +1166,41 @@ class CameraDetailActivity : AppCompatActivity() {
                     override fun onError(reason: String) {
                         webRtcInProgress = false
                         android.util.Log.w(TAG, "WebRTC failed: $reason — falling back to MP4")
-                        // Hide WebRTC surface, show ExoPlayer surface
-                        // and let preparePlayback() set up the player.
+                        // Hide WebRTC surface, show ExoPlayer surface.
                         binding.surfaceRenderer.visibility = View.GONE
                         binding.webRtcControls.visibility = View.GONE
                         binding.btnWebRtcFullscreen.visibility = View.GONE
                         binding.playerView.visibility = View.VISIBLE
-                        startMp4Playback(cam)
+                        // Promote the pre-prepared fallback player to
+                        // the main slot if it's still alive. This skips
+                        // the ExoPlayer cold-start delay since the media
+                        // source was already prepared in the background
+                        // while WebRTC was negotiating. If the fallback
+                        // player is null (prepare failed or never ran),
+                        // fall back to the original startMp4Playback path.
+                        val fb = fallbackPlayer
+                        if (fb != null) {
+                            player = fb
+                            fallbackPlayer = null
+                            binding.playerView.player = fb
+                            fb.playWhenReady = true
+                            fb.volume = if (audioEnabled) 1.0f else 0.0f
+                            // Re-derive the strategy badge from the
+                            // current path config (the fallback player
+                            // was prepared with this transport).
+                            val isDirectPath = container.baseUrlResolver.isDirectPath()
+                            val mp4Url = resolveMp4Url(cam)
+                            val hlsUrl = resolveHlsUrl(cam)
+                            val useMp4 = when {
+                                isDirectPath -> mp4Url.isNotBlank()
+                                hlsUrl.isNotBlank() -> false
+                                else -> mp4Url.isNotBlank()
+                            }
+                            updateStreamStrategy(if (useMp4) "MP4" else "HLS")
+                            fullscreenHelper?.onPlayerChanged(fb)
+                        } else {
+                            startMp4Playback(cam)
+                        }
                     }
 
                     override fun onIceStateChanged(state: PeerConnection.IceConnectionState) {
@@ -1219,6 +1272,147 @@ class CameraDetailActivity : AppCompatActivity() {
         // cold streams. See the inline-playback comment in the
         // previous CameraAdapter for the full rationale.
         preparePlayback(mp4Url, hlsUrl, useMp4 = useMp4)
+    }
+
+    /**
+     * Pre-prepares a fallback ExoPlayer (playWhenReady=false) while
+     * WebRTC is negotiating. Mirrors [preparePlayback]'s player +
+     * media source configuration, but does NOT call play() — the
+     * player stays in the prepared-but-paused state so it can be
+     * promoted to the main `player` slot instantly if WebRTC fails.
+     *
+     * The source type (MP4 vs HLS) is chosen with the same
+     * isDirectPath logic as [startMp4Playback]: MP4 on LAN/IPv6
+     * direct, HLS on Tunnel.
+     *
+     * ExoPlayer.prepare() is async (network fetches happen on
+     * internal threads), so this is safe to call on the main thread
+     * without blocking the WebRTC negotiation.
+     */
+    private fun prepareFallbackPlayer(cam: Camera) {
+        // Release any stale fallback player from a previous attempt.
+        fallbackPlayer?.release()
+        fallbackPlayer = null
+
+        val mp4Url = resolveMp4Url(cam)
+        val hlsUrl = resolveHlsUrl(cam)
+        if (mp4Url.isBlank() && hlsUrl.isBlank()) return
+
+        val isDirectPath = container.baseUrlResolver.isDirectPath()
+        val useMp4 = when {
+            isDirectPath -> mp4Url.isNotBlank()
+            hlsUrl.isNotBlank() -> false
+            else -> mp4Url.isNotBlank()
+        }
+        val url = if (useMp4) mp4Url else hlsUrl
+        if (url.isBlank()) return
+
+        val token = container.prefsManager.token
+        val dataSourceFactory = DefaultHttpDataSource.Factory().apply {
+            setConnectTimeoutMs(30_000)
+            setReadTimeoutMs(60_000)
+            setUserAgent(NetworkFactory.USER_AGENT)
+            if (!token.isNullOrEmpty()) {
+                setDefaultRequestProperties(
+                    mapOf(
+                        "Authorization" to "Bearer $token",
+                        "Cookie" to "home_token=$token",
+                    ),
+                )
+            }
+        }
+
+        val mediaSource = if (useMp4) {
+            ProgressiveMediaSource.Factory(dataSourceFactory)
+                .createMediaSource(MediaItem.fromUri(Uri.parse(url)))
+        } else {
+            val mediaItem = MediaItem.Builder()
+                .setUri(Uri.parse(url))
+                .setLiveConfiguration(
+                    MediaItem.LiveConfiguration.Builder()
+                        .setTargetOffsetMs(1_500)
+                        .setMaxOffsetMs(5_000)
+                        .setMinOffsetMs(500)
+                        .build()
+                )
+                .build()
+            HlsMediaSource.Factory(dataSourceFactory)
+                .createMediaSource(mediaItem)
+        }
+
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                /* minBufferMs= */ 1_000,
+                /* maxBufferMs= */ 3_000,
+                /* bufferForPlaybackMs= */ 500,
+                /* bufferForPlaybackAfterRebufferMs= */ 1_000,
+            )
+            .setTargetBufferBytes(DefaultLoadControl.DEFAULT_TARGET_BUFFER_BYTES)
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .build()
+
+        val renderersFactory = ExoPlayerRendererFactory.create(this)
+        val newPlayer = ExoPlayer.Builder(this, renderersFactory)
+            .setLoadControl(loadControl)
+            .build()
+        newPlayer.setAudioAttributes(
+            com.google.android.exoplayer2.audio.AudioAttributes.Builder()
+                .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MOVIE)
+                .build(),
+            /* handleAudioFocus = */ true,
+        )
+        newPlayer.apply {
+            setMediaSource(mediaSource)
+            playWhenReady = false
+            volume = if (audioEnabled) 1.0f else 0.0f
+            addListener(object : Player.Listener {
+                override fun onPlaybackStateChanged(state: Int) {
+                    // Only update UI once this player has been promoted
+                    // to the main `player` slot. While it's still the
+                    // fallback (playWhenReady=false), state changes are
+                    // internal and shouldn't affect the visible UI.
+                    if (this@CameraDetailActivity.player !== newPlayer) return
+                    binding.progressVideo.visibility =
+                        if (state == Player.STATE_BUFFERING) View.VISIBLE else View.GONE
+                    if (state == Player.STATE_READY) {
+                        binding.tvVideoError.visibility = View.GONE
+                        hidePreviewFrame()
+                    }
+                    if (state == Player.STATE_IDLE || state == Player.STATE_ENDED) {
+                        binding.progressVideo.visibility = View.GONE
+                    }
+                }
+
+                override fun onPlayerError(error: PlaybackException) {
+                    android.util.Log.e(
+                        TAG,
+                        "Fallback player error (useMp4=$useMp4): ${error.message}",
+                        error,
+                    )
+                    if (fallbackPlayer === newPlayer) {
+                        // Still in the fallback slot (not promoted):
+                        // release and null out so WebRTC onError falls
+                        // back to startMp4Playback.
+                        try { newPlayer.release() } catch (_: Exception) {}
+                        fallbackPlayer = null
+                    } else if (this@CameraDetailActivity.player === newPlayer) {
+                        // Promoted to main player: fall back to the
+                        // other transport (MP4 -> HLS), or give up.
+                        if (useMp4 && hlsUrl.isNotBlank() && !triedHls) {
+                            preparePlayback(mp4Url, hlsUrl, useMp4 = false)
+                        } else {
+                            releasePlayer()
+                            binding.tvVideoError.visibility = View.VISIBLE
+                            binding.progressVideo.visibility = View.GONE
+                            updateStreamStrategy(null)
+                        }
+                    }
+                }
+            })
+            prepare()
+        }
+        fallbackPlayer = newPlayer
     }
 
     private fun preparePlayback(mp4Url: String, hlsUrl: String, useMp4: Boolean) {

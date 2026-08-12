@@ -3,7 +3,7 @@
 家庭数据中心 Android 客户端 — 一个用 **Kotlin + Jetpack Compose + ExoPlayer + WebRTC** 实现的家庭 NVR / IoT 控制台，配合 [home-datacenter](https://github.com/feiyemomo/home-datacenter) 后端使用，提供摄像头预览、WebRTC/MP4/HLS 直播（含音频）、录像回放、报警查看、设备状态、天气信息、局域网/远程自动切换和实时 WebSocket 推送。
 
 > 服务端项目：<https://github.com/feiyemomo/home-datacenter>
-> 当前版本：**v1.7.20**（versionCode 114）
+> 当前版本：**v1.7.21**（versionCode 115）
 
 ---
 
@@ -561,6 +561,22 @@ newPlayer.setAudioAttributes(
 ---
 
 ## 更新日志
+
+### v1.7.21 — 预加载并行化与开屏时间利用 (2026-08-11)
+
+#### WebRTC + HLS/MP4 并行预 prepare
+- `CameraDetailActivity` 新增 `fallbackPlayer` 字段和 `prepareFallbackPlayer` 方法
+- 启动 WebRTC 协商时同时创建 ExoPlayer 并 `prepare` HLS/MP4 source（`playWhenReady=false`）
+- WebRTC `onConnected`：释放 `fallbackPlayer`（成功无需 fallback）
+- WebRTC `onError`：将 `fallbackPlayer` 提升为主 player 并立即播放，省去构建+prepare 延迟
+- fallback 切换延迟从 500ms-2s 降至 ~100-300ms
+- 生命周期管理：`releaseExoPlayerOnly` 同时释放 `fallbackPlayer`，无 MediaCodec 泄漏
+
+#### 开屏期间预取首屏数据
+- `SplashActivity` 已登录路径并行预取 `system.status` / `weather` / `alerts` / `cameras.list`
+- 数据写入 `CacheManager`，key 与 `DashboardFragment` 实际读取一致
+- `routeToNext` 等待条件改为 `max(900ms 动画, +1100ms 预取等待)`，总 2000ms 超时兜底
+- 未登录路径保持原 900ms 固定，不触发预取
 
 ### v1.7.20 — 全链路预加载清理 + 冗余修复 (2026-08-11)
 
