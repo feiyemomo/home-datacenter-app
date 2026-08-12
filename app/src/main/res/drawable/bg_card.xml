@@ -1,20 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Subtle card surface for alerts/recordings — warm cream in light mode,
      warm slate in dark mode, with soft border. Not full glass (alerts
-     should feel slightly more solid) but still part of the warm palette. -->
+     should feel slightly more solid) but still part of the warm palette.
+     Corner radius unified at 20dp with bg_card_rounded. -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Soft shadow -->
     <item android:top="1dp">
         <shape android:shape="rectangle">
             <solid android:color="#0A000000" />
-            <corners android:radius="18dp" />
+            <corners android:radius="20dp" />
         </shape>
     </item>
     <!-- Main card body -->
     <item android:bottom="1dp">
         <shape android:shape="rectangle">
             <solid android:color="@color/card_bg" />
-            <corners android:radius="18dp" />
+            <corners android:radius="20dp" />
             <stroke
                 android:width="1dp"
                 android:color="@color/card_stroke" />
@@ -25,7 +26,7 @@
         android:left="1dp"
         android:right="1dp"
         android:top="1dp"
-        android:bottom="17dp">
+        android:bottom="19dp">
         <shape android:shape="rectangle">
             <gradient
                 android:type="linear"
@@ -33,7 +34,7 @@
                 android:startColor="#0DFFFFFF"
                 android:endColor="@android:color/transparent" />
             <corners
-                android:radius="17dp"
+                android:radius="19dp"
                 android:bottomLeftRadius="0dp"
                 android:bottomRightRadius="0dp" />
         </shape>

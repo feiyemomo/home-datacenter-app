@@ -22,6 +22,15 @@
         <item name="android:windowBackground">@drawable/splash_background</item>
         <item name="android:navigationBarColor">@color/bg_primary</item>
         <item name="android:windowLightStatusBar">true</item>
+        <!-- Soft glass dialog transitions (fade + subtle scale) -->
+        <item name="android:windowAnimationStyle">@style/GlassDialogAnimation</item>
+    </style>
+
+    <!-- Dialog window animations: gentle fade+scale so glass dialogs
+         condense into view / dissolve away instead of hard popping. -->
+    <style name="GlassDialogAnimation">
+        <item name="android:windowEnterAnimation">@anim/dialog_glass_in</item>
+        <item name="android:windowExitAnimation">@anim/dialog_glass_out</item>
     </style>
 
     <style name="GlassCard">

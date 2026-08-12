@@ -44,7 +44,7 @@
                 android:textSize="10sp"
                 android:visibility="gone"
                 app:chipBackgroundColor="@color/primary"
-                app:chipCornerRadius="6dp"
+                app:chipCornerRadius="10dp"
                 app:chipStrokeWidth="0dp"
                 android:clickable="false"
                 android:focusable="false" />

@@ -3,7 +3,7 @@
 家庭数据中心 Android 客户端 — 一个用 **Kotlin + Jetpack Compose + ExoPlayer + WebRTC** 实现的家庭 NVR / IoT 控制台，配合 [home-datacenter](https://github.com/feiyemomo/home-datacenter) 后端使用，提供摄像头预览、WebRTC/MP4/HLS 直播（含音频）、录像回放、报警查看、设备状态、天气信息、局域网/远程自动切换和实时 WebSocket 推送。
 
 > 服务端项目：<https://github.com/feiyemomo/home-datacenter>
-> 当前版本：**v1.7.22**（versionCode 116）
+> 当前版本：**v1.7.23**（versionCode 117）
 
 ---
 
@@ -561,6 +561,15 @@ newPlayer.setAudioAttributes(
 ---
 
 ## 更新日志
+
+### v1.7.23 — 对话框液态玻璃风格 (2026-08-12)
+
+#### 液态玻璃对话框
+- 新增 `bg_dialog_glass.xml`：26dp 圆角磨砂玻璃对话框背景（暖色边框 + 顶部折射高光 + 柔和阴影），颜色通过 `@color/glass_*` 自动适配暗色模式
+- 新增 `dialog_glass_in` / `dialog_glass_out` 动画：对话框淡入 + 轻微缩放进入 / 溶解退出，替代生硬弹出
+- `themes.xml` 新增 `GlassDialogAnimation` 窗口动画样式，明 / 暗主题均接入 `android:windowAnimationStyle`
+- 全部对话框应用玻璃风格：报警快照、报警列表、录像回放、注册设备、更新提示
+- 列表项（报警 / 设备 / 用户）与卡片背景同步微调，与液态玻璃暖色主题一致
 
 ### v1.7.22 — APK 下载断点续传 (2026-08-12)
 

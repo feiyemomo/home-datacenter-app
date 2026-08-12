@@ -102,7 +102,7 @@
                 android:textStyle="bold"
                 android:textColor="@android:color/white"
                 app:chipBackgroundColor="@color/primary"
-                app:chipCornerRadius="4dp"
+                app:chipCornerRadius="10dp"
                 app:chipStrokeWidth="0dp"
                 app:closeIconVisible="false"
                 android:layout_marginStart="8dp" />
@@ -155,7 +155,7 @@
         android:clickable="true"
         android:focusable="true"
         app:chipBackgroundColor="@color/online"
-        app:chipCornerRadius="6dp"
+        app:chipCornerRadius="16dp"
         app:chipStrokeWidth="0dp"
         app:closeIconVisible="false"
         app:chipMinHeight="32dp"

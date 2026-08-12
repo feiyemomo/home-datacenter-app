@@ -389,9 +389,9 @@
                             android:layout_width="match_parent"
                             android:layout_height="wrap_content"
                             android:maxHeight="8dp"
-                            android:progressTint="#FF8A65"
-                            android:progressBackgroundTint="#992D3748"
-                            android:thumbTint="#FF8A65"
+                            android:progressTint="@color/primary"
+                            android:progressBackgroundTint="#40FFFFFF"
+                            android:thumbTint="@color/primary"
                             android:splitTrack="false" />
 
                         <com.homedatacenter.app.ui.cameras.AlertRangeOverlay

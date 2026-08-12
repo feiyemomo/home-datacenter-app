@@ -16,8 +16,8 @@ android {
         applicationId = "com.homedatacenter.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = 116
-        versionName = "1.7.22"
+        versionCode = 117
+        versionName = "1.7.23"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

@@ -14,7 +14,7 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:background="@drawable/bg_card_rounded"
+    android:background="@drawable/bg_dialog_glass"
     android:padding="20dp">
 
     <!-- Title row: icon + "发现新版本" -->
