@@ -12,7 +12,7 @@ import com.homedatacenter.app.di.AppContainer
  * Listens for Android network changes (WiFi connects/disconnects,
  * cellular handoff, validated-internet state changes) and forces
  * [AppContainer.baseUrlResolver] to re-probe immediately so the app
- * switches between LAN (http://192.168.31.234:8088/) and remote
+ * switches between LAN (http://192.168.31.235:8088/) and remote
  * (https://api.feiyemomo.top/) within seconds instead of waiting for
  * the 5-minute TTL in BaseUrlResolver.
  *

@@ -37,7 +37,7 @@ class AppContainer(private val context: Context) {
     }
 
     /**
-     * Picks between LAN (http://192.168.31.234/) and remote
+     * Picks between LAN (http://192.168.31.235/) and remote
      * (https://api.feiyemomo.top/) at runtime by probing /health.
      * When the device is on the home network the LAN URL is preferred
      * because it's ~10ms TTFB vs the Cloudflare Tunnel's 1.4s+.

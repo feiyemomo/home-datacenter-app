@@ -9,12 +9,14 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.RadioGroup
+import android.widget.Toast
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.homedatacenter.app.R
 import com.homedatacenter.app.databinding.FragmentSettingsBinding
 import com.homedatacenter.app.ui.main.MainActivity
 import com.homedatacenter.app.util.ApkInstaller
+import com.homedatacenter.app.util.BaseUrlResolver
 import com.homedatacenter.app.util.JwtUtil
 import com.homedatacenter.app.util.PrefsManager
 import com.homedatacenter.app.util.ThemeManager
@@ -65,6 +67,7 @@ class SettingsFragment : Fragment() {
         setupThemeSelector(prefs)
         setupProfileCard(prefs)
         setupJwtInfo(prefs)
+        setupLanConfig()
         setupUpdateSection()
 
         binding.btnAccountManagement.setOnClickListener {
@@ -188,6 +191,82 @@ class SettingsFragment : Fragment() {
             binding.tvVersion.text = getString(R.string.setting_version) + " " + version
         } catch (_: PackageManager.NameNotFoundException) {
             binding.tvVersion.visibility = View.GONE
+        }
+    }
+
+    /**
+     * v1.8.24: LAN URL configuration. Lets the user set a custom NAS
+     * LAN address (e.g. http://192.168.31.235:8088/) so the app
+     * adapts to IP changes without recompiling. The custom URL is
+     * persisted in SharedPreferences by BaseUrlResolver and overrides
+     * the hardcoded LAN_URL on the next probe.
+     *
+     * UI elements:
+     *  - tvLanCurrentUrl: shows the currently effective LAN URL
+     *  - etLanUrl: editable text field for inputting a custom URL
+     *  - btnLanSave: saves the custom URL and triggers a re-probe
+     *  - btnLanReset: clears the custom URL, reverts to hardcoded default
+     */
+    private fun setupLanConfig() {
+        val mainActivity = activity as? MainActivity ?: return
+        val resolver = mainActivity.container.baseUrlResolver
+
+        // Show the currently effective LAN URL.
+        val customUrl = resolver.getCustomLanUrl()
+        val effectiveUrl = customUrl ?: BaseUrlResolver.LAN_URL
+        binding.tvLanCurrentUrl.text = getString(
+            R.string.setting_lan_config_current, effectiveUrl
+        )
+
+        // Pre-fill the EditText with the custom URL if set, otherwise
+        // leave it empty (the hint shows the default).
+        if (!customUrl.isNullOrBlank()) {
+            binding.etLanUrl.setText(customUrl)
+        }
+
+        binding.btnLanSave.setOnClickListener {
+            val input = binding.etLanUrl.text?.toString()?.trim().orEmpty()
+            if (input.isBlank()) {
+                Toast.makeText(
+                    requireContext(),
+                    R.string.lan_config_invalid,
+                    Toast.LENGTH_SHORT
+                ).show()
+                return@setOnClickListener
+            }
+
+            // Basic URL validation: must start with http:// or https://
+            if (!input.startsWith("http://") && !input.startsWith("https://")) {
+                Toast.makeText(
+                    requireContext(),
+                    R.string.lan_config_invalid,
+                    Toast.LENGTH_SHORT
+                ).show()
+                return@setOnClickListener
+            }
+
+            resolver.setCustomLanUrl(input)
+            binding.tvLanCurrentUrl.text = getString(
+                R.string.setting_lan_config_current, input
+            )
+            Toast.makeText(
+                requireContext(),
+                R.string.lan_config_saved,
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+
+        binding.btnLanReset.setOnClickListener {
+            resolver.setCustomLanUrl(null)
+            binding.etLanUrl.setText("")
+            binding.tvLanCurrentUrl.text = getString(
+                R.string.setting_lan_config_current, BaseUrlResolver.LAN_URL
+            )
+            Toast.makeText(
+                requireContext(),
+                R.string.lan_config_reset,
+                Toast.LENGTH_SHORT
+            ).show()
         }
     }
 
@@ -383,6 +462,20 @@ class SettingsFragment : Fragment() {
         if (isAdded && _binding != null) {
             renderCachedUpdateStatus()
             startUpdatePollingIfNeeded()
+            // v1.8.24: refresh LAN URL display in case it was changed
+            // elsewhere (e.g. cleared from another settings entry point).
+            val mainActivity = activity as? MainActivity
+            if (mainActivity != null) {
+                val resolver = mainActivity.container.baseUrlResolver
+                val custom = resolver.getCustomLanUrl()
+                val effective = custom ?: BaseUrlResolver.LAN_URL
+                binding.tvLanCurrentUrl.text = getString(
+                    R.string.setting_lan_config_current, effective
+                )
+                if (custom.isNullOrBlank()) {
+                    binding.etLanUrl.setText("")
+                }
+            }
         }
     }
 

@@ -52,7 +52,7 @@ enum class NetworkPathPreference(val label: String) {
  * Picks the fastest reachable backend base URL at runtime.
  *
  * Three candidates are probed in priority order:
- *  1. LAN URL  http://192.168.31.234:8088/   — when the device is on the
+ *  1. LAN URL  http://192.168.31.235:8088/   — when the device is on the
  *     home network this is ~10ms TTFB vs the Cloudflare Tunnel's
  *     measured 1.4s TTFB (with 10s+ timeouts on ~1/3 of requests
  *     from China). For live HLS/MP4 streaming this is the difference
@@ -188,6 +188,61 @@ class BaseUrlResolver(
 
     init {
         preference = NetworkPathPreference.fromName(prefs.getString(KEY_PREF, null))
+        // v1.8.24: load user-configured custom LAN URL. If set, it
+        // overrides the hardcoded LAN_URL/LAN_HOST/LAN_PORT so the
+        // app works regardless of NAS IP changes without recompiling.
+        loadCustomLanUrl()
+    }
+
+    /**
+     * v1.8.24: user-configurable LAN URL. When non-null, overrides
+     * the hardcoded LAN_URL. Set from SettingsFragment; persisted in
+     * SharedPreferences so it survives app restarts.
+     */
+    @Volatile
+    private var effectiveLanUrl: String = LAN_URL
+    @Volatile
+    private var effectiveLanHost: String = LAN_HOST
+    @Volatile
+    private var effectiveLanPort: Int = LAN_PORT
+
+    private fun loadCustomLanUrl() {
+        val custom = prefs.getString(KEY_CUSTOM_LAN_URL, null)
+        if (!custom.isNullOrBlank()) {
+            applyCustomLanUrl(custom)
+        }
+    }
+
+    /**
+     * Sets a custom LAN URL (e.g. "http://192.168.31.235:8088/").
+     * Pass null or empty string to revert to the hardcoded default.
+     * Persists to SharedPreferences and forces a re-probe.
+     */
+    fun setCustomLanUrl(url: String?) {
+        if (url.isNullOrBlank()) {
+            prefs.edit().remove(KEY_CUSTOM_LAN_URL).apply()
+            effectiveLanUrl = LAN_URL
+            effectiveLanHost = LAN_HOST
+            effectiveLanPort = LAN_PORT
+        } else {
+            prefs.edit().putString(KEY_CUSTOM_LAN_URL, url).apply()
+            applyCustomLanUrl(url)
+        }
+        android.util.Log.i(TAG, "setCustomLanUrl: $url — forcing re-probe")
+        forceProbe()
+    }
+
+    fun getCustomLanUrl(): String? = prefs.getString(KEY_CUSTOM_LAN_URL, null)
+
+    private fun applyCustomLanUrl(url: String) {
+        try {
+            val uri = java.net.URI(url)
+            effectiveLanUrl = url
+            effectiveLanHost = uri.host ?: url.removePrefix("http://").removePrefix("https://").substringBefore(':')
+            effectiveLanPort = if (uri.port > 0) uri.port else 8088
+        } catch (e: Exception) {
+            android.util.Log.w(TAG, "Invalid custom LAN URL '$url', keeping default", e)
+        }
     }
 
     /**
@@ -294,7 +349,7 @@ class BaseUrlResolver(
      * servers (LAN only needs host candidates, avoids 1-2s STUN
      * gathering delay) and to shorten ICE gathering timeout.
      */
-    fun isLan(): Boolean = resolved == LAN_URL
+    fun isLan(): Boolean = resolved == effectiveLanUrl
 
     /**
      * v1.6.23: returns true if the currently resolved URL is the IPv6
@@ -311,7 +366,7 @@ class BaseUrlResolver(
      * — direct paths only need host candidates, the Tunnel can't route
      * WebRTC media anyway.
      */
-    fun isDirectPath(): Boolean = resolved == LAN_URL || isIpv6Direct()
+    fun isDirectPath(): Boolean = resolved == effectiveLanUrl || isIpv6Direct()
 
     /**
      * v1.6.23: immediate fallback for NetworkChangeMonitor.onLost().
@@ -433,7 +488,7 @@ class BaseUrlResolver(
                     Thread.sleep(delayMs)
                     // Re-check: if a previous probe already
                     // switched us to LAN, skip the rest.
-                    if (resolved == LAN_URL) return@Thread
+                    if (resolved == effectiveLanUrl) return@Thread
                     forceProbe()
                 } catch (_: InterruptedException) {
                     Thread.currentThread().interrupt()
@@ -543,10 +598,10 @@ class BaseUrlResolver(
                     val lanDeferred = async(Dispatchers.IO) {
                         // LAN probe: two-pronged (HTTP + TCP in parallel).
                         val httpDeferred = async {
-                            probeUrl(LAN_URL, LAN_TIMEOUT_MS)
+                            probeUrl(effectiveLanUrl, LAN_TIMEOUT_MS)
                         }
                         val tcpDeferred = async {
-                            val tcpRtt = probeTcpRtt(LAN_HOST, LAN_PORT, LAN_TIMEOUT_MS)
+                            val tcpRtt = probeTcpRtt(effectiveLanHost, effectiveLanPort, LAN_TIMEOUT_MS)
                             if (tcpRtt >= 0) ProbeResult(alive = true, rttMs = tcpRtt)
                             else ProbeResult(alive = false, rttMs = -1L)
                         }
@@ -578,18 +633,18 @@ class BaseUrlResolver(
                     // Select a direct path based on preference.
                     val directChosen: String? = when (preference) {
                         NetworkPathPreference.LAN -> when {
-                            lanResult.alive -> LAN_URL
+                            lanResult.alive -> effectiveLanUrl
                             ipv6Result.alive -> ipv6Url
                             else -> null
                         }
                         NetworkPathPreference.IPV6_DIRECT -> when {
                             ipv6Result.alive -> ipv6Url
-                            lanResult.alive -> LAN_URL
+                            lanResult.alive -> effectiveLanUrl
                             else -> null
                         }
                         NetworkPathPreference.AUTO -> {
                             val candidates = mutableListOf<Pair<String, Long>>()
-                            if (lanResult.alive) candidates.add(LAN_URL to lanResult.rttMs)
+                            if (lanResult.alive) candidates.add(effectiveLanUrl to lanResult.rttMs)
                             if (ipv6Result.alive) candidates.add(ipv6Url to ipv6Result.rttMs)
                             candidates.minByOrNull { it.second }?.first
                         }
@@ -599,7 +654,7 @@ class BaseUrlResolver(
                     if (directChosen != null) {
                         // Fast path: switch immediately, cancel Tunnel probe.
                         remoteDeferred.cancel()
-                        val chosenRtt = if (directChosen == LAN_URL) lanResult.rttMs else ipv6Result.rttMs
+                        val chosenRtt = if (directChosen == effectiveLanUrl) lanResult.rttMs else ipv6Result.rttMs
                         android.util.Log.i(
                             TAG,
                             "probeSync: LAN=${lanResult.alive}(${lanResult.rttMs}ms) " +
@@ -821,6 +876,12 @@ class BaseUrlResolver(
         // prefs and is easy to inspect/reset independently.
         private const val KEY_PREF = "preference"
 
+        // v1.8.24: SharedPreferences key for user-configured custom LAN URL.
+        // When set (e.g. "http://192.168.31.235:8088/"), overrides the
+        // hardcoded LAN_URL so the app adapts to NAS IP changes without
+        // recompiling. Set/cleared from SettingsFragment.
+        private const val KEY_CUSTOM_LAN_URL = "custom_lan_url"
+
         // LAN (NAS) URL — the home network address of the backend.
         // Port 8088 is the home-datacenter nginx/web container (bound
         // to 0.0.0.0:8088 in compose.yaml), which reverse-proxies:
@@ -832,9 +893,9 @@ class BaseUrlResolver(
         // remote URL provides via Cloudflare Tunnel — both surface the
         // full reverse-proxy stack so HLS/MP4/WebRTC URLs work
         // identically. Port 80 on the NAS is the FNOS system UI, NOT
-        // our backend, so http://<NAS_IP>/ would be wrong.
-        const val LAN_URL = "http://<NAS_IP>:8088/"
-        const val LAN_HOST = "<NAS_IP>"
+        // our backend, so http://192.168.31.235/ would be wrong.
+        const val LAN_URL = "http://192.168.31.235:8088/"
+        const val LAN_HOST = "192.168.31.235"
         const val LAN_PORT = 8088
 
         // v1.6.23: IPv6 direct URL — bypasses Cloudflare Tunnel when

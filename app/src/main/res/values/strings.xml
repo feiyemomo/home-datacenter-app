@@ -294,4 +294,16 @@
     <string name="device_register_copied">已复制</string>
     <string name="device_register_failed">创建失败: %1$s</string>
     <string name="action_done">完成</string>
+
+    <!-- v1.8.24: LAN URL configuration -->
+    <string name="setting_lan_config">局域网地址</string>
+    <string name="setting_lan_config_summary">自定义 NAS 局域网地址，IP 变更后无需重新编译</string>
+    <string name="setting_lan_config_hint">例如: http://192.168.31.235:8088/</string>
+    <string name="setting_lan_config_current">当前地址: %1$s</string>
+    <string name="setting_lan_config_default">默认地址: %1$s</string>
+    <string name="btn_save">保存</string>
+    <string name="btn_reset_default">恢复默认</string>
+    <string name="lan_config_saved">局域网地址已保存，正在重新探测…</string>
+    <string name="lan_config_reset">已恢复默认局域网地址</string>
+    <string name="lan_config_invalid">请输入有效的 URL（例如 http://192.168.1.100:8088/）</string>
 </resources>
