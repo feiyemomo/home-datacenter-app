@@ -68,13 +68,15 @@ class RecentLogAdapter :
 
         /**
          * v1.6.36: tint color for the icon by severity level.
-         * critical -> red (error), normal -> primary (orange),
-         * info / unknown -> text_secondary (grey).
+         * critical -> red (error), warning -> amber (v1.8.36),
+         * normal -> primary (orange), info / unknown ->
+         * text_secondary (grey).
          */
         private fun colorForLevel(level: String): Int {
             val ctx = binding.root.context
             return when (level) {
                 SystemLogLevel.CRITICAL -> ContextCompat.getColor(ctx, R.color.error)
+                SystemLogLevel.WARNING -> ContextCompat.getColor(ctx, R.color.warning)
                 SystemLogLevel.NORMAL -> ContextCompat.getColor(ctx, R.color.primary)
                 else -> ContextCompat.getColor(ctx, R.color.text_secondary)
             }

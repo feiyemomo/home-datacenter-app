@@ -183,6 +183,7 @@ class ServiceLogAdapter(
             val ctx = binding.root.context
             return when (level) {
                 SystemLogLevel.CRITICAL -> ContextCompat.getColor(ctx, R.color.error)
+                SystemLogLevel.WARNING -> ContextCompat.getColor(ctx, R.color.warning)
                 SystemLogLevel.NORMAL -> ContextCompat.getColor(ctx, R.color.primary)
                 else -> ContextCompat.getColor(ctx, R.color.text_secondary)
             }

@@ -148,6 +148,50 @@
 
             </LinearLayout>
 
+            <!-- Recordings quota alert banner (v1.8.36, admin-only via
+                 the system.log branch guard). Amber while over quota,
+                 hidden when a recovery event dismisses it. Tap opens
+                 the full logs tab. -->
+            <LinearLayout
+                android:id="@+id/quotaAlertBanner"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:background="@drawable/bg_card_rounded"
+                android:padding="12dp"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="10dp"
+                android:visibility="gone">
+
+                <ImageView
+                    android:layout_width="28dp"
+                    android:layout_height="28dp"
+                    android:src="@drawable/ic_alerts"
+                    android:contentDescription="quota alert"
+                    android:layout_marginEnd="10dp"
+                    app:tint="@color/warning" />
+
+                <TextView
+                    android:id="@+id/tvQuotaAlertMessage"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:textSize="13sp"
+                    android:textColor="@color/text_primary"
+                    android:maxLines="2"
+                    android:ellipsize="end" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="详情"
+                    android:textSize="11sp"
+                    android:textColor="@color/warning"
+                    android:textStyle="bold"
+                    android:layout_marginStart="8dp" />
+
+            </LinearLayout>
+
             <!-- Weather card (compact: includes inline progress/error) -->
             <FrameLayout
                 android:layout_width="match_parent"

@@ -15,6 +15,7 @@ import com.homedatacenter.app.data.model.AlertListData
 import com.homedatacenter.app.data.model.DeviceList
 import com.homedatacenter.app.data.model.NetworkStatus
 import com.homedatacenter.app.data.model.SystemLog
+import com.homedatacenter.app.data.model.SystemLogLevel
 import com.homedatacenter.app.data.model.SystemLogListData
 import com.homedatacenter.app.data.model.SystemStatus
 import com.homedatacenter.app.data.model.WeatherResponse
@@ -745,6 +746,10 @@ class DashboardFragment : Fragment() {
                         SystemLog.serializer(),
                         message.payload ?: return
                     )
+                    // v1.8.36: surface the recordings quota alert as its
+                    // own amber banner (admin-only). The recovery event
+                    // (LevelNormal, payload level "") dismisses it.
+                    handleQuotaAlert(log)
                     // Prepend to the adapter and cap at 5 entries so
                     // the dashboard preview stays compact. Mirrors the
                     // live-alert prepend path in showLiveDetection.
@@ -758,6 +763,27 @@ class DashboardFragment : Fragment() {
                     android.util.Log.w("Dashboard", "Failed to parse system.log", e)
                 }
             }
+        }
+    }
+
+    /**
+     * v1.8.36: render the recordings-quota alert as a dedicated amber
+     * banner. Only reached from the admin-gated system.log branch, so
+     * non-admin users never see it. A recovery event (LevelNormal with
+     * an empty payload level) dismisses the banner; while over quota it
+     * stays up so the operator notices. Tapping opens the logs tab.
+     */
+    private fun handleQuotaAlert(log: SystemLog) {
+        if (log.event_type != "system.recordings_size") return
+        if (log.level == SystemLogLevel.NORMAL) {
+            binding.quotaAlertBanner.visibility = View.GONE
+            return
+        }
+        binding.tvQuotaAlertMessage.text = log.message.ifBlank { log.event_type }
+        binding.quotaAlertBanner.visibility = View.VISIBLE
+        AnimationHelper.fadeIn(binding.quotaAlertBanner, 250)
+        binding.quotaAlertBanner.setOnClickListener {
+            (activity as? MainActivity)?.let { it.binding.bottomNav.selectedItemId = R.id.nav_logs }
         }
     }
 

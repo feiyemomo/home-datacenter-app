@@ -9,6 +9,8 @@ import kotlinx.serialization.SerialName
  * Mirrors the backend `model.SystemLog.Level` field. The backend
  * assigns levels as follows:
  *   - "critical": camera offline, device offline
+ *   - "warning":  recordings quota / disk / backup threshold crossed
+ *                 (v1.8.36), rendered amber
  *   - "normal":   user login/logout, device/camera online
  *   - "info":     camera status_changed (codec/quality)
  *
@@ -18,6 +20,7 @@ import kotlinx.serialization.SerialName
  */
 object SystemLogLevel {
     const val CRITICAL = "critical"
+    const val WARNING = "warning"
     const val NORMAL = "normal"
     const val INFO = "info"
 }
