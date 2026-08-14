@@ -1,10 +1,10 @@
 # CI Secrets Setup — GitHub Actions
 
-`home-datacenter-app` 的 CI 需要 4 个 [Actions Secrets](https://github.com/feiyemomo/home-datacenter-app/settings/secrets/actions) 来在构建机上重建正式 release 签名（keystore 与凭据绝不允许入库，因此只在 CI 的临时 runner 里从 Secret 重建）。
+`home-datacenter-app` 的 CI 需要 5 个 [Actions Secrets](https://github.com/feiyemomo/home-datacenter-app/settings/secrets/actions)：前 4 个用于在构建机上重建正式 release 签名（keystore 与凭据绝不允许入库，因此只在 CI 的临时 runner 里从 Secret 重建），第 5 个 `NAS_PASSWORD` 用于把 APK 自动推送到 NAS。
 
-> 这些值与 `keystore.properties` 里 `RELEASE_*` 对应，与本地 `app/keystore/home-release.jks` 是同一把 key。
+> 前 4 个值与 `keystore.properties` 里 `RELEASE_*` 对应，与本地 `app/keystore/home-release.jks` 是同一把 key。
 
-## 需要的 4 个 Secret
+## 需要的 5 个 Secret
 
 | Secret 名 | 值 | 示例 |
 |---|---|---|
@@ -12,6 +12,11 @@
 | `RELEASE_KEY_ALIAS` | 别名 | `home-release` |
 | `RELEASE_STORE_PASSWORD` | store 密码 | 与本地 `keystore.properties` 一致 |
 | `RELEASE_KEY_PASSWORD` | key 密码 | 与本地 `keystore.properties` 一致 |
+| `NAS_PASSWORD` | NAS SSH 登录密码（`fnos-momo` 用户，用于发布步骤） | 见下 |
+
+> `NAS_PASSWORD` 是发布 APK 到 NAS 的凭据。它与 `push-apk.ps1` 的 `-Password`
+> 一致（fnOS 对该用户不接受公钥认证，故 CI 与本地都用密码）。若 NAS 密码变更，
+> 需同步更新此 Secret。
 
 ## 生成 `RELEASE_KEYSTORE_B64`
 
