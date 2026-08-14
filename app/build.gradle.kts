@@ -71,6 +71,13 @@ android {
     buildTypes {
         debug {
             signingConfig = signingConfigs.getByName("projectDebug")
+            // v1.8.44: debug gets its own applicationId (".debug" suffix) so
+            // debug and release builds can coexist on one device. They use
+            // different keystores — same package name + different signature
+            // is an install conflict ("软件包与现有软件包存在冲突"). With this,
+            // debug = com.homedatacenter.app.debug, release = com.homedatacenter.app,
+            // two independent apps that never collide.
+            applicationIdSuffix = ".debug"
         }
         release {
             // v1.8.43: sign release builds with the official keystore so
