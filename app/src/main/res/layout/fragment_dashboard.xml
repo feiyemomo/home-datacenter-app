@@ -306,8 +306,8 @@
                 android:id="@+id/gridStats"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:columnCount="@integer/dashboard_stats_column_count"
-                android:rowCount="2"
+                app:columnCount="@integer/dashboard_stats_column_count"
+                app:rowCount="2"
                 app:orientation="horizontal"
                 android:layout_marginTop="10dp">
 

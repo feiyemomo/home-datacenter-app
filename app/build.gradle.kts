@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.serialization)
@@ -16,8 +18,8 @@ android {
         applicationId = "com.homedatacenter.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = 123
-        versionName = "1.8.37"
+        versionCode = 124
+        versionName = "1.8.44"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -43,6 +45,27 @@ android {
             enableV2Signing = true
             enableV3Signing = true
         }
+
+        // Official release keystore. The keystore file and the store/key
+        // passwords live in keystore.properties (gitignored) so the
+        // release private key is NEVER committed. Re-generate with keytool
+        // (see keystore.properties header). This is the identity used for
+        // published APKs — guard it carefully: losing it means you can no
+        // longer issue update installs over an existing release.
+        create("releaseSigning") {
+            val props = Properties()
+            val pf = rootProject.file("keystore.properties")
+            if (pf.exists()) pf.inputStream().use { props.load(it) }
+            fun p(key: String, default: String): String =
+                props.getProperty(key)?.takeIf { it.isNotBlank() } ?: default
+            storeFile = file(p("RELEASE_STORE_FILE", "keystore/home-release.jks"))
+            storePassword = p("RELEASE_STORE_PASSWORD", "")
+            keyAlias = p("RELEASE_KEY_ALIAS", "home-release")
+            keyPassword = p("RELEASE_KEY_PASSWORD", "")
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
+        }
     }
 
     buildTypes {
@@ -50,6 +73,12 @@ android {
             signingConfig = signingConfigs.getByName("projectDebug")
         }
         release {
+            // v1.8.43: sign release builds with the official keystore so
+            // published APKs carry a stable release identity (upgradeable,
+            // verifiable, store-ready). If keystore.properties is missing,
+            // the build fails loudly rather than silently producing an
+            // unsigned release APK.
+            signingConfig = signingConfigs.getByName("releaseSigning")
             optimization {
                 enable = false
             }
