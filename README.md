@@ -295,11 +295,25 @@ buildTypes {
 
 ### Release 构建
 
-目前 `release` 构建未配置专用签名，仅用于本地测试。若要发布到应用商店，请：
+Release 构建使用**正式 keystore**（`app/keystore/home-release.jks`，V1/V2/V3 签名），
+发布版携带稳定、可升级、可在应用商店验证的官方身份。keystore 与凭据是敏感文件：
 
-1. 生成专用 release keystore（**不要**复用 `home-debug.jks`）
-2. 在 `build.gradle.kts` 中新增 `release` signingConfig
-3. 通过环境变量或 `~/.gradle/gradle.properties` 注入密码（不要硬编码到仓库）
+- `app/keystore/home-release.jks` 与 `keystore.properties` **已被 `.gitignore` 排除，绝不入库**。
+- 签名配置在 `app/build.gradle.kts` 的 `releaseSigning`，从 `keystore.properties` 读取
+  `RELEASE_STORE_FILE / RELEASE_STORE_PASSWORD / RELEASE_KEY_ALIAS / RELEASE_KEY_PASSWORD`。
+- 若 `keystore.properties` 缺失，release 构建会**直接失败**而非产出未签名 APK（防止静默发布坏包）。
+
+**备份（务必）**：`home-release.jks` 丢了就无法再为已发布 APK 出升级包。请运行
+`.\backup-keystore.ps1`（复制到仓库外目录并生成恢复指南），并把备份拷贝到离线/U盘/密码管理器。
+
+**CI 自动构建**：`.github/workflows/release.yml` 提供 GitHub Actions 流水线——
+- 推 `main`：跑 JVM 单元测试（`app/src/test/**`）。
+- 打 `v*` tag 或手动触发：用 GitHub Secrets 重建 keystore 并产出现正式签名的 `app-release.apk`。
+- Secrets 配置见 `SECRETS.md`。
+
+**debug / release 共存**：debug 构建带 `applicationIdSuffix = ".debug"`（包名
+`com.homedatacenter.app.debug`），release 为 `com.homedatacenter.app`，两者是独立应用、
+可同时安装（此前因签名不同且包名相同，用 release 覆盖安装 debug 会报「软件包冲突」）。
 
 ---
 

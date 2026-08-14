@@ -164,6 +164,10 @@ dependencies {
     implementation("io.getstream:stream-webrtc-android:1.3.10")
 
     testImplementation(libs.junit)
+    // org.json is bundled with android.jar at runtime but absent on the
+    // JVM — needed so JwtUtil (which parses JWT payloads with JSONObject)
+    // is unit-testable locally.
+    testImplementation("org.json:json:20240303")
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
 }

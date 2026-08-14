@@ -1,7 +1,7 @@
 package com.homedatacenter.app.util
 
-import android.util.Base64
 import org.json.JSONObject
+import java.util.Base64
 
 /**
  * Lightweight JWT parser — decodes the payload segment without verifying
@@ -12,8 +12,21 @@ import org.json.JSONObject
  * `user_id`, `device_id`, `iat`, `exp` — but NOT `is_admin` (the server
  * does a DB lookup on every request so an admin can be demoted and the
  * change takes effect immediately).
+ *
+ * v1.8.44: switched from android.util.Base64 to java.util.Base64
+ * (available since API 26; minSdk is 29) so the class is pure JVM and
+ * unit-testable without Robolectric. JWT segments are base64url WITHOUT
+ * padding, and java.util.Base64's URL decoder requires padding, so we
+ * re-pad to a multiple of 4 before decoding.
  */
 object JwtUtil {
+
+    private fun decodeUrlSafeNoPad(input: String): ByteArray {
+        var s = input
+        val pad = (4 - s.length % 4) % 4
+        if (pad > 0) s += "=".repeat(pad)
+        return Base64.getUrlDecoder().decode(s)
+    }
 
     /**
      * Parse the payload segment of a JWT into a [JSONObject].
@@ -24,10 +37,7 @@ object JwtUtil {
         val parts = token.split(".")
         if (parts.size != 3) return null
         return try {
-            // JWT uses base64url (no padding). Base64.URL_SAFE|NO_PADDING|NO_WRAP.
-            val payload = String(
-                Base64.decode(parts[1], Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
-            )
+            val payload = String(decodeUrlSafeNoPad(parts[1]))
             JSONObject(payload)
         } catch (_: Exception) {
             null
