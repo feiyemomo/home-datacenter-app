@@ -82,12 +82,15 @@ class RecordingsDialog(
     private val allRecordings = mutableListOf<Recording>()
 
     // v1.5.11: big scrub bar state for the full-day playlist mode.
-    // [dayTotalMs] is the full 24h window (constant once a day is
-    // picked). [dayClipDurationMs] is the duration of each clip —
-    // we use this to compute the window index from a SeekBar
-    // progress. We assume 60000ms (60s buckets) since that's what
-    // the backend's PlayRecording handler emits; if a clip is
-    // shorter (camera offline), ExoPlayer will still report the
+    // v1.8.37: [dayTotalMs] is now the ACTUAL recording-coverage
+    // window (first recording start → last recording end), set in
+    // playDayAsPlaylist, instead of a constant 24h. For a partial-day
+    // set of recordings this makes the SeekBar fill the real window
+    // instead of a mostly-empty 24h track. [dayClipDurationMs] is the
+    // duration of each clip — we use this to compute the window index
+    // from a SeekBar progress. We assume 60000ms (60s buckets) since
+    // that's what the backend's PlayRecording handler emits; if a clip
+    // is shorter (camera offline), ExoPlayer will still report the
     // actual duration via player.duration, but our SeekBar uses
     // fixed 60000ms buckets to keep the math simple + predictable.
     private var dayTotalMs: Long = 24L * 60 * 60 * 1000
@@ -434,8 +437,10 @@ class RecordingsDialog(
      *   1. Find the earliest recording within the picked day.
      *   2. Set dayStartLocalMillis = that recording's UTC instant
      *      (timeInMillis is UTC-anchored, works for comparison).
-     *   3. dayEndLocalMillis = dayStartLocalMillis + 24h (window size
-     *      stays 24h so the SeekBar's max is still 24h).
+     *   3. v1.8.37: dayEndLocalMillis = the LAST recording's END
+     *      (start + duration), so the window spans the actual coverage
+     *      instead of a constant 24h — a partial-day set of recordings
+     *      fills the SeekBar instead of compressing into 24h.
      *   4. clipStartOffsets[0] = 0 (first clip is at SeekBar 0%).
      *   5. formatDayTime(ms) = elapsed time since dayStart → 0=00:00:00.
      *
@@ -475,9 +480,23 @@ class RecordingsDialog(
         // the first available recording — no leading empty section.
         val dayStartLocalMillis = parseFmt.parse(dayRecordings.first().startAt)?.time
             ?: dayFilterStartMillis
-        val dayEndLocalMillis = dayStartLocalMillis + 24L * 60 * 60 * 1000
+        // v1.8.37: the day window (and thus the SeekBar max) now spans
+        // the ACTUAL recording coverage instead of a fixed 24h. For a
+        // day with only a few hours of footage (camera offline / on a
+        // schedule), the old 24h window left the progress bar mostly
+        // empty and compressed the clips + red alert ranges into a
+        // small fraction of the track. Now the window ends at the last
+        // recording's end, so the bar fills the real coverage and the
+        // duration label shows the true last moment instead of wrapping
+        // into the next day. Full-day recordings keep ≈24h, unchanged.
+        val lastRec = dayRecordings.last()
+        val lastStartLocal = parseFmt.parse(lastRec.startAt)?.time ?: dayStartLocalMillis
+        val lastEndLocal = parseFmt.parse(lastRec.endAt)?.time
+            ?: (lastStartLocal + lastRec.durationSeconds * 1000L)
+        val dayEndLocalMillis = maxOf(lastEndLocal, dayStartLocalMillis + dayClipDurationMs)
         // v1.5.16: stash for alert overlay (also uses LOCAL day bounds).
         this.dayStartLocalMillis = dayStartLocalMillis
+        this.dayTotalMs = (dayEndLocalMillis - dayStartLocalMillis).coerceAtLeast(dayClipDurationMs)
 
         // v1.5.16: compute each clip's start offset (ms from
         // dayStartLocalMillis = first recording). The SeekBar maps
