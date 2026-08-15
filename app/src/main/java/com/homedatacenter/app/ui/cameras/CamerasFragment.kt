@@ -230,7 +230,7 @@ class CamerasFragment : Fragment() {
                 // Prefetch ICE config for faster camera detail loading
                 PrefetchManager.getInstance(requireContext()).prefetchOnIdle("cameras.ice", {
                     mainActivity.container.getRepository().getIceConfig(token)
-                }, 2000L)
+                }, 2000L, viewLifecycleOwner.lifecycleScope)
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {

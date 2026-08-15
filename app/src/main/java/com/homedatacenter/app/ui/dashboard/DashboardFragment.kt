@@ -205,16 +205,15 @@ class DashboardFragment : Fragment() {
         val mainActivity = activity as? MainActivity ?: return
         val token = mainActivity.container.prefsManager.token
         if (!token.isNullOrEmpty()) {
-            PrefetchManager.getInstance(requireContext()).prefetchOnIdle("cameras.list", {
-                withContext(Dispatchers.IO) {
-                    mainActivity.container.getRepository().listCameras(token, useCache = true)
-                }
-            }, 3000L)
+            // cameras.list is already warmed by SplashActivity's parallel
+            // prefetch + CamerasFragment's own network load, so only
+            // devices.list needs a background warm-up here. Tied to the
+            // view lifecycle so the prefetch is cancelled on destroy.
             PrefetchManager.getInstance(requireContext()).prefetchOnIdle("devices.list", {
                 withContext(Dispatchers.IO) {
                     mainActivity.container.getRepository().listDevices(token, useCache = true)
                 }
-            }, 4000L)
+            }, 4000L, viewLifecycleOwner.lifecycleScope)
         }
     }
 
