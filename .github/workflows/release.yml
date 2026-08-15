@@ -11,7 +11,6 @@
 #   RELEASE_KEY_ALIAS      e.g. home-release
 #   RELEASE_STORE_PASSWORD store password
 #   RELEASE_KEY_PASSWORD   key password
-#   NAS_PASSWORD           NAS SSH password (for the "Push APK to NAS" step)
 # See SECRETS.md for the exact setup steps.
 #
 # The keystore is a Git-ignored secret; it is reconstructed only inside the
@@ -88,25 +87,10 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      # Push the signed APK straight to the NAS data/releases directory so
-      # the in-app updater (which reads /api/v1/release/latest) picks it up
-      # without a manual download+scp. Uses password auth via sshpass —
-      # the same credential model as push-apk.ps1 (fnOS rejects pubkey for
-      # this user, verified empirically). Requires secret NAS_PASSWORD.
+      # NOTE: automatic push of the APK from the runner to the NAS was
+      # removed. GitHub-hosted runners live on the public internet and
+      # cannot reach the NAS's private LAN IP (192.168.31.235), so SSH
+      # uploads always time out. Publish from a machine on the same LAN
+      # using push-apk.ps1 instead:
       #
-      # The version is parsed from build.gradle.kts so the remote filename
-      # stays in sync with the release_handler.go naming convention:
-      # "app-release-vX.Y.Z.apk".
-      - name: Install sshpass
-        run: sudo apt-get update && sudo apt-get install -y sshpass
-
-      - name: Push APK to NAS
-        env:
-          NAS_PASSWORD: ${{ secrets.NAS_PASSWORD }}
-        run: |
-          VERSION=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts)
-          echo "Pushing app-release-v${VERSION}.apk to NAS"
-          sshpass -p "$NAS_PASSWORD" scp -P 22 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            app/build/outputs/apk/release/app-release.apk \
-            "fnos-momo@192.168.31.235:/vol1/docker/home-datacenter/data/releases/app-release-v${VERSION}.apk"
-          echo "Pushed OK"
+      #   .\push-apk.ps1 -Flavor release -Notes "..."
