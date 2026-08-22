@@ -196,6 +196,21 @@ class SplashActivity : AppCompatActivity() {
                     val cameras = repository.listCameras(token, useCache = true)
                     cacheManager.set("cameras.list", cameras)
                     Log.d(TAG, "Prefetched cameras.list (${cameras.size})")
+                    // v1.9.x: warm the backend (go2rtc/RTSP) streams during
+                    // splash so the first WebRTC/MP4 request doesn't pay
+                    // the 1-10s cold-start. Fire-and-forget — launched on
+                    // fresh child jobs so routeToNext's joinAll() never
+                    // blocks on them. go2rtc releases idle producers after
+                    // ~30s (#stop=30), so idle cameras cost nothing
+                    // long-term. Only online cameras are warmed; offline
+                    // ones can't connect and preheat is best-effort anyway.
+                    for (cam in cameras) {
+                        if (cam.isOnline) {
+                            prefetchScope.launch {
+                                repository.preheatCamera(token, cam.id)
+                            }
+                        }
+                    }
                 } catch (e: Exception) {
                     Log.w(TAG, "Prefetch cameras.list failed: ${e.message}")
                 }

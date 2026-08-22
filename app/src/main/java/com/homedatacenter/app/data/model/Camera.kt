@@ -96,5 +96,10 @@ data class Camera(
 data class StreamConfig(
     @SerialName("stream_name") val streamName: String = "",
     @SerialName("webrtc_url") val webrtcUrl: String = "",
-    @SerialName("hls_url") val hlsUrl: String = ""
+    @SerialName("hls_url") val hlsUrl: String = "",
+    // v1.8.48: HLS passthrough of the camera's native-HEVC companion
+    // stream (<name>_hevc). Present only for HEVC/H.265 cameras. When a
+    // device can hard-decode HEVC, prefer this zero-transcode HLS over
+    // the transcoded H.264 hls_url (no server transcode cost, faster start).
+    @SerialName("hls_hevc_url") val hlsHevcUrl: String = ""
 )

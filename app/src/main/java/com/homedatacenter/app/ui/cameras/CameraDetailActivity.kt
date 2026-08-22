@@ -31,6 +31,7 @@ import com.homedatacenter.app.data.model.CameraPreset
 import com.homedatacenter.app.data.model.IceConfig
 import com.homedatacenter.app.databinding.ActivityCameraDetailBinding
 import com.homedatacenter.app.di.AppContainer
+import com.homedatacenter.app.util.DecoderSupport
 import com.homedatacenter.app.util.ExoPlayerRendererFactory
 import com.homedatacenter.app.util.PlayerFullscreenHelper
 import com.homedatacenter.app.util.WebRtcClient
@@ -1576,10 +1577,18 @@ class CameraDetailActivity : AppCompatActivity() {
 
     private fun resolveHlsUrl(camera: Camera): String {
         val baseUrl = container.getApiBaseUrl().orEmpty()
-        val hlsUrl = camera.stream?.hlsUrl?.trim().orEmpty()
+        val stream = camera.stream
+        // v1.8.48: prefer the camera's native-HEVC passthrough HLS when the
+        // device can decode HEVC and the backend exposed an <name>_hevc
+        // stream (zero-transcode). Falls back to the H.264 transcode chain.
+        val hlsHevcUrl = stream?.hlsHevcUrl?.trim().orEmpty()
+        if (hlsHevcUrl.isNotEmpty() && DecoderSupport.canDecodeHevc()) {
+            return resolveAbsoluteUrl(hlsHevcUrl)
+        }
+        val hlsUrl = stream?.hlsUrl?.trim().orEmpty()
         if (hlsUrl.isNotEmpty()) return resolveAbsoluteUrl(hlsUrl)
 
-        val streamName = camera.stream?.streamName?.trim().orEmpty()
+        val streamName = stream?.streamName?.trim().orEmpty()
         if (streamName.isEmpty() || baseUrl.isBlank()) return ""
         return "${baseUrl.trimEnd('/')}/api/stream.m3u8?src=${Uri.encode(streamName)}&mp4="
     }

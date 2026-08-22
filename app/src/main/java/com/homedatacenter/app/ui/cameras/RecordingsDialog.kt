@@ -73,6 +73,17 @@ class RecordingsDialog(
     // interaction contract.
     private var gestureHelper: PlayerGestureHelper? = null
 
+    // v1.8.48: recording streaming source flag. The /stream endpoint
+    // transcodes the HEVC clip to fMP4 on the fly (first frame ~1-2s),
+    // far faster than the legacy /file full-clip transcode. A user
+    // picking a day starts on /stream; if it fails we fall back to
+    // /file for the rest of this dialog session. Reopening the dialog
+    // starts fresh on /stream again.
+    private var useStreamSource = true
+    // Guards the /stream -> /file fallback so it fires only ONCE per
+    // dialog session (a session that fell back to /file stays on /file).
+    private var streamFallbackTriggered = false
+
     // v1.6.2: source-of-truth for the per-day list view. v1.5.x
     // kept [allRecordings] + [visibleRecordings] for virtual
     // pagination of 60s buckets (~10k items for 7 days). v1.6.2
@@ -533,6 +544,12 @@ class RecordingsDialog(
         // v1.5.11: stop any pending scrub updates from a previous
         // playlist session before we (re)build the player.
         daySeekHandler.removeCallbacks(daySeekUpdateRunnable)
+        // v1.8.48: a user-initiated day selection starts on the fast /stream
+        // source. If a /stream -> /file fallback already fired for the
+        // current rebuild, keep /file (don't flip back to /stream).
+        if (!streamFallbackTriggered) {
+            useStreamSource = true
+        }
         val renderersFactory = ExoPlayerRendererFactory.create(context)
         // v1.6.39: increased buffer for smoother recording playback.
         // The previous low-latency config (minBuffer=2s, maxBuffer=10s)
@@ -626,6 +643,24 @@ class RecordingsDialog(
                 }
                 override fun onPlayerError(error: PlaybackException) {
                     android.util.Log.e("RecordingsDialog", "Player error: ${error.message}")
+                    // v1.8.48: the fast /stream source can fail on some
+                    // recordings (transcoder not ready mid-window). Fall
+                    // back to the legacy /file full-clip endpoint ONCE per
+                    // playback session instead of giving up or hammering
+                    // the media endpoint with repeated concurrent retries.
+                    if (useStreamSource && !streamFallbackTriggered) {
+                        streamFallbackTriggered = true
+                        android.util.Log.w("RecordingsDialog",
+                            "Stream source failed, falling back to /file for this session")
+                        useStreamSource = false
+                        player?.release()
+                        player = null
+                        binding.playerView.player = null
+                        // rebuild the same day playlist against /file
+                        playDayAsPlaylist(Calendar.getInstance().apply {
+                            timeInMillis = this@RecordingsDialog.dayStartLocalMillis
+                        })
+                    }
                 }
             })
             prepare()
@@ -1347,7 +1382,11 @@ class RecordingsDialog(
     private fun buildRecordingUrl(recId: Long): String {
         if (baseUrl.isNullOrBlank()) return ""
         val base = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
-        return "${base}api/v1/cameras/${camera.id}/recordings/$recId/file"
+        // v1.8.48: prefer the fast /stream source (fragmented MP4, live
+        // transcoder passthrough) and fall back to /file (full-clip
+        // transcode) once per playback session if it fails.
+        val path = if (useStreamSource) "stream" else "file"
+        return "${base}api/v1/cameras/${camera.id}/recordings/$recId/$path"
     }
 
     override fun dismiss() {

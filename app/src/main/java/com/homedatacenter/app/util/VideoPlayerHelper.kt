@@ -32,10 +32,28 @@ object VideoPlayerHelper {
     ): Dialog? {
         val stream = camera.stream ?: return null
         val hlsUrl = stream.hlsUrl.trim()
+        val hlsHevcUrl = stream.hlsHevcUrl.trim()
         val webrtcUrl = stream.webrtcUrl.trim()
-        if (hlsUrl.isEmpty() && webrtcUrl.isEmpty()) return null
+        if (hlsUrl.isEmpty() && webrtcUrl.isEmpty() && hlsHevcUrl.isEmpty()) return null
 
-        val resolvedHls = resolveUrl(hlsUrl, apiBaseUrl)
+        // v1.8.48: prefer the camera's native-HEVC passthrough HLS when the
+        // device can decode HEVC (probed once via DecoderSupport) and the
+        // backend exposed an <name>_hevc stream. This avoids CPU transcoding
+        // to H.264 on the NAS. Falls back to the H.264 transcode chain when
+        // the device lacks HEVC decode or the field is empty.
+        val effectiveHls: String = if (hlsHevcUrl.isNotEmpty() && DecoderSupport.canDecodeHevc()) {
+            android.util.Log.d("VideoPlayerHelper",
+                "Camera '${camera.name}': device decodes HEVC, using native HEVC-HLS")
+            hlsHevcUrl
+        } else {
+            if (hlsHevcUrl.isNotEmpty()) {
+                android.util.Log.d("VideoPlayerHelper",
+                    "Camera '${camera.name}': device does NOT decode HEVC, using H.264 transcode")
+            }
+            hlsUrl
+        }
+
+        val resolvedHls = resolveUrl(effectiveHls, apiBaseUrl)
         val resolvedWebrtc = resolveUrl(webrtcUrl, apiBaseUrl)
 
         val hasWebrtcWs = resolvedWebrtc.isNotEmpty() && isWebRtcWsUrl(resolvedWebrtc)

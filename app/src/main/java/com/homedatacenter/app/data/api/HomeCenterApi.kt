@@ -101,7 +101,12 @@ interface HomeCenterApi {
     @GET("api/v1/cameras/{id}/recordings")
     suspend fun listRecordings(
         @Header("Authorization") auth: String,
-        @Path("id") id: Long
+        @Path("id") id: Long,
+        // v1.8.48: optional unix-seconds window so the client can page
+        // recordings older than the default 7-day retention (the backend
+        // defaults to now-7d..now when both are omitted).
+        @Query("after") after: Long? = null,
+        @Query("before") before: Long? = null,
     ): ApiResponse
 
     @GET("api/v1/cameras/alerts")
