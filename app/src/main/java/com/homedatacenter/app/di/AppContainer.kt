@@ -32,7 +32,7 @@ class AppContainer(private val context: Context) {
         // interceptor silently re-binds on 401 "token version
         // mismatch" and retries the request with a fresh token.
         baseClient.newBuilder()
-            .addInterceptor(TokenRefreshInterceptor(prefsManager) { getApiBaseUrl() })
+            .addInterceptor(TokenRefreshInterceptor(prefsManager, { getApiBaseUrl() }))
             .build()
     }
 

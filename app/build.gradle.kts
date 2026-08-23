@@ -18,8 +18,8 @@ android {
         applicationId = "com.homedatacenter.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = 126
-        versionName = "1.8.48"
+        versionCode = 127
+        versionName = "1.9.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -86,8 +86,13 @@ android {
             // the build fails loudly rather than silently producing an
             // unsigned release APK.
             signingConfig = signingConfigs.getByName("releaseSigning")
+            // v1.9.0: enable R8 (code shrink + obfuscation + resource shrink)
+            // for release builds. Keep rules live in app/src/main/keepRules/
+            // (AGP auto-collects them). See keepRules/r8-keep.pro for the
+            // serialization / retrofit / okhttp / webrtc / BuildConfig rules
+            // required to avoid runtime NoClassDefFoundError.
             optimization {
-                enable = false
+                enable = true
             }
         }
     }
@@ -146,9 +151,9 @@ dependencies {
     implementation(libs.retrofit.kotlinx.serialization)
     implementation(libs.kotlinx.coroutines.android)
 
-    implementation("com.google.android.exoplayer:exoplayer-core:2.19.1")
-    implementation("com.google.android.exoplayer:exoplayer-hls:2.19.1")
-    implementation("com.google.android.exoplayer:exoplayer-ui:2.19.1")
+    implementation(libs.exoplayer.core)
+    implementation(libs.exoplayer.hls)
+    implementation(libs.exoplayer.ui)
 
     // WebRTC — used for sub-second live streams via go2rtc's /api/v1/webrtc
     // endpoint. Stream's Android WebRTC build is the maintained successor
@@ -161,13 +166,17 @@ dependencies {
     // was compiled with 4 KB LOAD segment alignment; 1.3.x ships .so
     // files aligned to 16 KB. API surface stays compatible
     // (PeerConnectionFactory + PeerConnection.Observer + SurfaceViewRenderer).
-    implementation("io.getstream:stream-webrtc-android:1.3.10")
+    implementation(libs.stream.webrtc.android)
 
     testImplementation(libs.junit)
     // org.json is bundled with android.jar at runtime but absent on the
     // JVM — needed so JwtUtil (which parses JWT payloads with JSONObject)
     // is unit-testable locally.
     testImplementation("org.json:json:20240303")
+    // v1.9.0: MockWebServer for OkHttp interceptor tests (RetryInterceptor,
+    // TokenRefreshInterceptor); coroutines-test for suspend logic.
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
 }

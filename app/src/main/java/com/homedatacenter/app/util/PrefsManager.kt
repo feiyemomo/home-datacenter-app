@@ -69,11 +69,14 @@ class PrefsManager(context: Context) {
     }
 
     fun clearAuth() {
+        // 登出后不得再静默续签（JWT 续签依赖 access_key，必须一并清除）。
         prefs.edit()
             .remove(KEY_TOKEN)
             .remove(KEY_USER_ID)
             .remove(KEY_USER_NAME)
             .remove(KEY_IS_ADMIN)
+            .remove(KEY_ACCESS_KEY)
+            .remove(KEY_LAST_TOKEN_REFRESH)
             .apply()
     }
 

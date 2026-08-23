@@ -20,8 +20,9 @@ import java.util.concurrent.TimeUnit
  * rotation) or expiry.
  *
  * Flow:
- *   1. A request fails with 401 and body.message = "token version
- *      mismatch" or "invalid token".
+ *   1. A request fails with 401 and the body's root `code` is a known
+ *      token-invalid / version-mismatch code, or (fallback) the
+ *      body.message = "token version mismatch" / "invalid token".
  *   2. The interceptor calls POST /api/v1/auth/bind with the stored
  *      access_key to obtain a fresh JWT.
  *   3. If successful, the new token is persisted and the original
@@ -37,6 +38,12 @@ import java.util.concurrent.TimeUnit
 class TokenRefreshInterceptor(
     private val prefsManager: PrefsManager,
     private val baseUrlProvider: () -> String,
+    // Business codes that indicate the current token is invalid or its
+    // version mismatches (admin rotation). Matched against the response
+    // body's root `code` field BEFORE the message fallback.
+    // TODO: replace with the authoritative codes once the backend confirms
+    // the values behind "token version mismatch" / "invalid token".
+    private val tokenInvalidCodes: Set<Int> = emptySet(),
 ) : Interceptor {
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -66,7 +73,7 @@ class TokenRefreshInterceptor(
 
         // Read the response body to check the error message.
         val bodyString = response.body?.string() ?: return response
-        val shouldRetry = isTokenVersionMismatch(bodyString) || isInvalidToken(bodyString)
+        val shouldRetry = isTokenRefreshNeeded(bodyString)
 
         if (!shouldRetry) {
             // Close the body and return a new response with the body
@@ -143,21 +150,36 @@ class TokenRefreshInterceptor(
             ?: throw RuntimeException("bind response missing token")
     }
 
-    private fun isTokenVersionMismatch(body: String): Boolean {
-        return try {
-            val root = json.parseToJsonElement(body).jsonObject
-            root["message"]?.jsonPrimitive?.content == "token version mismatch"
-        } catch (_: Exception) {
-            false
-        }
+    /**
+     * Decides whether a 401 response indicates a token version mismatch /
+     * invalid token (and thus should trigger a re-bind), matching in order:
+     *   1. If the body's root `code` field is present and is one of
+     *      [tokenInvalidCodes], trigger a refresh.
+     *   2. Otherwise fall back to the legacy `message` text matching
+     *      ("token version mismatch" / "invalid token") so an unconfirmed
+     *      code value or a changed backend message still works.
+     *
+     * TODO: Once the backend confirms the business codes behind
+     * "token version mismatch" / "invalid token", encode them into
+     * [tokenInvalidCodes] and the message fallback below can be removed.
+     */
+    private fun isTokenRefreshNeeded(body: String): Boolean {
+        val root = parseRoot(body) ?: return false
+
+        // 1) Prefer the business `code` field.
+        val code = root["code"]?.jsonPrimitive?.content?.toIntOrNull()
+        if (code != null && code in tokenInvalidCodes) return true
+
+        // 2) Fall back to the legacy message-text matching (backward compat).
+        val message = root["message"]?.jsonPrimitive?.content
+        return message == "token version mismatch" || message == "invalid token"
     }
 
-    private fun isInvalidToken(body: String): Boolean {
+    private fun parseRoot(body: String): JsonObject? {
         return try {
-            val root = json.parseToJsonElement(body).jsonObject
-            root["message"]?.jsonPrimitive?.content == "invalid token"
+            json.parseToJsonElement(body).jsonObject
         } catch (_: Exception) {
-            false
+            null
         }
     }
 }

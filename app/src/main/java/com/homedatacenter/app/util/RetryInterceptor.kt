@@ -18,11 +18,14 @@ import java.net.UnknownHostException
  * 
  * Retry strategy:
  *   - Max 3 attempts (initial + 2 retries)
- *   - Exponential backoff: 1s → 2s → 4s
+ *   - Exponential backoff: 1s → 2s → 4s (injectable via `backoff`)
  *   - Only retries on IOException subclasses and 5xx responses
  */
 class RetryInterceptor(
-    private val maxRetries: Int = 3
+    private val maxRetries: Int = 3,
+    // Injectable backoff so tests can pass a no-op and skip the delay;
+    // defaults to the 1s → 2s → 4s exponential sleep.
+    private val backoff: (Long) -> Unit = { Thread.sleep(it) },
 ) : Interceptor {
     
     override fun intercept(chain: Interceptor.Chain): Response {
@@ -34,7 +37,6 @@ class RetryInterceptor(
             return chain.proceed(request)
         }
         
-        var lastException: Exception? = null
         var lastResponse: Response? = null
         
         for (attempt in 0 until maxRetries) {
@@ -43,7 +45,7 @@ class RetryInterceptor(
                 val delayMs = (1L shl (attempt - 1)) * 1000L
                 Log.d(TAG, "Retry #$attempt for ${request.url.encodedPath} in ${delayMs}ms")
                 try {
-                    Thread.sleep(delayMs)
+                    backoff(delayMs)
                 } catch (e: InterruptedException) {
                     Thread.currentThread().interrupt()
                     throw IOException("Retry interrupted", e)
@@ -58,8 +60,15 @@ class RetryInterceptor(
                 
                 // Only retry on 5xx server errors
                 if (response.code in 500..599) {
-                    lastResponse = response
-                    response.close()
+                    if (attempt == maxRetries - 1) {
+                        // Last attempt: keep the 5xx response open so the
+                        // caller (e.g. HomeCenterRepository) can read the
+                        // real server status through ApiResponse instead of
+                        // receiving an IOException.
+                        lastResponse = response
+                    } else {
+                        response.close()
+                    }
                     Log.w(TAG, "Attempt #${attempt + 1} for ${request.url.encodedPath} returned ${response.code}")
                     continue
                 }
@@ -67,7 +76,6 @@ class RetryInterceptor(
                 // 4xx and other codes - don't retry
                 return response
             } catch (e: Exception) {
-                lastException = e
                 val shouldRetry = e is IOException  // includes SocketTimeoutException, UnknownHostException, etc.
                 
                 if (shouldRetry && attempt < maxRetries - 1) {
@@ -79,8 +87,15 @@ class RetryInterceptor(
             }
         }
         
-        // If we got here, all retries failed with 5xx responses
-        throw lastException ?: IOException("All $maxRetries attempts failed for ${request.url.encodedPath}")
+        // If we got here, all retries were exhausted on 5xx responses.
+        // Instead of throwing, return the last 5xx Response so the caller
+        // (e.g. HomeCenterRepository) can read the real server status and
+        // surface it through ApiResponse. lastResponse is always set when
+        // maxRetries >= 1; the throw below is only a defensive fallback for
+        // the degenerate maxRetries == 0 case.
+        Log.w(TAG, "All $maxRetries attempts for ${request.url.encodedPath} returned 5xx; returning last response")
+        return lastResponse
+            ?: throw IOException("All $maxRetries attempts failed for ${request.url.encodedPath}")
     }
     
     companion object {

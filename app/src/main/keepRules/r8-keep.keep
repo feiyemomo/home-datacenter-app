@@ -1,0 +1,52 @@
+# v1.9.0: R8 keep rules for release builds (AGP auto-collects every file
+# in src/main/keepRules and passes them to R8). Without these keeps, R8
+# strips the metadata / native / reflection-sensitive classes the app
+# relies on at runtime (kotlinx.serialization, Retrofit interfaces,
+# OkHttp, and the Stream WebRTC native JNI layer).
+
+# --- kotlinx.serialization -------------------------------------------
+-keepattributes *Annotation*, InnerClasses, Signature, EnclosingMethod
+-keepattributes RuntimeVisibleAnnotations, RuntimeVisibleParameterAnnotations, AnnotationDefault
+
+# Preserve the @Serializable marker and all generated serializers.
+-keepclassmembers class kotlinx.serialization.** {
+    *** Companion;
+    *** INSTANCE;
+    kotlinx.serialization.KSerializer serializer(...);
+}
+-keepclasseswithmembers class kotlinx.serialization.json.** { *; }
+-keep,includedescriptorclasses class com.homedatacenter.app.**$$serializer { *; }
+
+# --- Retrofit ---------------------------------------------------------
+# Retrofit uses the annotated interface methods reflectively; don't strip.
+-keepattributes RuntimeVisibleAnnotations, MethodParameters
+-keep,includedescriptorclasses,allowoptimization,allowshrinking interface retrofit2.Call { *; }
+-keepclasseswithmembers,includedescriptorclasses,allowshrinking class * {
+    @retrofit2.http.* <methods>;
+}
+-keep,includedescriptorclasses class retrofit2.** { *; }
+-dontwarn retrofit2.**
+-dontwarn javax.annotation.**
+-dontwarn kotlin.Unit
+
+# --- OkHttp / okio ----------------------------------------------------
+-keep,includedescriptorclasses class okhttp3.** { *; }
+-keep,includedescriptorclasses class okio.** { *; }
+-dontwarn okhttp3.**
+-dontwarn okio.**
+
+# --- WebRTC (Stream) --------------------------------------------------
+# Native JNI classes must never be obfuscated or stripped.
+-keep,includedescriptorclasses class org.webrtc.** { *; }
+-keep,includedescriptorclasses class io.getstream.** { *; }
+-keepclasseswithmembers class * {
+    native <methods>;
+}
+
+# --- BuildConfig ------------------------------------------------------
+# NetworkFactory.USER_AGENT reads BuildConfig.VERSION_NAME at runtime.
+-keep,includedescriptorclasses class com.homedatacenter.app.BuildConfig { *; }
+
+# --- Media3 / ExoPlayer ----------------------------------------------
+-dontwarn com.google.android.exoplayer2.**
+-dontwarn org.checkerframework.**

@@ -9,12 +9,12 @@ import android.view.View
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.Toast
-import androidx.lifecycle.lifecycleScope
 import com.homedatacenter.app.R
 import com.homedatacenter.app.di.AppContainer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 /**
@@ -132,8 +132,11 @@ class RegisterCameraDialog(
         Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
     }
 
+    // android.app.Dialog has no onDismiss/onCancel override — onStop() is
+    // the lifecycle callback fired when the dialog is dismissed. Cancel the
+    // Scope here so no coroutine outlives the dialog (leak / UI-after-destroy).
     override fun onStop() {
         super.onStop()
-        // Don't cancel ongoing requests on dismiss — let them complete.
+        scope.cancel()
     }
 }

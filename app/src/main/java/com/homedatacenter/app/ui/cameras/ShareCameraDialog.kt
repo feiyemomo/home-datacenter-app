@@ -20,6 +20,7 @@ import com.homedatacenter.app.di.AppContainer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 /**
@@ -96,6 +97,14 @@ class ShareCameraDialog(
         )
 
         loadShares()
+    }
+
+    // android.app.Dialog has no onDismiss/onCancel override — onStop() is
+    // the lifecycle callback fired when the dialog is dismissed. Cancel the
+    // Scope here so no coroutine outlives the dialog (leak / UI-after-destroy).
+    override fun onStop() {
+        super.onStop()
+        scope.cancel()
     }
 
     // --- Share list loading ---

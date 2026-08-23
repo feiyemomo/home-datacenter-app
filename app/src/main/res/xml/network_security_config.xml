@@ -1,17 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- Allow cleartext traffic for local IP cameras (e.g. http://192.168.x.x) -->
+    <!-- LAN / IPv6-direct / local-device cleartext whitelist (actual hosts the app uses).
+         NOTE: NSC <domain> does NOT support CIDR ranges; only concrete hostnames/IPs. -->
     <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="true">192.168.0.0/16</domain>
-        <domain includeSubdomains="true">10.0.0.0/8</domain>
-        <domain includeSubdomains="true">172.16.0.0/12</domain>
+        <domain includeSubdomains="true">192.168.31.235</domain>
+        <domain includeSubdomains="true">192.168.31.234</domain>
+        <domain includeSubdomains="true">nas.feiyemomo.top</domain>
         <domain includeSubdomains="true">localhost</domain>
         <domain includeSubdomains="true">127.0.0.1</domain>
     </domain-config>
+    <!-- Base: always permit cleartext (LAN + user custom LAN URL are business-required),
+         but do NOT trust user-installed CAs (removes the MITM / packet-capture hole). -->
     <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+    <!-- Debug builds may also trust user CAs for dev tooling (Charles/mitmproxy). -->
+    <debug-overrides>
         <trust-anchors>
             <certificates src="system" />
             <certificates src="user" />
         </trust-anchors>
-    </base-config>
+    </debug-overrides>
 </network-security-config>

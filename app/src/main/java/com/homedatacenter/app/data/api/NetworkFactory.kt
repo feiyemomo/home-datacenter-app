@@ -84,7 +84,9 @@ object NetworkFactory {
             // logging interceptor so retries are logged.
             .addInterceptor(RetryInterceptor())
 
-        if (enableLogging) {
+        // 仅 DEBUG 构建挂载日志中间件：即使调用方传 enableLogging=true，
+        // release 也绝不打印日志（BuildConfig.DEBUG 在 release 恒为 false）。
+        if (enableLogging && BuildConfig.DEBUG) {
             builder.addInterceptor(
                 HttpLoggingInterceptor().apply {
                     level = HttpLoggingInterceptor.Level.BASIC
