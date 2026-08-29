@@ -7,6 +7,9 @@ import android.view.View
 import android.view.ViewGroup
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
+import androidx.fragment.app.viewModels
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.homedatacenter.app.R
 import com.homedatacenter.app.data.api.NetworkFactory
@@ -69,14 +72,22 @@ class DashboardFragment : Fragment() {
     // can jump to its recording at the exact timestamp. Cleared when
     // the banner auto-dismisses.
     private var lastLiveAlert: Alert? = null
-    // v1.6.30: force refresh=true on the first network status fetch
-    // after the fragment is created, so the initial Dashboard displays
-    // current network quality instead of up to 60s of backend cache
-    // staleness. Subsequent onResume calls use the backend cache (60s
-    // TTL is fresh enough for page re-entry). Reset in onDestroyView
-    // so fragment recreation re-forces the refresh.
-    @Volatile
-    private var firstNetworkFetchDone = false
+    // v1.10.0 (P2-3): dashboard data acquisition lives in the
+    // ViewModel (weather / system status / network status). The
+    // fragment renders from its StateFlows.
+    private val viewModel: DashboardViewModel by viewModels {
+        val ma = requireActivity() as MainActivity
+        object : androidx.lifecycle.ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T =
+                DashboardViewModel(
+                    requireActivity().application as android.app.Application,
+                    ma.container.getRepository(),
+                    ma.container.baseUrlResolver,
+                    ma.container.okHttpClient,
+                ) as T
+        }
+    }
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -151,6 +162,52 @@ class DashboardFragment : Fragment() {
 
         loadUserName()
         setupDashboardWebSocket()
+
+        // v1.10.0 (P2-3): observe the ViewModel for polled dashboard
+        // data. Rendering stays here; the ViewModel owns acquisition.
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch {
+                    viewModel.weather.collect { weather ->
+                        if (weather != null && _binding != null) updateWeatherUI(weather)
+                    }
+                }
+                launch {
+                    viewModel.weatherLoading.collect { loading ->
+                        if (_binding != null) {
+                            binding.progressWeather.visibility =
+                                if (loading) View.VISIBLE else View.GONE
+                        }
+                    }
+                }
+                launch {
+                    viewModel.weatherFailed.collect { failed ->
+                        if (_binding != null) {
+                            binding.tvWeatherError.visibility =
+                                if (failed) View.VISIBLE else View.GONE
+                            if (failed) {
+                                binding.tvWeatherError.text = getString(R.string.weather_failed)
+                            }
+                        }
+                    }
+                }
+                launch {
+                    viewModel.systemStatus.collect { status ->
+                        if (status != null && _binding != null) updateStats(status)
+                    }
+                }
+                launch {
+                    viewModel.networkStatus.collect { status ->
+                        if (status != null && _binding != null) updateNetworkStatus(status)
+                    }
+                }
+                launch {
+                    viewModel.networkStatusFailed.collect { failed ->
+                        if (failed && _binding != null) updateNetworkStatusError()
+                    }
+                }
+            }
+        }
     }
 
     override fun onResume() {
@@ -281,59 +338,10 @@ class DashboardFragment : Fragment() {
 
     private fun loadWeather() {
         val mainActivity = activity as? MainActivity ?: return
-        val token = mainActivity.container.prefsManager.token ?: return
-        val baseUrl = mainActivity.container.getApiBaseUrl()
-        val base = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
-        val url = "${base}api/v1/weather"
-
-        // Cached first for instant display (via CacheManager)
-        CacheManager.getInstance(requireContext()).get<WeatherResponse>("dashboard.weather", 30_000L)?.let { weather ->
-            updateWeatherUI(weather)
-        }
-
-        binding.progressWeather.visibility = View.VISIBLE
-        binding.tvWeatherError.visibility = View.GONE
-
-        lifecycleScope.launch {
-            try {
-                val client = mainActivity.container.okHttpClient
-                val req = Request.Builder().url(url).apply {
-                    if (!token.isNullOrEmpty()) addHeader("Authorization", "Bearer $token")
-                }.build()
-                val jsonStr = withContext(Dispatchers.IO) {
-                    client.newCall(req).execute().use { resp ->
-                        if (!resp.isSuccessful) {
-                            throw RuntimeException("HTTP ${resp.code}")
-                        }
-                        resp.body?.string() ?: throw RuntimeException("empty body")
-                    }
-                }
-                // The weather endpoint wraps wttr.in's response in our
-                // standard { code, message, data } envelope, so unwrap
-                // `data` before decoding as WeatherResponse.
-                val apiResp = NetworkFactory.json.decodeFromString(
-                    com.homedatacenter.app.data.model.ApiResponse.serializer(),
-                    jsonStr
-                )
-                val weather = apiResp.decodeData<WeatherResponse>()
-                    ?: throw RuntimeException("empty weather data")
-                updateWeatherUI(weather)
-                // Cache the successful response
-                CacheManager.getInstance(requireContext()).set("dashboard.weather", weather)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                android.util.Log.w("Dashboard", "Weather load failed: ${e.message}")
-                if (view != null) {
-                    binding.tvWeatherError.visibility = View.VISIBLE
-                    binding.tvWeatherError.text = getString(R.string.weather_failed)
-                }
-            } finally {
-                if (view != null) {
-                    binding.progressWeather.visibility = View.GONE
-                }
-            }
-        }
+        viewModel.loadWeather(
+            mainActivity.container.prefsManager.token,
+            mainActivity.container.getApiBaseUrl(),
+        )
     }
 
     private fun updateWeatherUI(weather: WeatherResponse) {
@@ -384,41 +392,10 @@ class DashboardFragment : Fragment() {
 
     private fun loadSystemStatus(onComplete: (() -> Unit)? = null) {
         val mainActivity = activity as? MainActivity ?: return
-        val token = mainActivity.container.prefsManager.token ?: return
-
-        // Cached first for instant display (via CacheManager)
-        CacheManager.getInstance(requireContext()).get<SystemStatus>("dashboard.status", 30_000L)?.let { status ->
-            updateStats(status)
-        }
-
-        viewLifecycleOwner.lifecycleScope.launch {
-            // v1.6.29: measure the real API call RTT and feed it back
-            // to BaseUrlResolver so the network quality card displays
-            // steady-state latency (connection reused, ~250ms on
-            // cellular IPv6) instead of the probe RTT (~500ms, which
-            // includes TCP handshake). This runs on every 5s poll,
-            // so the card updates within 5s of app launch.
-            val apiStart = System.currentTimeMillis()
-            try {
-                val status = mainActivity.container.getRepository().getSystemStatus(
-                    token = token,
-                    useCache = false,
-                    refreshCache = true,
-                )
-                val apiElapsed = System.currentTimeMillis() - apiStart
-                mainActivity.container.baseUrlResolver.updateRttFromApiCall(apiElapsed)
-                latestSystemStatus = status
-                updateStats(status)
-                // Cache the successful response
-                CacheManager.getInstance(requireContext()).set("dashboard.status", status)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (error: Exception) {
-                android.util.Log.w("Dashboard", "System status load failed: ${error.message}")
-            } finally {
-                onComplete?.invoke()
-            }
-        }
+        viewModel.refreshSystemStatus(
+            mainActivity.container.prefsManager.token,
+            onComplete,
+        )
     }
 
     private fun updateStats(status: SystemStatus) {
@@ -547,35 +524,8 @@ class DashboardFragment : Fragment() {
 
     private fun loadNetworkStatus() {
         val mainActivity = activity as? MainActivity ?: return
-        val token = mainActivity.container.prefsManager.token ?: return
-
-        // Cached first for instant display (via CacheManager)
-        CacheManager.getInstance(requireContext()).get<NetworkStatus>("network.status", 30_000L)?.let { status ->
-            updateNetworkStatus(status)
-        }
-
-        lifecycleScope.launch {
-            try {
-                val forceRefresh = !firstNetworkFetchDone
-                firstNetworkFetchDone = true
-                val status = mainActivity.container.getRepository().getNetworkStatus(
-                    token,
-                    refresh = forceRefresh,
-                )
-                updateNetworkStatus(status)
-                // Cache the successful response
-                CacheManager.getInstance(requireContext()).set("network.status", status)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                android.util.Log.w("Dashboard", "Network status load failed: ${e.message}")
-                if (view != null) {
-                    updateNetworkStatusError()
-                }
-            }
-        }
+        viewModel.refreshNetworkStatus(mainActivity.container.prefsManager.token)
     }
-
     private fun updateNetworkStatus(status: NetworkStatus) {
         // Stars (1..5)
         val stars = listOf(binding.star1, binding.star2, binding.star3, binding.star4, binding.star5)
@@ -1029,7 +979,6 @@ class DashboardFragment : Fragment() {
         dashboardWebSocket = null
         binding.rvAlerts.adapter = null
         binding.rvRecentLogs.adapter = null
-        firstNetworkFetchDone = false
         _binding = null
         super.onDestroyView()
     }

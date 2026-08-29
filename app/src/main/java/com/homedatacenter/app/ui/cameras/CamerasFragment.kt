@@ -44,10 +44,14 @@ class CamerasFragment : Fragment() {
         object : androidx.lifecycle.ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T =
-                CamerasViewModel(app, repo) as T
+                CamerasViewModel(app, repo, (requireActivity() as MainActivity).container.getApi()) as T
         }
     }
 
+    // "全部报警" pagination state lives in the ViewModel (alerts,
+    // alertsLoading, alertsHasMore). The fragment only remembers
+    // whether the first page already faded in.
+    private var alertsFadedIn = false
     // Set by DashboardFragment's "全部" button before switching to the
     // cameras tab. When this fragment becomes visible it scrolls to the
     // "全部报警" section and resets the flag.
@@ -56,13 +60,6 @@ class CamerasFragment : Fragment() {
         var pendingScrollToAlerts = false
     }
 
-    // Pagination state for the "全部报警" section. listAlerts only
-    // supports a limit (no offset), so we page by growing the limit
-    // (20, 40, 60...) and stop when a page returns fewer than the
-    // requested count.
-    private var alertsLimit = 20
-    private var alertsLoading = false
-    private var alertsHasMore = true
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -125,7 +122,7 @@ class CamerasFragment : Fragment() {
                 val lm = rv.layoutManager as? LinearLayoutManager ?: return
                 val total = lm.itemCount
                 val lastVisible = lm.findLastVisibleItemPosition()
-                if (alertsHasMore && !alertsLoading && lastVisible >= total - 3) {
+                if (viewModel.alertsHasMore.value && !viewModel.alertsLoading.value && lastVisible >= total - 3) {
                     loadMoreAlerts()
                 }
             }
@@ -164,6 +161,19 @@ class CamerasFragment : Fragment() {
                 launch {
                     viewModel.refreshing.collect { refreshing ->
                         binding.swipeRefresh.isRefreshing = refreshing
+                    }
+                }
+                launch {
+                    viewModel.alerts.collect { alerts ->
+                        if (alerts != null) {
+                            allAlertsAdapter.submitList(alerts)
+                            binding.tvAllAlertsEmpty.visibility =
+                                if (alerts.isEmpty()) View.VISIBLE else View.GONE
+                            if (!alertsFadedIn) {
+                                alertsFadedIn = true
+                                AnimationHelper.fadeIn(binding.rvAllAlerts, 300)
+                            }
+                        }
                     }
                 }
             }
@@ -240,49 +250,17 @@ class CamerasFragment : Fragment() {
 
     /** Load the first page of all alerts (limit = 20). */
     private fun loadAllAlerts() {
-        if (alertsLoading) return
-        alertsLimit = 20
-        alertsHasMore = true
-        loadMoreAlerts()
+        viewModel.loadAllAlerts(
+            (activity as? MainActivity)?.container?.prefsManager?.token
+        )
     }
 
     /** Fetch the next page of alerts, growing the limit since the API
      *  has no offset parameter. */
     private fun loadMoreAlerts() {
-        val mainActivity = activity as? MainActivity ?: return
-        val token = mainActivity.container.prefsManager.token ?: return
-        if (alertsLoading || !alertsHasMore) return
-        alertsLoading = true
-
-        lifecycleScope.launch {
-            try {
-                val resp = mainActivity.container.getApi()
-                    .listAlerts("Bearer $token", limit = alertsLimit)
-                val alerts = if (resp.isSuccess) {
-                    resp.decodeData<AlertListData>()?.alerts ?: emptyList()
-                } else {
-                    emptyList()
-                }
-                allAlertsAdapter.submitList(alerts)
-                binding.tvAllAlertsEmpty.visibility =
-                    if (alerts.isEmpty()) View.VISIBLE else View.GONE
-                // v1.7.18: fade the "全部报警" list in when its first
-                // page lands. Skip pagination — re-fading on every page
-                // would flash the list while the user scrolls.
-                if (alertsLimit == 20) {
-                    AnimationHelper.fadeIn(binding.rvAllAlerts, 300)
-                }
-                // If we got fewer than requested, there are no more pages.
-                alertsHasMore = alerts.size >= alertsLimit
-                alertsLimit += 20
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                // Network failure: keep whatever we already have.
-            } finally {
-                alertsLoading = false
-            }
-        }
+        viewModel.loadMoreAlerts(
+            (activity as? MainActivity)?.container?.prefsManager?.token
+        )
     }
 
     /** Scroll to the "全部报警" section if DashboardFragment requested it. */
