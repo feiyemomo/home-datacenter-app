@@ -18,8 +18,8 @@ android {
         applicationId = "com.homedatacenter.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = 128
-        versionName = "1.9.1"
+        versionCode = 129
+        versionName = "1.10.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -177,6 +177,9 @@ dependencies {
     // TokenRefreshInterceptor); coroutines-test for suspend logic.
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
+    // v1.10.0: Mockito for mocking PrefsManager / TokenManager in
+    // TokenRefreshInterceptorTest (mockito 5 inline handles Kotlin finals).
+    testImplementation("org.mockito:mockito-core:5.14.2")
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
 }

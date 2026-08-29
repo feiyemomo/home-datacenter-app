@@ -1,35 +1,35 @@
 package com.homedatacenter.app.util
 
-import com.homedatacenter.app.data.api.NetworkFactory
-import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.Interceptor
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
-import java.util.concurrent.TimeUnit
 
 /**
  * v1.8.15: OkHttp interceptor that silently refreshes the JWT token
  * when the server rejects it due to token version mismatch (admin
  * rotation) or expiry.
  *
+ * v1.10.0: the bind call and token persistence moved into [TokenManager]
+ * (shared with AppContainer's monthly auto-refresh). This class now only
+ * decides WHEN a 401 means "re-bind", and performs the retried request.
+ * Also fixes a latent bug: on failed re-bind the original response was
+ * returned with its body already consumed/closed, crashing callers that
+ * read the body - it is now rebuilt with a fresh readable body.
+ *
  * Flow:
  *   1. A request fails with 401 and the body's root `code` is a known
  *      token-invalid / version-mismatch code, or (fallback) the
  *      body.message = "token version mismatch" / "invalid token".
- *   2. The interceptor calls POST /api/v1/auth/bind with the stored
+ *   2. The interceptor asks [TokenManager] to re-bind with the stored
  *      access_key to obtain a fresh JWT.
  *   3. If successful, the new token is persisted and the original
  *      request is retried with the updated Authorization header.
  *   4. If re-binding fails (e.g. access_key was also revoked), the
- *      original 401 is returned as-is and the user is redirected to
- *      the login screen.
+ *      original 401 is returned with its body re-attached and the user
+ *      is redirected to the login screen by the caller.
  *
  * This interceptor must be added to the OkHttpClient AFTER the
  * User-Agent interceptor, but BEFORE the logging interceptor (to
@@ -37,7 +37,7 @@ import java.util.concurrent.TimeUnit
  */
 class TokenRefreshInterceptor(
     private val prefsManager: PrefsManager,
-    private val baseUrlProvider: () -> String,
+    private val tokenManager: TokenManager,
     // Business codes that indicate the current token is invalid or its
     // version mismatches (admin rotation). Matched against the response
     // body's root `code` field BEFORE the message fallback.
@@ -47,22 +47,6 @@ class TokenRefreshInterceptor(
 ) : Interceptor {
 
     private val json = Json { ignoreUnknownKeys = true }
-
-    // A dedicated client for the re-bind request — we MUST NOT use
-    // the main OkHttpClient (which includes this interceptor) or
-    // we'd create an infinite loop.
-    private val bindClient = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(15, TimeUnit.SECONDS)
-        .writeTimeout(15, TimeUnit.SECONDS)
-        .addInterceptor { chain ->
-            chain.proceed(
-                chain.request().newBuilder()
-                    .header("User-Agent", NetworkFactory.USER_AGENT)
-                    .build()
-            )
-        }
-        .build()
 
     override fun intercept(chain: Interceptor.Chain): Response {
         val originalRequest = chain.request()
@@ -76,35 +60,20 @@ class TokenRefreshInterceptor(
         val shouldRetry = isTokenRefreshNeeded(bodyString)
 
         if (!shouldRetry) {
-            // Close the body and return a new response with the body
-            // re-attached so the caller can still read it.
-            return response.newBuilder()
-                .body(okhttp3.ResponseBody.create(
-                    response.body?.contentType(),
-                    bodyString
-                ))
-                .build()
+            return respondWithReattachedBody(response, bodyString)
         }
 
-        // Close the 401 response — we're going to retry.
+        // Close the 401 response - we're going to retry.
         response.close()
 
         // Attempt to re-bind with the stored access_key.
-        val accessKey = prefsManager.accessKey ?: return response
+        val accessKey = prefsManager.accessKey
+            ?: return respondWithReattachedBody(response, bodyString)
         val userId = prefsManager.userId
-        if (userId <= 0L) return response
+        if (userId <= 0L) return respondWithReattachedBody(response, bodyString)
 
-        val newToken = try {
-            refreshToken(userId, accessKey)
-        } catch (_: Exception) {
-            null
-        }
-
-        if (newToken == null) return response
-
-        // Persist the new token and update the refresh timestamp.
-        prefsManager.token = newToken
-        prefsManager.lastTokenRefreshTime = System.currentTimeMillis()
+        val newToken = tokenManager.refreshAndPersist(userId, accessKey)
+            ?: return respondWithReattachedBody(response, bodyString)
 
         // Retry the original request with the fresh token.
         val retryRequest = originalRequest.newBuilder()
@@ -115,39 +84,14 @@ class TokenRefreshInterceptor(
     }
 
     /**
-     * Calls POST /auth/bind to exchange (user_id, access_key) for a
-     * new JWT. Returns the token string, or throws on failure.
+     * v1.10.0: rebuild the 401 response with a fresh, readable body.
+     * The original body was already consumed by [intercept]; returning
+     * the closed response used to crash callers that read the body.
      */
-    private fun refreshToken(userId: Long, accessKey: String): String {
-        val baseUrl = baseUrlProvider().trimEnd('/')
-        val bindUrl = "$baseUrl/api/v1/auth/bind"
-
-        val bodyJson = """{"user_id":$userId,"access_key":"$accessKey"}"""
-        val requestBody = bodyJson.toRequestBody("application/json".toMediaType())
-
-        val request = Request.Builder()
-            .url(bindUrl)
-            .post(requestBody)
+    private fun respondWithReattachedBody(response: Response, bodyString: String): Response {
+        return response.newBuilder()
+            .body(okhttp3.ResponseBody.create(response.body?.contentType(), bodyString))
             .build()
-
-        val response = bindClient.newCall(request).execute()
-        val body = response.body?.string() ?: throw RuntimeException("empty bind response")
-
-        if (!response.isSuccessful) {
-            throw RuntimeException("bind failed: code=${response.code} body=$body")
-        }
-
-        // Parse the JSON response: {"code":0,"data":{"token":"..."}}
-        val root = json.parseToJsonElement(body).jsonObject
-        val code = root["code"]?.jsonPrimitive?.content?.toIntOrNull() ?: -1
-        if (code != 0) {
-            throw RuntimeException("bind returned code=$code")
-        }
-
-        val data = root["data"]?.jsonObject
-            ?: throw RuntimeException("bind response missing data")
-        return data["token"]?.jsonPrimitive?.content
-            ?: throw RuntimeException("bind response missing token")
     }
 
     /**

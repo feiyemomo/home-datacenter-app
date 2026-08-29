@@ -6,6 +6,9 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import androidx.fragment.app.Fragment
+import androidx.fragment.app.viewModels
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -33,6 +36,17 @@ class CamerasFragment : Fragment() {
     private val binding get() = _binding!!
     private lateinit var adapter: CameraAdapter
     private lateinit var allAlertsAdapter: AlertListAdapter
+
+    // v1.10.0 (P2-2): camera list state lives in the ViewModel.
+    private val viewModel: CamerasViewModel by viewModels {
+        val app = requireActivity().application as android.app.Application
+        val repo = (requireActivity() as MainActivity).container.getRepository()
+        object : androidx.lifecycle.ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T =
+                CamerasViewModel(app, repo) as T
+        }
+    }
 
     // Set by DashboardFragment's "全部" button before switching to the
     // cameras tab. When this fragment becomes visible it scrolls to the
@@ -133,6 +147,28 @@ class CamerasFragment : Fragment() {
         // doesn't wait for an extra round-trip. Idempotent — the
         // AppContainer skips if already cached. Mirrors
         // DashboardFragment.refreshAll().
+        // v1.10.0 (P2-2): observe the ViewModel instead of owning the
+        // load logic. The fade-in now also covers the cache paint -
+        // visually negligible, and the network arrival still fades.
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch {
+                    viewModel.cameras.collect { cameras ->
+                        if (cameras != null) {
+                            adapter.submitList(cameras)
+                            showEmpty(cameras.isEmpty())
+                            AnimationHelper.fadeIn(binding.recyclerView, 300)
+                        }
+                    }
+                }
+                launch {
+                    viewModel.refreshing.collect { refreshing ->
+                        binding.swipeRefresh.isRefreshing = refreshing
+                    }
+                }
+            }
+        }
+
         mainActivity.container.prefetchIceConfig()
     }
 
@@ -186,56 +222,13 @@ class CamerasFragment : Fragment() {
 
     private fun loadCamerasFromCache() {
         val mainActivity = activity as? MainActivity ?: return
-        val token = mainActivity.container.prefsManager.token ?: return
-
-        // Immediately populate from cache
-        val cached = CacheManager.getInstance(requireContext()).get<List<Camera>>("cameras.list", 30_000L)
-        if (!cached.isNullOrEmpty()) {
-            adapter.submitList(cached)
-            showEmpty(cached.isEmpty())
-        }
-
-        // Silent background refresh
-        loadCamerasFromNetwork()
+        viewModel.loadCameras(mainActivity.container.prefsManager.token)
     }
 
     private fun loadCamerasFromNetwork() {
         val mainActivity = activity as? MainActivity ?: return
-        val token = mainActivity.container.prefsManager.token ?: return
-
-        lifecycleScope.launch {
-            try {
-                // If offline, skip network call and just show cached data
-                if (!NetworkMonitor.getInstance(requireContext()).isOnlineNow()) {
-                    val cached = CacheManager.getInstance(requireContext()).get<List<Camera>>("cameras.list", 30_000L)
-                    if (!cached.isNullOrEmpty()) {
-                        adapter.submitList(cached)
-                        showEmpty(cached.isEmpty())
-                    }
-                    return@launch
-                }
-
-                val cameras = mainActivity.container.getRepository().listCameras(
-                    token, useCache = false, refreshCache = true
-                )
-                adapter.submitList(cameras)
-                showEmpty(cameras.isEmpty())
-                // v1.7.18: gentle fade-in once the network list lands.
-                AnimationHelper.fadeIn(binding.recyclerView, 300)
-
-                // Cache the result for offline access
-                CacheManager.getInstance(requireContext()).set("cameras.list", cameras)
-
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                // Network failure: keep cached data
-            } finally {
-                if (view != null) {
-                    binding.swipeRefresh.isRefreshing = false
-                }
-            }
-        }
+        // v1.10.0 (P2-2): network load moved to the ViewModel.
+        viewModel.refreshCameras(mainActivity.container.prefsManager.token)
     }
 
     private fun showEmpty(show: Boolean) {

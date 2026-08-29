@@ -9,6 +9,7 @@ import com.homedatacenter.app.util.BaseUrlResolver
 import com.homedatacenter.app.util.PrefsManager
 import com.homedatacenter.app.util.RoleManager
 import com.homedatacenter.app.util.TokenRefreshInterceptor
+import com.homedatacenter.app.util.TokenManager
 import com.homedatacenter.app.util.WebRtcClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -25,6 +26,13 @@ class AppContainer(private val context: Context) {
 
     val prefsManager: PrefsManager by lazy { PrefsManager(context) }
 
+
+    /**
+     * v1.10.0: single owner of the JWT re-bind flow. Shared by the
+     * TokenRefreshInterceptor (401 recovery) and the monthly silent
+     * refresh (tryAutoRefreshToken).
+     */
+    val tokenManager: TokenManager by lazy { TokenManager(prefsManager) { getApiBaseUrl() } }
     val okHttpClient: OkHttpClient by lazy {
         val baseClient = NetworkFactory.okHttpClient(enableLogging = true)
         // v1.8.15: add token refresh interceptor AFTER the main
@@ -32,7 +40,7 @@ class AppContainer(private val context: Context) {
         // interceptor silently re-binds on 401 "token version
         // mismatch" and retries the request with a fresh token.
         baseClient.newBuilder()
-            .addInterceptor(TokenRefreshInterceptor(prefsManager, { getApiBaseUrl() }))
+            .addInterceptor(TokenRefreshInterceptor(prefsManager, tokenManager))
             .build()
     }
 
@@ -546,67 +554,12 @@ class AppContainer(private val context: Context) {
     // （用户无感知），且独立于服务端 token_version 旋转。
     // 即使管理员没有手动旋转，客户端也会定期刷新 JWT，
     // 缩短令牌泄露窗口期。
-    private val refreshScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var refreshJob: Job? = null
-
     /**
-     * 检查并执行每月一次的 JWT 静默刷新。
-     * 在 HomeCenterApp.onCreate 中调用。
+     * v1.10.0: checks and performs the monthly silent JWT refresh.
+     * Implementation moved to TokenManager (shared with the
+     * TokenRefreshInterceptor bind flow).
      */
-    fun tryAutoRefreshToken() {
-        if (refreshJob?.isActive == true) return
-        val token = prefsManager.token ?: return
-        val accessKey = prefsManager.accessKey ?: return
-        val userId = prefsManager.userId
-        if (userId <= 0L) return
-
-        val lastRefresh = prefsManager.lastTokenRefreshTime
-        val now = System.currentTimeMillis()
-        val thirtyDaysMs = 30L * 24 * 60 * 60 * 1000
-
-        // 距离上次刷新不足 30 天，跳过
-        if (lastRefresh > 0 && (now - lastRefresh) < thirtyDaysMs) return
-
-        refreshJob = refreshScope.launch {
-            try {
-                val baseUrl = getApiBaseUrl().trimEnd('/')
-                val bindUrl = "$baseUrl/api/v1/auth/bind"
-                val bodyJson = """{"user_id":$userId,"access_key":"$accessKey"}"""
-                val requestBody = bodyJson.toRequestBody("application/json".toMediaType())
-
-                val request = okhttp3.Request.Builder()
-                    .url(bindUrl)
-                    .post(requestBody)
-                    .header("User-Agent", NetworkFactory.USER_AGENT)
-                    .build()
-
-                // 使用独立的 OkHttpClient（不要用主 client）
-                val client = okhttp3.OkHttpClient.Builder()
-                    .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
-                    .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
-                    .build()
-
-                val response = client.newCall(request).execute()
-                val body = response.body?.string() ?: return@launch
-
-                if (response.isSuccessful) {
-                    val root = NetworkFactory.json.parseToJsonElement(body).jsonObject
-                    val code = root["code"]?.jsonPrimitive?.content?.toIntOrNull() ?: -1
-                    if (code == 0) {
-                        val data = root["data"]?.jsonObject
-                        val newToken = data?.get("token")?.jsonPrimitive?.content
-                        if (newToken != null) {
-                            prefsManager.token = newToken
-                            prefsManager.lastTokenRefreshTime = now
-                            Log.d("AppContainer", "Token auto-refreshed (monthly)")
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                Log.w("AppContainer", "Token auto-refresh failed: ${e.message}")
-            }
-        }
-    }
+    fun tryAutoRefreshToken() = tokenManager.tryAutoRefreshToken()
 
     companion object {
         const val DEFAULT_BASE_URL = "https://api.feiyemomo.top/"
