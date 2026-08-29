@@ -22,7 +22,6 @@ import com.homedatacenter.app.ui.main.MainActivity
 import com.homedatacenter.app.util.AnimationHelper
 import com.homedatacenter.app.util.CacheManager
 import com.homedatacenter.app.util.NetworkMonitor
-import com.homedatacenter.app.util.PrefetchManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -227,10 +226,6 @@ class CamerasFragment : Fragment() {
                 // Cache the result for offline access
                 CacheManager.getInstance(requireContext()).set("cameras.list", cameras)
 
-                // Prefetch ICE config for faster camera detail loading
-                PrefetchManager.getInstance(requireContext()).prefetchOnIdle("cameras.ice", {
-                    mainActivity.container.getRepository().getIceConfig(token)
-                }, 2000L, viewLifecycleOwner.lifecycleScope)
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {

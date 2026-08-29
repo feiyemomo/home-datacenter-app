@@ -35,7 +35,6 @@ import com.homedatacenter.app.util.AnimationHelper
 import com.homedatacenter.app.util.CacheManager
 import com.homedatacenter.app.util.NetworkMonitor
 import com.homedatacenter.app.util.StateLayout
-import com.homedatacenter.app.util.PrefetchManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -201,20 +200,6 @@ class DashboardFragment : Fragment() {
         // AppContainer skips if already cached.
         (activity as? MainActivity)?.container?.prefetchIceConfig()
 
-        // Prefetch related data on idle
-        val mainActivity = activity as? MainActivity ?: return
-        val token = mainActivity.container.prefsManager.token
-        if (!token.isNullOrEmpty()) {
-            // cameras.list is already warmed by SplashActivity's parallel
-            // prefetch + CamerasFragment's own network load, so only
-            // devices.list needs a background warm-up here. Tied to the
-            // view lifecycle so the prefetch is cancelled on destroy.
-            PrefetchManager.getInstance(requireContext()).prefetchOnIdle("devices.list", {
-                withContext(Dispatchers.IO) {
-                    mainActivity.container.getRepository().listDevices(token, useCache = true)
-                }
-            }, 4000L, viewLifecycleOwner.lifecycleScope)
-        }
     }
 
     /**

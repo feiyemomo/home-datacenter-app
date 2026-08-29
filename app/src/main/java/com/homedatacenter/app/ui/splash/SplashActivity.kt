@@ -21,6 +21,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -267,6 +268,15 @@ class SplashActivity : AppCompatActivity() {
         startActivity(target)
         overridePendingTransition(R.anim.fade_in, R.anim.fade_out)
         finish()
+    }
+
+    override fun onDestroy() {
+        // Rotation / recreation mid-splash would otherwise leave the old
+        // instance's prefetch jobs queued on Dispatchers.IO and let the
+        // new instance start a duplicate prefetch. Cancelling the scope
+        // here stops any still-running or queued prefetch work.
+        prefetchScope.cancel()
+        super.onDestroy()
     }
 
     private companion object {
