@@ -1,4 +1,4 @@
-package com.homedatacenter.app.data.model
+﻿package com.homedatacenter.app.data.model
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -39,6 +39,7 @@ data class UserList(
 @Serializable
 data class CreateUserRequest(
     val name: String,
+    val password: String? = null, // v1.10.2: admin-set password; becomes the user device access key
     @SerialName("is_admin") val isAdmin: Boolean = false,
 )
 

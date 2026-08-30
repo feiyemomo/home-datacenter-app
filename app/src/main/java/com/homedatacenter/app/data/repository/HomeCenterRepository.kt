@@ -1,4 +1,4 @@
-package com.homedatacenter.app.data.repository
+﻿package com.homedatacenter.app.data.repository
 
 import com.homedatacenter.app.data.api.HomeCenterApi
 import com.homedatacenter.app.data.model.ApiException
@@ -399,10 +399,11 @@ class HomeCenterRepository(
         token: String,
         name: String,
         isAdmin: Boolean,
+        password: String? = null,
     ): String? {
         val resp = api.createUser(
             bearer(token),
-            CreateUserRequest(name = name, isAdmin = isAdmin),
+            CreateUserRequest(name = name, isAdmin = isAdmin, password = password),
         )
         ensureSuccess(resp)
         return resp.decodeData<CreateUserResponse>()?.accessKey

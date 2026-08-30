@@ -1,4 +1,4 @@
-package com.homedatacenter.app.ui.admin
+﻿package com.homedatacenter.app.ui.admin
 
 import android.app.AlertDialog
 import android.content.ClipData
@@ -109,9 +109,14 @@ class UsersFragment : Fragment() {
             setPadding(50, 30, 50, 10)
         }
         val etName = EditText(requireContext()).apply { hint = getString(R.string.user_name_label) }
+        val etPassword = EditText(requireContext()).apply {
+            hint = "密码（仅限字母和数字）"
+            inputType = android.text.InputType.TYPE_CLASS_TEXT
+        }
         val cbAdmin = CheckBox(requireContext()).apply { text = getString(R.string.user_admin_label) }
         dialogContainer.apply {
             addView(etName)
+            addView(etPassword)
             addView(cbAdmin)
         }
 
@@ -124,19 +129,25 @@ class UsersFragment : Fragment() {
                     toast("请填写用户名")
                     return@setPositiveButton
                 }
+        val password = etPassword.text.toString()
+        if (password.isEmpty()) {
+            toast("请设置密码")
+            return@setPositiveButton
+        }
+        if (!Regex("^[A-Za-z0-9]+$").matches(password)) {
+            toast("密码仅限字母和数字")
+            return@setPositiveButton
+        }
                 lifecycleScope.launch {
                     try {
                         val accessKey = container.getRepository().createUser(
                             token,
                             name = name,
                             isAdmin = cbAdmin.isChecked,
+                password = password,
                         )
                         loadUsers()
-                        if (!accessKey.isNullOrEmpty()) {
-                            showAccessKeyDialog(accessKey)
-                        } else {
-                            toast("用户已创建")
-                        }
+                toast("用户已创建（登录凭据为所设密码）")
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
@@ -148,39 +159,39 @@ class UsersFragment : Fragment() {
             .show()
     }
 
-    private fun showAccessKeyDialog(accessKey: String) {
-        val container = LinearLayout(requireContext()).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(50, 30, 50, 10)
-        }
-        val tvLabel = TextView(requireContext()).apply {
-            text = getString(R.string.device_register_access_key_label)
-            textSize = 14f
-        }
-        val tvKey = TextView(requireContext()).apply {
-            text = accessKey
-            textSize = 16f
-            setTextColor(
-                resources.getColor(android.R.color.holo_red_dark, requireContext().theme)
-            )
-            setPadding(0, 16, 0, 16)
-            typeface = android.graphics.Typeface.MONOSPACE
-        }
-        container.apply {
-            addView(tvLabel)
-            addView(tvKey)
-        }
-
-        AlertDialog.Builder(requireContext())
-            .setTitle(R.string.users_create)
-            .setView(container)
-            .setPositiveButton(R.string.device_register_copied) { _, _ ->
-                copyToClipboard(accessKey)
-                toast("已复制")
-            }
-            .setNeutralButton(R.string.btn_confirm) { _, _ -> }
-            .show()
-    }
+//     private fun showAccessKeyDialog(accessKey: String) {
+//         val container = LinearLayout(requireContext()).apply {
+//             orientation = LinearLayout.VERTICAL
+//             setPadding(50, 30, 50, 10)
+//         }
+//         val tvLabel = TextView(requireContext()).apply {
+//             text = getString(R.string.device_register_access_key_label)
+//             textSize = 14f
+//         }
+//         val tvKey = TextView(requireContext()).apply {
+//             text = accessKey
+//             textSize = 16f
+//             setTextColor(
+//                 resources.getColor(android.R.color.holo_red_dark, requireContext().theme)
+//             )
+//             setPadding(0, 16, 0, 16)
+//             typeface = android.graphics.Typeface.MONOSPACE
+//         }
+//         container.apply {
+//             addView(tvLabel)
+//             addView(tvKey)
+//         }
+// 
+//         AlertDialog.Builder(requireContext())
+//             .setTitle(R.string.users_create)
+//             .setView(container)
+//             .setPositiveButton(R.string.device_register_copied) { _, _ ->
+//                 copyToClipboard(accessKey)
+//                 toast("已复制")
+//             }
+//             .setNeutralButton(R.string.btn_confirm) { _, _ -> }
+//             .show()
+//     }
 
     private fun copyToClipboard(text: String) {
         val ctx = requireContext()
