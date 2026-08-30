@@ -8,14 +8,14 @@
     <string name="splash_logo_desc">logo</string>
 
     <string name="login_title">欢迎回来</string>
-    <string name="login_subtitle">绑定您的设备以访问家庭数据中心</string>
+    <string name="login_subtitle">输入管理员设置的密码来绑定设备</string>
     <string name="hint_user_id">用户 ID</string>
-    <string name="hint_access_key">访问密钥</string>
+    <string name="hint_access_key">密码</string>
     <string name="hint_server_url">服务器地址</string>
     <string name="btn_login">绑定设备</string>
     <string name="login_in_progress">正在绑定...</string>
     <string name="login_error">绑定失败，请检查凭据</string>
-    <string name="login_invalid_input">请输入用户 ID 和访问密钥</string>
+    <string name="login_invalid_input">请输入用户 ID 和密码</string>
 
     <string name="nav_dashboard">主页</string>
     <string name="nav_cameras">摄像头</string>
