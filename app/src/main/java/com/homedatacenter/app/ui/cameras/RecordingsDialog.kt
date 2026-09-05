@@ -91,6 +91,7 @@ class RecordingsDialog(
     // so pagination is no longer needed — we just hand the whole
     // grouped list to [dayAdapter] in one shot.
     private val allRecordings = mutableListOf<Recording>()
+    private var earliestDay: DayRecording? = null
 
     // v1.5.11: big scrub bar state for the full-day playlist mode.
     // v1.8.37: [dayTotalMs] is now the ACTUAL recording-coverage
@@ -229,13 +230,14 @@ class RecordingsDialog(
         )
         binding.recyclerView.layoutManager = LinearLayoutManager(context)
         binding.recyclerView.adapter = dayAdapter
+        binding.btnLoadEarlier.setOnClickListener { loadEarlier() }
         // v1.6.2: removed the pagination scroll listener. The
         // backend returns 7 days of 60s buckets (~10k items), but we
         // group them into ~7 day cards — far below any pagination
         // threshold.
     }
 
-    private fun loadRecordings() {
+    private fun loadRecordings(afterUnix: Long? = null, beforeUnix: Long? = null, append: Boolean = false) {
         binding.progressBar.visibility = View.VISIBLE
         binding.recyclerView.visibility = View.GONE
         // v1.6.8: toggle the whole empty-state container (icon +
@@ -248,7 +250,7 @@ class RecordingsDialog(
                 val authHeader = if (!token.isNullOrEmpty()) "Bearer $token" else ""
                 android.util.Log.d("RecordingsDialog",
                     "Fetching recordings for camera ${camera.id} (name='${camera.name}')")
-                val resp = container.getApi().listRecordings(authHeader, camera.id)
+                val resp = container.getApi().listRecordings(authHeader, camera.id, after = afterUnix, before = beforeUnix)
                 android.util.Log.d("RecordingsDialog",
                     "API response: code=${resp.code}, message='${resp.message}', data=${resp.data}")
 
@@ -267,7 +269,13 @@ class RecordingsDialog(
                     // v1.5.10: keep the full list, expose only the
                     // first page to the adapter. Subsequent pages
                     // are appended on scroll via [loadMoreRecordings].
-                    allRecordings.clear()
+                    if (append && recordings.isEmpty()) {
+                        android.widget.Toast.makeText(context, "没有更早录像", android.widget.Toast.LENGTH_SHORT).show()
+                        binding.btnLoadEarlier.visibility = View.GONE
+                        binding.progressBar.visibility = View.GONE
+                        return@withContext
+                    }
+                    if (!append) allRecordings.clear()
                     allRecordings.addAll(recordings)
                     // v1.6.2: group recordings by LOCAL day and
                     // hand the per-day list to [dayAdapter]. Each
@@ -282,6 +290,8 @@ class RecordingsDialog(
                     // days' buckets, omitting empty days entirely).
                     val dayList = groupRecordingsByDay(recordings)
                     dayAdapter.submitList(dayList)
+                    earliestDay = dayList.lastOrNull()
+                    binding.btnLoadEarlier.visibility = if (dayList.isEmpty()) View.GONE else View.VISIBLE
                     binding.progressBar.visibility = View.GONE
                     binding.recyclerView.visibility = View.VISIBLE
                     // v1.6.8: empty-state container holds icon +
@@ -332,6 +342,18 @@ class RecordingsDialog(
      * Timezone: hardcoded Asia/Shanghai — see [formatDayTime] for
      * why (JVM-default tz is unreliable on the user's device).
      */
+    /**
+     * v1.10.3: load an earlier 7-day window and append it so old
+     * days remain reachable. before = 1s before the currently
+     * earliest day LOCAL midnight; after = before - 7 days.
+     */
+    private fun loadEarlier() {
+        val day = earliestDay ?: return
+        val before = day.dayStartCalendar.timeInMillis / 1000L - 1L
+        val after = before - 7L * 24 * 60 * 60
+        binding.progressBar.visibility = View.VISIBLE
+        loadRecordings(afterUnix = after, beforeUnix = before, append = true)
+    }
     private fun groupRecordingsByDay(recordings: List<Recording>): List<DayRecording> {
         val parseFmt = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
             timeZone = TimeZone.getTimeZone("UTC")
