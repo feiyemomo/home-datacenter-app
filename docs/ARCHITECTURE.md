@@ -241,7 +241,7 @@ class RoleManager(
 
 App 在两种网络环境下都要能用：
 
-- **家庭局域网**：直连 NAS `http://192.168.31.234:8088/`，TTFB ~10ms
+- **家庭局域网**：直连 NAS `http://192.168.31.235:8088/`，TTFB ~10ms
 - **外网**：走 Cloudflare Tunnel `https://api.feiyemomo.top/`，TTFB 1.4s+ 且丢包多
 
 两者速度差 70 倍以上。在局域网里用 Tunnel 会让视频流卡顿，在外网里访问局域网 IP 则超时。需要在运行时**自动选择**最快的可达 URL，并在网络切换（如用户走出 WiFi 覆盖）时**立即**切换。
@@ -1221,7 +1221,51 @@ class TokenRefreshInterceptor(
 
 ---
 
+## 18. 全局冷启动、并发控制与生命周期架构重构 (v1.10.x)
+
+v1.10.x 针对冷启动时延、内存驻留、后台并发连接、RecyclerView 中 Compose 复用机制以及断网恢复进行了系统级深度重构。
+
+### 18.1. 开屏纯协程无阻预加载编排 (`SplashActivity`)
+
+- **非阻塞式调度**：彻底移除 `runBlocking` 与 `postDelayed`，改由 `lifecycleScope.launch` 统一调度。
+- **并发赛跑与兜底熔断**：
+  - `minHoldJob`：确保品牌开屏动画至少展示 `SPLASH_DURATION_MS`（900ms），保障视觉完整性与平滑度；
+  - `withTimeoutOrNull(MAX_SPLASH_MS)`：后台并发拉取首屏关键数据（系统状态、天气、近期报警、在线摄像头列表、网络状态 `network.status`），超时窗口上限设为 2000ms；
+  - 达成条件后立即平滑跳转 `MainActivity`，主线程保持 0 阻塞、0 冻结帧。
+
+### 18.2. 冷启动局域网路径持久化与快速恢复 (`BaseUrlResolver`)
+
+- **上次有效路径持久化**：新增 `KEY_LAST_RESOLVED_URL` 本地持久化保存（`network_path` SharedPreferences）。
+- **冷启动直连**：用户在家庭 Wi-Fi 环境冷启动时，构造期直接载入上次连通的 `LAN_URL`（`http://192.168.31.235:8088/`），使开屏预取的首批 5 个 API 请求立即命中 ~10ms 内网，预加载耗时由 1.4s+ 骤降至 30~50ms。
+
+### 18.3. 底部导航栏 Tab 页面按需懒加载 (`MainActivity`)
+
+- **从饥饿式到按需加载**：废除启动时将 5 个 Fragment（Dashboard, Cameras, Logs, Users, Settings）全量 `add()` 进 FragmentManager 的旧做法。
+- **冷启动轻量化**：启动期仅实例化并挂载默认的首屏 `DashboardFragment`；其余 Tab 在用户首次点击切换时通过 `showFragmentByTag` 按需延迟创建并挂载，已创建页面继续复用 `show/hide`。
+- **收益**：彻底避免了冷启动期间在后台并发建立第 2 个 WebSocket 连接（`ServiceLogsFragment`）以及拉取 50 条系统日志和全量用户列表的大流量请求；非管理员登录时永远不会在后台创建管理员 Tab。
+
+### 18.4. RecyclerView 中 Compose 树单次构建与局部重组 (`CameraAdapter`)
+
+- **单次挂载**：在 `CameraViewHolder.init` 中调用一次 `composeView.setContent { ... }` 构建 Composition 树，设置 `ViewCompositionStrategy.DisposeOnDetachedFromWindowOrReleasedFromPool`。
+- **State 驱动**：在 Compose 中读取 `mutableStateOf` 驱动的 `currentCamera` 状态。
+- **滑动零撕裂**：`onBindViewHolder` 仅更新数据状态，避免滑动复用时频繁销毁与重建 Compose 布局树导致的 GC 停顿；增加 `lastAnimatedPosition` 入场动画防抖。
+
+### 18.5. WebSocket 重连状态机健全与连接清理 (`HomeCenterWebSocket`)
+
+- **状态恢复对称性**：在 `connect()` 入口显式重置 `shouldReconnect = true`，解决 `disconnect()` 后状态永久锁死导致掉线无法自动重连的严重缺陷。
+- **句柄及时释放**：在 `WsListener.onClosed()` 回调中将 `webSocket` 置空，避免关闭后的残留实例阻断后续连接。
+
+### 18.6. `TokenManager` 互斥并发锁与惊群防护
+
+- **Double-Checked Locking**：OkHttp 拦截器在遭遇并发 401 时，通过 `synchronized(refreshLock)` 互斥锁与 5 秒双重检查窗口合并换票操作，仅首个线程请求服务端 `/api/v1/auth/bind`，其余并发线程直接复用最新 Token，消除换票风暴。
+
+### 18.7. `NetworkMonitor` 离线家庭局域网与国产 ROM 兼容性韧性设计
+
+- **局域网豁免机制**：只要设备连接 Wi-Fi (`TRANSPORT_WIFI`) 或以太网 (`TRANSPORT_ETHERNET`)，即使系统由于断外网或国内定制 ROM 未能通过 Google Captive Portal 校验（`NET_CAPABILITY_VALIDATED = false`），依然判定网络可用，保障家庭本地 NAS 正常使用。
+
+---
+
 ## 文档版本
 
-**最后更新：** 2026-08-02 (v1.7.17: 液态玻璃 + 主题切换修复 + 令牌轮换)
+**最后更新：** 2026-09-12 (v1.10.3: 全局冷启动、并发控制与生命周期架构重构)
 

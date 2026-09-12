@@ -3,7 +3,7 @@
 家庭数据中心 Android 客户端 — 一个用 **Kotlin + Jetpack Compose + ExoPlayer + WebRTC** 实现的家庭 NVR / IoT 控制台，配合 [home-datacenter](https://github.com/feiyemomo/home-datacenter) 后端使用，提供摄像头预览、WebRTC/MP4/HLS 直播（含音频）、录像回放、报警查看、设备状态、天气信息、局域网/远程自动切换和实时 WebSocket 推送。
 
 > 服务端项目：<https://github.com/feiyemomo/home-datacenter>
-> 当前版本：**v1.10.0**（versionCode 127）
+> 当前版本：**v1.10.3**（versionCode 132）
 
 ---
 
@@ -21,6 +21,7 @@
 - [视频播放策略](#视频播放策略)
 - [常见问题](#常见问题)
 - [错误教训](#错误教训)
+- [更新日志](#更新日志)
 - [License](#license)
 
 ---
@@ -35,10 +36,10 @@
 | Compile SDK | 36 |
 | Java / Kotlin | 17 / 2.0 |
 | AGP | 9.2.1 |
-| 当前版本 | 1.10.0 (versionCode 129) |
-| 默认服务器 | `https://api.feiyemomo.top/`（远程） / `http://192.168.31.234:8088/`（局域网，自动探测） |
+| 当前版本 | 1.10.3 (versionCode 132) |
+| 默认服务器 | `https://api.feiyemomo.top/`（远程） / `http://192.168.31.235:8088/`（局域网，自动探测并持久化） |
 
-App 通过 `(user_id, access_key)` 换取 JWT 后访问 `home-datacenter` 的 REST API 与 WebSocket。**BaseUrlResolver** 在启动时通过后台守护线程异步探测局域网 `http://192.168.31.234:8088/` 是否可达（TTFB ~10ms vs Cloudflare Tunnel 1.4s+），可达则切到局域网，否则走远程 Cloudflare Tunnel。启动调度采用指数退避重试（1.5s → 4s → 9s → 16s），覆盖真机「WiFi connected but not validated」窗口；同时附加 TCP socket 直连探测作为 OkHttp cleartext 拒绝时的兜底。NetworkChangeMonitor 注册 ConnectivityManager.NetworkCallback，在 WiFi/移动网络切换时立即触发 re-probe，无需等 5 分钟 TTL。摄像头直播走 go2rtc 暴露的 MP4（主）+ HLS（备），后端根据摄像头 `capabilities.audio` 在 go2rtc 流 URL 上自动追加 `#audio=aac` 启用音频转码，前端通过 ExoPlayer `volume` 控制静音/取消静音。
+App 通过 `(user_id, access_key)` 换取 JWT 后访问 `home-datacenter` 的 REST API 与 WebSocket。**BaseUrlResolver** 在启动时通过后台守护线程异步探测局域网 `http://192.168.31.235:8088/` 是否可达（TTFB ~10ms vs Cloudflare Tunnel 1.4s+），可达则切到局域网，否则走远程 Cloudflare Tunnel。冷启动会优先恢复上次有效网络路径，使家庭 Wi-Fi 场景下首个请求即命中内网。启动调度采用指数退避重试（1.5s → 4s → 9s → 16s），覆盖真机「WiFi connected but not validated」窗口；同时附加 TCP socket 直连探测作为 OkHttp cleartext 拒绝时的兜底。NetworkChangeMonitor 注册 ConnectivityManager.NetworkCallback，在 WiFi/移动网络切换时立即触发 re-probe，无需等 5 分钟 TTL。摄像头直播走 go2rtc 暴露的 MP4（主）+ HLS（备），后端根据摄像头 `capabilities.audio` 在 go2rtc 流 URL 上自动追加 `#audio=aac` 启用音频转码，前端通过 ExoPlayer `volume` 控制静音/取消静音。
 
 ---
 
@@ -576,206 +577,47 @@ newPlayer.setAudioAttributes(
 
 ## 更新日志
 
-### v1.7.26 — 核查缓存修复 + 审计日志大幅拓展 (2026-08-12)
+> 💡 早期完整版本演进记录（v1.6.7 ~ v1.9.1）已统一收拢归档至文档：[docs/CHANGELOG_ARCHIVE.md](docs/CHANGELOG_ARCHIVE.md)。
 
-#### 核查后刷新回现 bug 修复
-- 修复核查日志后下拉刷新时被核查日志又出现在"待处理日志"栏的 bug
-- 根因：核查成功后未清除 `CacheManager` 中的 `logs.page.*` 分页缓存，刷新时读到旧 critical 级别数据
-- 修复：核查成功后调用 `CacheManager.clear("logs.page.")` 清除所有日志分页缓存
+### 版本里程碑演进
 
-#### 审计日志大幅拓展（配合服务端 v1.8.22）
-- **摄像头管理事件**：新增摄像头注册、更新编码/音频/录制计划的审计日志
-- **自动化规则事件**：新增规则触发、创建/更新/删除的审计日志
-- **设备管理事件**：新增设备硬删除、Token 轮换的审计日志
-- **运动检测报警**：摄像头检测到运动时记录 info 级别日志
-- **修复 dead topic**：`camera.status_changed` 事件之前已被订阅但从未发布，现在 health.go 在状态变更时补发
+| 大版本 | 核心演进方向 |
+|---|---|
+| **v1.10.x** | 全局架构演进、冷启动无阻协程预加载、Tab 按需懒加载、Compose 列表复用、Token 防风暴锁与内网兼容加固 |
+| **v1.9.x** | 框架与安全性加固、Token 自动轮换机制规范化、预取生命周期安全回收 |
+| **v1.8.x** | 录像配额与 Warning 告警系统、TokenRefreshInterceptor 401 自动恢复、后台下载增强 |
+| **v1.7.x** | 暖琥珀液态玻璃风格重构、快速路径先行探测、断点续传 APK 安装器、主题切换安全加固 |
+| **v1.6.x** | 服务日志体系、WebRTC 全路径尝试、DDNS 动态 IPv6 适配、录像进度合并优化 |
 
-### v1.7.25 — 日志核查降级 + 下拉刷新修复 + 更新流程优化 (2026-08-12)
+---
 
-#### 日志核查改为降级而非删除
-- 核查按钮不再删除日志，改为调用 `PATCH /api/v1/system/logs/:id` 将日志级别从 `critical` 降级为 `normal`
-- 日志从"待处理日志"栏移除，但在"所有日志"栏继续保留，完整审计轨迹不丢失
-- 持久化到服务端，刷新后仍然有效
+### 最新版本详情
 
-#### 下拉刷新持续转圈 bug 修复
-- 修复缓存命中路径（`loadNextPage` 中的 cache-hit early return）未调用 `swipeRefresh.isRefreshing = false` 导致下拉刷新永久转圈的问题
+### v1.10.3 (versionCode 132) — 全局架构、冷启动与稳定性深度重构 (2026-09)
 
-#### 更新检查流程优化
-- 更新检查从 `HomeCenterApp.onCreate` 移至 `SplashActivity` 预加载阶段，与仪表盘预取并行执行
-- APK 下载断点续传增强：失败后自动重试 3 次（立即 → 5s → 15s），每次从 `.part` 文件断点继续，中断后自动重连
+#### 性能与冷启动优化
+- **开屏协程无阻预加载**：彻底移除 `SplashActivity` 中的 `runBlocking` 与 `postDelayed`，改用 `lifecycleScope.launch` 纯协程并行调度（保证品牌动画 900ms 与后台预加载 2000ms 熔断并存），开屏动画主线程 0 冻结帧。
+- **冷启动局域网路径持久化**：`BaseUrlResolver` 新增 `KEY_LAST_RESOLVED_URL` 本地持久化，冷启动在家庭 Wi-Fi 下直连 NAS（~10ms），彻底消除启动初始阶段盲目向远程隧道发请求的延迟。
+- **首屏网络状态全量预取**：开屏预加载阶段并行拉取 `network.status` 写入 `CacheManager`，首页 Dashboard 网络质量卡片首帧秒画。
+- **主界面 Tab 页面按需懒加载**：`MainActivity` 废除 5 个 Fragment 在冷启动瞬间强行全量初始化的反模式，改为首次导航时延迟挂载，直接削减冷启动时多余的日志 WebSocket 长连接和全量用户列表网络并发。
+- **Camera 列表 Compose 树复用**：`CameraViewHolder` 在 `init` 中单次挂载 Compose 树，通过 `currentCamera` 状态驱动局部刷新，消除列表滚动 GC 停顿与掉帧；增加 `lastAnimatedPosition` 优化入场动画防抖。
 
-#### 用户列表调整
-- 用户 tab 元信息行用"用户 ID"替换"设备数"显示
+#### 网络与连接稳定性加固
+- **WebSocket 自动重连锁死修复**：修复 `disconnect()` 导致 `shouldReconnect` 永久为 false 的严重缺陷，确保网络重连恢复正常，并在连接关闭时安全置空引用。
+- **局域网与国产 ROM 离线误拦截优化**：`NetworkMonitor` 放宽强依赖 `NET_CAPABILITY_VALIDATED` 的策略，在家庭局域网（有 Wi-Fi/以太网连接）但无公网 Internet 或 Google 探测受阻时，依然允许内网请求。
+- **Token 换票并发风暴锁**：`TokenManager` 加并发互斥锁与 5s 双重检查缓存，杜绝并发 401 触发多次重复绑定请求。
+- **天气接口统一**：天气接口统一纳入 Retrofit 声明与 Repository 协程调用，消除裸 OkHttp 阻塞代码。
 
-### v1.7.24 — 日志核查修复 + 审计日志扩展 (2026-08-12)
+### v1.10.2 — 新用户密码认证模式 (2026-09)
+- 支持手动密码创建新用户，替代纯随机 AccessKey 模式。
+- 登录界面表单标签适配密码输入。
 
-#### 日志核查按钮修复
-- 修复"核查"按钮无效 bug：原来仅在内存中标记已核查，刷新后失效；现在点击后调用 `DELETE /api/v1/system/logs/:id` 从服务端删除日志条目，并从列表实时移除
-- 新增 `pendingDeleteIds` 防重复点击机制：跟踪删除中的日志 ID，避免重复 API 调用
-- `ServiceLogAdapter` 新增 `onVerifyDelete` 回调接口，`ServiceLogsFragment.verifyAndDeleteLog` 负责调用 API 并更新 UI
+### v1.10.1 — ViewModel 数据流收拢 (2026-09)
+- 重构 `DashboardViewModel` 与 `CamerasViewModel`，将 Dashboard 轮询数据与报警分页状态统一收拢到 ViewModel，避免横竖屏与生命周期导致数据丢失。
 
-#### 审计日志扩展（配合服务端 v1.8.20）
-- 用户登录 / 登出事件重新纳入日志记录
-- 新增用户创建 / 更新 / 删除事件记录（管理员操作审计）
-- 新增摄像头删除事件记录
-- 日志消息使用中文人类可读格式（如"管理员 admin 创建用户 alice"、"用户 admin 登录（设备 我的手机）"）
-
-### v1.7.23 — 对话框液态玻璃风格 (2026-08-12)
-
-#### 液态玻璃对话框
-- 新增 `bg_dialog_glass.xml`：26dp 圆角磨砂玻璃对话框背景（暖色边框 + 顶部折射高光 + 柔和阴影），颜色通过 `@color/glass_*` 自动适配暗色模式
-- 新增 `dialog_glass_in` / `dialog_glass_out` 动画：对话框淡入 + 轻微缩放进入 / 溶解退出，替代生硬弹出
-- `themes.xml` 新增 `GlassDialogAnimation` 窗口动画样式，明 / 暗主题均接入 `android:windowAnimationStyle`
-- 全部对话框应用玻璃风格：报警快照、报警列表、录像回放、注册设备、更新提示
-- 列表项（报警 / 设备 / 用户）与卡片背景同步微调，与液态玻璃暖色主题一致
-
-### v1.7.22 — APK 下载断点续传 (2026-08-12)
-
-#### 断点续传
-- `ApkInstaller.downloadOnly` 改用 `.part` 文件 + HTTP `Range` 请求实现断点续传
-- 弱网下载失败后，下次重试从已下载位置继续，而非从头开始
-- `HomeCenterApi.downloadLatestApk` 新增可选 `Range` 头参数，返回 `Response<ResponseBody>` 以区分 200（完整下载）/ 206（续传）
-- 下载完成后校验文件大小，`rename .part → 最终文件名`（原子操作）
-- 处理 416 Range Not Satisfiable：删除过期 `.part` 文件，下次完整重下
-- 进度回调正确反映续传起始百分比（如从 60% 开始继续）
-- 服务端无需修改（Go `http.ServeFile` 已原生支持 Range 请求）
-
-### v1.7.21 — 预加载并行化与开屏时间利用 (2026-08-11)
-
-#### WebRTC + HLS/MP4 并行预 prepare
-- `CameraDetailActivity` 新增 `fallbackPlayer` 字段和 `prepareFallbackPlayer` 方法
-- 启动 WebRTC 协商时同时创建 ExoPlayer 并 `prepare` HLS/MP4 source（`playWhenReady=false`）
-- WebRTC `onConnected`：释放 `fallbackPlayer`（成功无需 fallback）
-- WebRTC `onError`：将 `fallbackPlayer` 提升为主 player 并立即播放，省去构建+prepare 延迟
-- fallback 切换延迟从 500ms-2s 降至 ~100-300ms
-- 生命周期管理：`releaseExoPlayerOnly` 同时释放 `fallbackPlayer`，无 MediaCodec 泄漏
-
-#### 开屏期间预取首屏数据
-- `SplashActivity` 已登录路径并行预取 `system.status` / `weather` / `alerts` / `cameras.list`
-- 数据写入 `CacheManager`，key 与 `DashboardFragment` 实际读取一致
-- `routeToNext` 等待条件改为 `max(900ms 动画, +1100ms 预取等待)`，总 2000ms 超时兜底
-- 未登录路径保持原 900ms 固定，不触发预取
-
-### v1.7.20 — 全链路预加载清理 + 冗余修复 (2026-08-11)
-
-#### 死代码移除
-- 移除 `takeWarmWebRtcClient()`（v1.6.10 遗留兼容 API，零调用点）
-- 移除 `BaseUrlResolver.switchTo()`（v1.6.26 遗留，`probeSync` 已改用 `applyResolved`）
-- 移除 `PrefetchManager.cancelPending()`（零调用点）
-
-#### 修复
-- 接入 `tryAutoRefreshToken()` 到 `HomeCenterApp.onCreate`（v1.8.15 编写但从未调用，现为每月 JWT 静默刷新接入启动流程）
-- 移除 `CameraDetailActivity.onCreate` 中的 `preheatCamera` 冗余调用（`CamerasFragment` 已在 <100ms 前触发）
-- 给 `prefetchIceConfig` 加 `AtomicBoolean` 锁，防止首次启动多入口并发 2 次 GET
-
-#### 文档
-- 更新 `ARCHITECTURE.md` 第 4.6 节：移除已废弃的 `dynamicIpv6Url`/`tokenProvider`/`fetchDynamicIpv6Url` 描述，改为 v1.7.19 DDNS 域名方案
-
-### v1.7.19 — 网络探测快速路径先行 + 开屏动画 (2026-08-11)
-
-#### 性能优化
-- **网络探测快速路径先行**：LAN/IPv6 探测完成且存活即立即切换，取消仍在等待的 Tunnel 探测，不再为等 Tunnel（~1.4s）而延迟切换
-- 典型场景提速：家庭网络 ~1.4s → ~50ms；蜂窝 IPv6 ~1.4s → ~200ms
-- 仅当两条直连路径（LAN + IPv6）都不可用时，才等待 Tunnel 作为兜底
-
-#### 重构
-- 移除 `/api/v1/network/ipv6` 冗余调用：`IPV6_DIRECT_URL` 已使用 DDNS 域名（`nas.feiyemomo.top`），AAAA 记录由 DDNS 提供商自动跟踪前缀轮换，无需再调后端接口验证
-- 删除 `fetchDynamicIpv6Url` 函数、`dynamicIpv6Url` 变量、`tokenProvider` 注入及相关后台刷新线程
-
-#### UI
-- 新增开屏动画（`SplashActivity`）：品牌入场动画，根据登录状态路由到 `MainActivity` 或 `LoginActivity`
-- 冷启动背景改为暖色渐变 + 居中 logo，消除渲染前的黑/白闪屏
-- Tab 切换动画由淡入淡出改为滑动过渡
-
-#### 修复
-- 修复首页"最近报警"卡片"全部"按钮跳转位置错误：原跳转到服务日志 tab（不含报警数据），改为跳转到摄像头 tab 的"全部报警"分区
-- 摄像头 tab 新增"全部报警"分区
-
-### v1.7.17 — 主题切换 CancellationException 修复 (2026-08-02)
-
-#### 修复
-- **主题切换闪退**：Activity 重建时取消所有 Fragment `lifecycleScope` 协程，`CancellationException` 被通用 `catch (e: Exception)` 捕获并显示为"job was cancelled"
-- **ViewBinding 空指针**：`catch`/`finally` 块在 `onDestroyView` 后访问已销毁的 binding 导致 NPE
-- **Fragment 重复添加**：`setupFragments()` 无条件调用 `add()` 导致已恢复的 Fragment 抛出 `IllegalStateException`
-
-#### 修复方式
-- 所有 6 个 Fragment 添加 `catch (e: CancellationException) { throw e }` 在通用 Exception 捕获之前
-- 所有 `catch`/`finally` 块添加 `view != null` 检查
-- `setupFragments()` 仅在 `savedInstanceState == null` 时添加 Fragment
-
-### v1.7.15 — 主题切换 Gradient 角度修复 (2026-08-02)
-
-#### 修复
-- 5 个 drawable 文件中 `angle="-90"` 导致 Android 崩溃（要求非负 45 的倍数），改为 `angle="270"`
-- 补全暗色主题 Missing Material3 颜色属性（`colorSurface`, `colorOnSurface`, `colorSurfaceVariant`, `colorOnSurfaceVariant`, `colorOutline`）
-
-### v1.7.14 — 液态玻璃暖色风格升级 (2026-08-02)
-
-#### 新增
-- **颜色系统**：主色从珊瑚橙改为暖琥珀色（`colors.xml` 明暗双模式）
-- **玻璃效果**：软阴影 + 顶部高光 drawable（`bg_glass_card.xml`, `bg_button_primary.xml` 等）
-- **组件更新**：主按钮暖色渐变、CameraCard Compose 暗色模式适配、底部导航玻璃样式
-- 14 个文件修改（+341/-188 行）
-
-### v1.6.36 — 服务日志系统 + 摄像头预热 (2026-07-31)
-
-#### 新增
-- **服务日志 Tab**：`SystemLog` 模型，显示后端事件日志（设备/摄像头上下线）
-- **摄像头当前状态显示**：日志列表中每条 `camera.*` 日志显示"当前状态：在线/离线"副标题
-- **Dashboard 最近日志卡片**：显示最近 5 条服务日志，WebSocket 实时更新
-
-#### 修复
-- **心跳误判为设备上线**：`SetOnline()`/`SetOffline()` 缺少转换守卫，每次 WebSocket 重连都发布重复事件
-- **MQTT 心跳冗余日志**：`handleStatus()` 尾部无条件重发 `device.status` 事件
-
-#### 优化
-- **日志分级**：`SystemLog` 新增 `Level` 字段（critical/normal/info），图标着色
-- **ICE 配置预取提前**：从 `DashboardFragment.onResume` 提前到 `HomeCenterApp.onCreate`
-
-### v1.6.33 — DDNS 域名统一识别 (2026-07-30)
-
-#### 修复
-- **`fetchDynamicIpv6Url()` 返回字面量 URL**：改为返回 `IPV6_DIRECT_URL`（DDNS 域名），DDNS 提供商自动跟踪前缀轮换
-
-### v1.6.30 — Android 网络策略同步 (2026-07-30)
-
-#### 修复
-- **`BaseUrlResolver` IPv6 回退地址陈旧**：更新为当前 ISP 前缀
-- **Dashboard 首次网络状态缓存**：首次调用传 `refresh=true` 强制后端刷新
-
-### v1.6.29 — 延迟显示修复 (2026-07-22)
-
-#### 修复
-- Dashboard 网络质量卡片显示值从 ~500ms 降到 ~250ms
-- `updateRttFromApiCall()` 让真实 API 调用 RTT 写回显示值
-- `probeSync()` 在 probe 前先 warmup 当前 resolved URL
-- ConnectionPool keep-alive 5 分钟 → 10 分钟
-
-### v1.6.28 — IPv6 直连延迟优化 (2026-07-22)
-
-#### 优化
-- **OkHttp ConnectionPool**：显式配置 `.connectionPool(ConnectionPool(5, 5, TimeUnit.MINUTES))`
-- **warmupConnection**：`probeSync()` 检测到 URL 变化时通过 `HEAD` 请求预建 TCP 连接
-
-### v1.6.27 — 动态 IPv6 地址获取 (2026-07-22)
-
-#### 新增
-- **`fetchDynamicIpv6Url()`**：从后端 `/api/v1/network/ipv6` 动态获取 NAS IPv6 地址
-- **`tokenProvider`**：late-binding lambda 注入 JWT，登录后立即生效
-
-### v1.6.24 — Tunnel 路径尝试 WebRTC + HLS 延迟提示 (2026-07-21)
-
-#### 变更
-- **WebRTC 在所有路径尝试**：不再在调用 `startWebRtcStream()` 前检查 `isDirectPath()`
-- **HLS 延迟提示**：HLS 激活时显示"网络质量差，延迟较大"提示
-
-### v1.6.7 — Chip 合并 + 进度条并集 + 移除浅灰背景 (2026-07-19)
-
-#### 优化
-- **Chip ⋯ 合并**：连续 LOW-tier chip 折叠为"⋯"字符
-- **进度条区间并集**：连续同 tier 且 gap ≤ 30s 的 range 合并
-- **移除浅灰背景**：motionChipScroller 背景透明
-- **btnBack 提高对比度**：filled pill 样式
+### v1.10.0 — 凭据管理器抽取与 401 响应重构 (2026-09)
+- 独立提取 `TokenManager`，统一处理月度自动续订与 401 重新换票。
+- 修复换票失败时响应体被过早消费导致下游崩溃的问题。
 
 ---
 

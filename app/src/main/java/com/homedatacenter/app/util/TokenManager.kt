@@ -55,15 +55,25 @@ class TokenManager(
         null
     }
 
+    private val refreshLock = Any()
+
     /**
      * Refresh + persist: on success stores the new token and bumps
      * lastTokenRefreshTime. Returns the new token, or null.
+     *
+     * Synchronized with double-checked caching: prevents multiple concurrent
+     * 401s from spamming /api/v1/auth/bind with redundant re-bind calls.
      */
-    fun refreshAndPersist(userId: Long, accessKey: String): String? {
+    fun refreshAndPersist(userId: Long, accessKey: String): String? = synchronized(refreshLock) {
+        val now = System.currentTimeMillis()
+        val currentToken = prefsManager.token
+        if (!currentToken.isNullOrEmpty() && (now - prefsManager.lastTokenRefreshTime) < 5_000L) {
+            return currentToken
+        }
         val newToken = refreshToken(userId, accessKey) ?: return null
         prefsManager.token = newToken
         prefsManager.lastTokenRefreshTime = System.currentTimeMillis()
-        return newToken
+        newToken
     }
 
     // --- Monthly silent refresh (moved from AppContainer, v1.8.15) ---

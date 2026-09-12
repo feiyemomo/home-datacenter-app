@@ -1024,6 +1024,113 @@ Kotlin 的块注释**支持嵌套**。KDoc 注释里出现 `/api/*` 这样的文
 
 ---
 
+## 23. WebSocket `disconnect()` 导致重连标志永久失效与连接悬空
+
+### 症状
+
+App 经历过前后台切换或主动断开后，后续通过 `connect()` 重新连上；然而只要网络稍有波动或服务端重启，WebSocket 永远无法自动重连，日志流与实时报警静默断流。
+
+### 根因
+
+1. `disconnect()` 中将 `@Volatile var shouldReconnect` 设为了 `false`。但在 `connect()` 方法中，从未将其重置为 `true`。只要外部调用过一次 `disconnect()`，后续调用 `connect()` 后，遇到掉线时 `scheduleReconnect()` 里的 `if (!shouldReconnect) return` 就会直接退出。
+2. 在 `onClosed()` 回调中，没有将 `webSocket` 置为 `null`（`onFailure` 中有置空）。连接正常关闭后外部再次触发 `connect()`，会因为 `if (webSocket != null) return` 导致无法发起新握手。
+
+### 修复
+
+- 在 `connect()` 入口第一行显式恢复 `shouldReconnect = true`。
+- 在 `onClosed()` 回调中增加 `this@HomeCenterWebSocket.webSocket = null`。
+
+### 预防
+
+- 任何有“启用/禁用”标志位的重连状态机，在显式 `connect()` 启动入口必须保证标志位被正确复位。
+- 所有非活动状态（Closed / Error / Destroyed）都必须保证旧连接实例引用彻底清理，避免残留引用阻断下一次连接。
+
+---
+
+## 24. `NetworkMonitor` 强依赖 `NET_CAPABILITY_VALIDATED` 导致家庭离线局域网误拦截
+
+### 症状
+
+在断开外网宽带但内网 NAS 正常的家庭环境中，或者在部分国内定制系统（小米/vivo/OPPO）对 Google Captive Portal 连通性探测超时/受阻的场景下，App 提示“离线”，`CamerasViewModel` 和 `DashboardFragment` 坚决拒绝发起任何网络请求。
+
+### 根因
+
+`NetworkMonitor` 将网络可用性强行绑定为 `hasInternet && validated`。在纯内网或网络校验受阻的环境中，`NET_CAPABILITY_VALIDATED` 为 `false`，导致依赖 `isOnlineNow()` 的所有功能被提前 return 拦截。
+
+### 修复
+
+重构为 `isNetworkCapable(capabilities)`：
+只要具备 `TRANSPORT_WIFI` 或 `TRANSPORT_ETHERNET` 传输（本地局域网连通），或者具备基础 Internet 路由能力，即判定网络可用，放宽对 Google 验证结果的绝对依赖。
+
+### 预防
+
+- 涉及局域网/NAS/IoT 通信的应用，网络监听不能简单照搬公网 App 的 `VALIDATED` 检查，必须为局域网传输提供离线豁免路径。
+
+---
+
+## 25. 底部导航栏 Fragment 饥饿式预初始化导致冷启动内存与网络风暴
+
+### 症状
+
+App 冷启动慢，首屏渲染时产生大量线程竞争与网络请求；非管理员用户也会在后台被创建管理员 Tab，甚至建立日志 WebSocket 连接。
+
+### 根因
+
+`MainActivity.setupFragments()` 一次性把全部 5 个 Tab（Dashboard, Cameras, Logs, Users, Settings）全部 `add()` 进布局（除 Dashboard 外全设为 `hide`）。这导致所有 Fragment 的 `onViewCreated` 都在冷启动瞬间执行，`ServiceLogsFragment` 立即建立了第 2 个 WebSocket 并请求 50 条日志，`UsersFragment` 立即发起用户列表查询。
+
+### 修复
+
+主界面改造为**按需懒加载**：
+冷启动仅挂载默认的首屏 `DashboardFragment`；其余 Tab 仅在用户首次点击导航切换时通过 `showFragmentByTag` 按需延迟实例化与挂载，已创建页面复用 `show/hide`。
+
+### 预防
+
+- 移动端底部导航栏切忌无脑在 Activity 启动时 `add` 全量 Fragment。非首屏组件必须按需延迟初始化，尤其是自带独立长连接或自启动轮询的重度 Fragment。
+
+---
+
+## 26. RecyclerView 中 Jetpack Compose `setContent` 频繁销毁重建引发滑动掉帧
+
+### 症状
+
+摄像头列表（`CameraAdapter`）快速滚动时明显卡顿、丢帧，伴随频繁的 GC 停顿。
+
+### 根因
+
+在 `onBindViewHolder` 中直接调用 `binding.composeView.setContent { CameraCard(...) }`。RecyclerView 每次复用或轻微滑动都会导致整个 Compose 子树被彻底销毁并重新生成，产生严重的 CPU 与内存开销。
+
+### 修复
+
+- 在 `CameraViewHolder.init` 中仅调用一次 `setContent` 构建 Composition 树，设置 `ViewCompositionStrategy.DisposeOnDetachedFromWindowOrReleasedFromPool`。
+- 在 Compose 中读取 `mutableStateOf` 驱动的 `currentCamera` 状态。
+- `onBindViewHolder` 仅更新状态对象，由 Compose 局部重组完成卡片渲染；并优化入场动画，记录 `lastAnimatedPosition` 避免上下滚动重复闪烁。
+
+### 预防
+
+- RecyclerView 与 Compose 混编时，**绝不能在 `onBindViewHolder` 中调用 `setContent`**！必须在 ViewHolder `init` 中单次挂载，绑定期仅更新 State。
+
+---
+
+## 27. 401 拦截器并发换票导致 Token 刷新风暴 (Token Stampede)
+
+### 症状
+
+当 JWT 过期后，App 开屏并发发起的多个请求（天气、系统状态、网络质量）同时返回 401，导致 OkHttp 拦截器瞬间向服务端发起多个 `/api/v1/auth/bind` 换票请求。
+
+### 根因
+
+`TokenManager.refreshAndPersist` 没有并发互斥控制，多个工作线程在同一毫秒内同时尝试换票。
+
+### 修复
+
+在 `refreshAndPersist` 中加入同步互斥锁与 5 秒双重检查窗口（Double-Checked Locking）。第一个并发请求拿到锁并执行换票，后续并发线程等待后直接复用刚刚获取的最新 Token。
+
+### 预防
+
+- 任何网络层 401 自动重试与换票逻辑，必须做并发合并（Single-Flight / Mutex）与缓存复用，避免产生惊群效应。
+
+---
+
 ## 总结：通用原则
 
 1. **Material 2 / 3 不能混用** — 主题 parent 和组件父样式必须对齐
@@ -1043,3 +1150,9 @@ Kotlin 的块注释**支持嵌套**。KDoc 注释里出现 `/api/*` 这样的文
 15. **ExoPlayer 与 Compose `AndroidView` 的 surface 时序有 race** — `StyledPlayerView` 静态声明 + `playerView.player` 在 `prepare()` 之前设置
 16. **国产 ROM 可能拦截 OkHttp cleartext** — `usesCleartextTraffic=true` 不是万金油，HTTP 探测失败时用 raw TCP socket 兜底
 17. **KDoc 块注释里的 `/*` 会触发嵌套解析** — URL 路径 `/api/*` 改写为 `/api/ prefix`，行注释不受影响
+18. **状态机重连标志与资源清理对称性** — `disconnect()` 与 `connect()` 对称维护 `shouldReconnect`，连接关闭必须释放句柄引用
+19. **本地局域网网络判定需支持离线豁免** — 不能对内网通信强依赖公网 `NET_CAPABILITY_VALIDATED`
+20. **主容器 Fragment 必须懒加载** — 避免在启动阶段全量初始化并建立无谓的长连接和大数据量网络请求
+21. **Compose 在 RecyclerView 中禁止重复 `setContent`** — 单次挂载 + State 驱动局部重组
+22. **网络拦截器 401 换票必须互斥防惊群** — 使用 Mutex/锁与双重检查窗口合并并发重放
+

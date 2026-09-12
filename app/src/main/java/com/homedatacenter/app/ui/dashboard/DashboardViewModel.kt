@@ -90,20 +90,7 @@ class DashboardViewModel(
             _weatherLoading.value = true
             _weatherFailed.value = false
             try {
-                val base = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
-                val url = base + "api/v1/weather"
-                val req = Request.Builder().url(url).apply {
-                    addHeader("Authorization", "Bearer $token")
-                }.build()
-                val jsonStr = withContext(Dispatchers.IO) {
-                    okHttpClient.newCall(req).execute().use { resp ->
-                        if (!resp.isSuccessful) throw RuntimeException("HTTP ${resp.code}")
-                        resp.body?.string() ?: throw RuntimeException("empty body")
-                    }
-                }
-                val apiResp = NetworkFactory.json.decodeFromString(
-                    ApiResponse.serializer(), jsonStr)
-                val weather = apiResp.decodeData<WeatherResponse>()
+                val weather = repository.getWeather(token)
                     ?: throw RuntimeException("empty weather data")
                 _weather.value = weather
                 CacheManager.getInstance(app).set("dashboard.weather", weather)

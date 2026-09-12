@@ -5,13 +5,12 @@ import android.os.Bundle
 import android.util.Log
 import android.view.animation.OvershootInterpolator
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
 import com.homedatacenter.app.BuildConfig
 import com.homedatacenter.app.HomeCenterApp
 import com.homedatacenter.app.R
-import com.homedatacenter.app.data.api.NetworkFactory
 import com.homedatacenter.app.data.model.ApiResponse
 import com.homedatacenter.app.data.model.AlertListData
-import com.homedatacenter.app.data.model.WeatherResponse
 import com.homedatacenter.app.databinding.ActivitySplashBinding
 import com.homedatacenter.app.di.AppContainer
 import com.homedatacenter.app.ui.login.LoginActivity
@@ -22,9 +21,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
@@ -36,13 +35,13 @@ import kotlinx.coroutines.withTimeoutOrNull
  * (splash_background.xml) so there is no white/black flash.
  *
  * For logged-in users we also kick off a parallel prefetch of the
- * Dashboard first-screen data (system status, weather, recent
- * alerts, camera list) so that by the time the user lands on the
- * Dashboard the cache is already warm. [routeToNext] waits up to
- * [MAX_SPLASH_MS] (2000ms) total — i.e. at most 1100ms after the
- * 900ms animation finishes — for the prefetch jobs to complete,
- * then routes regardless. Data that didn't make it in time will
- * be loaded normally by the fragment's own fallback path.
+ * Dashboard first-screen data (system status, weather, network status,
+ * recent alerts, camera list) so that by the time the user lands on the
+ * Dashboard the cache is already warm. Non-blocking coroutine orchestration
+ * waits for the entrance animation (900ms minimum) and prefetch jobs
+ * (up to [MAX_SPLASH_MS] 2000ms hard cap) without blocking the main UI thread.
+ * Data that didn't make it in time will be loaded normally by the fragment's
+ * own fallback path.
  *
  * Logged-out users skip prefetch entirely and keep the original
  * 900ms fixed delay.
@@ -79,20 +78,34 @@ class SplashActivity : AppCompatActivity() {
         playLogoEntrance()
 
         // Kick off prefetch as early as possible so it overlaps with
-        // the 500ms entrance animation + the 900ms postDelayed hold.
+        // the 500ms entrance animation + brand hold window.
         // The fetcher coroutines write directly to CacheManager; we
-        // collect their Jobs so routeToNext can await them.
+        // collect their Jobs so the orchestrator can await them.
         val container = (application as HomeCenterApp).container
         val token = container.prefsManager.token
-        if (container.prefsManager.isLoggedIn() && !token.isNullOrEmpty()) {
-            prefetchJobs = startDashboardPrefetch(container, token)
+        val isLoggedIn = container.prefsManager.isLoggedIn() && !token.isNullOrEmpty()
+        if (isLoggedIn) {
+            prefetchJobs = startDashboardPrefetch(container, token!!)
         }
 
-        // Keep the splash on screen for the full entrance + a short
-        // hold, then hand off. postDelayed keeps onCreate non-blocking.
-        // routeToNext additionally waits for prefetch (up to MAX_SPLASH_MS
-        // total) when the user is logged in.
-        binding.root.postDelayed({ routeToNext() }, SPLASH_DURATION_MS)
+        // v1.10.1: Non-blocking splash orchestration via lifecycleScope.
+        // Replaces the previous postDelayed + runBlocking pattern which
+        // could freeze the main looper for up to 1100ms.
+        //
+        // 1. minHoldJob: ensures brand animation stays visible for at least
+        //    SPLASH_DURATION_MS (900ms).
+        // 2. prefetchWait: awaits prefetchJobs up to MAX_SPLASH_MS (2000ms).
+        // 3. Joins both without blocking the Android UI thread.
+        lifecycleScope.launch {
+            val minHoldJob = launch { delay(SPLASH_DURATION_MS) }
+            if (isLoggedIn && prefetchJobs.isNotEmpty()) {
+                withTimeoutOrNull(MAX_SPLASH_MS) {
+                    prefetchJobs.joinAll()
+                }
+            }
+            minHoldJob.join()
+            routeToNext()
+        }
     }
 
     /** Fade the logo in while scaling it from 90% to 100% (500ms pop). */
@@ -120,13 +133,14 @@ class SplashActivity : AppCompatActivity() {
      * Cache keys (must match DashboardFragment exactly):
      *  - "dashboard.status"  → SystemStatus
      *  - "dashboard.weather" → WeatherResponse
+     *  - "network.status"    → NetworkStatus
      *  - "dashboard.alerts"  → List<Alert>
      *  - "cameras.list"      → List<Camera>  (consumed by CamerasFragment's prefetch path)
      *
      * Each coroutine catches its own exceptions — one failed fetch
      * must not cancel the others (SupervisorJob + per-job try/catch).
      *
-     * @return list of Jobs (one per prefetch) for [routeToNext] to await.
+     * @return list of Jobs (one per prefetch) for the orchestrator to await.
      */
     private fun startDashboardPrefetch(
         container: AppContainer,
@@ -135,9 +149,6 @@ class SplashActivity : AppCompatActivity() {
         val repository = container.getRepository()
         val api = container.getApi()
         val cacheManager = CacheManager.getInstance(this)
-        val okHttpClient = container.okHttpClient
-        val baseUrl = container.getApiBaseUrl()
-        val base = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
         val bearer = "Bearer $token"
 
         return listOf(
@@ -151,31 +162,23 @@ class SplashActivity : AppCompatActivity() {
                 }
             },
             prefetchScope.launch {
-                // Weather endpoint wraps wttr.in's response in our
-                // standard { code, message, data } envelope. Mirrors
-                // DashboardFragment.loadWeather — there is no
-                // repository helper for this, so we call it directly.
                 try {
-                    val url = "${base}api/v1/weather"
-                    val req = okhttp3.Request.Builder().url(url)
-                        .addHeader("Authorization", bearer)
-                        .build()
-                    val jsonStr = okHttpClient.newCall(req).execute().use { resp ->
-                        if (!resp.isSuccessful) {
-                            throw RuntimeException("HTTP ${resp.code}")
-                        }
-                        resp.body?.string() ?: throw RuntimeException("empty body")
-                    }
-                    val apiResp = NetworkFactory.json.decodeFromString(
-                        ApiResponse.serializer(), jsonStr
-                    )
-                    val weather = apiResp.decodeData<WeatherResponse>()
+                    val weather = repository.getWeather(token)
                     if (weather != null) {
                         cacheManager.set("dashboard.weather", weather)
                         Log.d(TAG, "Prefetched dashboard.weather")
                     }
                 } catch (e: Exception) {
                     Log.w(TAG, "Prefetch dashboard.weather failed: ${e.message}")
+                }
+            },
+            prefetchScope.launch {
+                try {
+                    val netStatus = repository.getNetworkStatus(token, refresh = false)
+                    cacheManager.set("network.status", netStatus)
+                    Log.d(TAG, "Prefetched network.status")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Prefetch network.status failed: ${e.message}")
                 }
             },
             prefetchScope.launch {
@@ -197,19 +200,12 @@ class SplashActivity : AppCompatActivity() {
                     val cameras = repository.listCameras(token, useCache = true)
                     cacheManager.set("cameras.list", cameras)
                     Log.d(TAG, "Prefetched cameras.list (${cameras.size})")
-                    // v1.9.x: warm the backend (go2rtc/RTSP) streams during
-                    // splash so the first WebRTC/MP4 request doesn't pay
-                    // the 1-10s cold-start. Fire-and-forget — launched on
-                    // fresh child jobs so routeToNext's joinAll() never
-                    // blocks on them. go2rtc releases idle producers after
-                    // ~30s (#stop=30), so idle cameras cost nothing
-                    // long-term. Only online cameras are warmed; offline
-                    // ones can't connect and preheat is best-effort anyway.
-                    for (cam in cameras) {
-                        if (cam.isOnline) {
-                            prefetchScope.launch {
-                                repository.preheatCamera(token, cam.id)
-                            }
+                    // v1.10.1: warm top 3 online cameras to avoid connection pool starvation.
+                    // Fire-and-forget — launched on fresh child jobs so joinAll()
+                    // never blocks on them.
+                    for (cam in cameras.filter { it.isOnline }.take(3)) {
+                        prefetchScope.launch {
+                            repository.preheatCamera(token, cam.id)
                         }
                     }
                 } catch (e: Exception) {
@@ -217,11 +213,7 @@ class SplashActivity : AppCompatActivity() {
                 }
             },
             // v1.8.21: check for app updates in parallel with the
-            // dashboard prefetch. Previously this ran in
-            // HomeCenterApp.onCreate before the splash even rendered.
-            // Moving it here means it overlaps with the splash
-            // animation + prefetch window, and the APK download
-            // starts as soon as the splash hands off to MainActivity.
+            // dashboard prefetch.
             prefetchScope.launch {
                 try {
                     container.checkUpdateOnStartup()
@@ -238,28 +230,6 @@ class SplashActivity : AppCompatActivity() {
         navigated = true
 
         val container = (application as HomeCenterApp).container
-
-        // Wait for prefetch to complete (logged-in path only).
-        // The postDelayed callback fires after SPLASH_DURATION_MS (900ms),
-        // which already overlaps with the prefetch window. We then wait
-        // up to (MAX_SPLASH_MS - SPLASH_DURATION_MS) = 1100ms more for
-        // the prefetch Deferreds to settle. If they don't finish in time
-        // we route anyway — partial cache is better than blocking entry,
-        // and the Dashboard fragment will fetch the missing pieces itself.
-        //
-        // runBlocking here is intentional: the postDelayed callback is
-        // already running on the main thread and we want to gate routing
-        // on the prefetch result. The wait is bounded by withTimeoutOrNull
-        // so the main thread is never blocked for more than ~1100ms.
-        val deferreds = prefetchJobs
-        if (container.prefsManager.isLoggedIn() && deferreds.isNotEmpty()) {
-            runBlocking {
-                withTimeoutOrNull(MAX_SPLASH_MS - SPLASH_DURATION_MS) {
-                    deferreds.joinAll()
-                }
-            }
-        }
-
         val target = if (container.prefsManager.isLoggedIn()) {
             Intent(this, MainActivity::class.java)
         } else {

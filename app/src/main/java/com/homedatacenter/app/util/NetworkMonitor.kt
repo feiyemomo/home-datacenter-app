@@ -55,14 +55,8 @@ class NetworkMonitor private constructor(context: Context) {
             network: Network,
             capabilities: NetworkCapabilities
         ) {
-            val hasInternet = capabilities.hasCapability(
-                NetworkCapabilities.NET_CAPABILITY_INTERNET
-            )
-            val validated = capabilities.hasCapability(
-                NetworkCapabilities.NET_CAPABILITY_VALIDATED
-            )
-            val online = hasInternet && validated
-            Log.d(TAG, "onCapabilitiesChanged: internet=$hasInternet validated=$validated")
+            val online = isNetworkCapable(capabilities)
+            Log.d(TAG, "onCapabilitiesChanged: online=$online validated=${capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)}")
             _isOnline.value = online
         }
     }
@@ -108,8 +102,14 @@ class NetworkMonitor private constructor(context: Context) {
         val cm = connectivityManager ?: return true // assume online if unavailable
         val activeNetwork = cm.activeNetwork ?: return false
         val capabilities = cm.getNetworkCapabilities(activeNetwork) ?: return false
-        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-               capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        return isNetworkCapable(capabilities)
+    }
+
+    private fun isNetworkCapable(capabilities: NetworkCapabilities): Boolean {
+        val hasInternet = capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        val isLocalTransport = capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+        return hasInternet || isLocalTransport
     }
     
     companion object {

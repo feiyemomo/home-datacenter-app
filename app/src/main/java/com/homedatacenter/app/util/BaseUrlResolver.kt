@@ -186,14 +186,6 @@ class BaseUrlResolver(
             .getSharedPreferences("network_path", Context.MODE_PRIVATE)
     }
 
-    init {
-        preference = NetworkPathPreference.fromName(prefs.getString(KEY_PREF, null))
-        // v1.8.24: load user-configured custom LAN URL. If set, it
-        // overrides the hardcoded LAN_URL/LAN_HOST/LAN_PORT so the
-        // app works regardless of NAS IP changes without recompiling.
-        loadCustomLanUrl()
-    }
-
     /**
      * v1.8.24: user-configurable LAN URL. When non-null, overrides
      * the hardcoded LAN_URL. Set from SettingsFragment; persisted in
@@ -205,6 +197,23 @@ class BaseUrlResolver(
     private var effectiveLanHost: String = LAN_HOST
     @Volatile
     private var effectiveLanPort: Int = LAN_PORT
+
+    init {
+        preference = NetworkPathPreference.fromName(prefs.getString(KEY_PREF, null))
+        // v1.8.24: load user-configured custom LAN URL. If set, it
+        // overrides the hardcoded LAN_URL/LAN_HOST/LAN_PORT so the
+        // app works regardless of NAS IP changes without recompiling.
+        loadCustomLanUrl()
+        // v1.10.1: restore last successfully connected URL on cold start
+        // so SplashActivity prefetch hits the right origin immediately.
+        val lastGood = prefs.getString(KEY_LAST_RESOLVED_URL, null)
+        resolved = when (preference) {
+            NetworkPathPreference.LAN -> effectiveLanUrl
+            NetworkPathPreference.IPV6_DIRECT -> IPV6_DIRECT_URL
+            NetworkPathPreference.RELAY -> REMOTE_URL
+            NetworkPathPreference.AUTO -> if (!lastGood.isNullOrBlank()) lastGood else REMOTE_URL
+        }
+    }
 
     private fun loadCustomLanUrl() {
         val custom = prefs.getString(KEY_CUSTOM_LAN_URL, null)
@@ -693,6 +702,8 @@ class BaseUrlResolver(
         val changed = chosen != resolved
         resolved = chosen
         lastProbedAt = System.currentTimeMillis()
+        // v1.10.1: persist last known good URL for subsequent cold starts
+        prefs.edit().putString(KEY_LAST_RESOLVED_URL, chosen).apply()
         if (changed) {
             android.util.Log.i(
                 TAG,
@@ -881,6 +892,11 @@ class BaseUrlResolver(
         // hardcoded LAN_URL so the app adapts to NAS IP changes without
         // recompiling. Set/cleared from SettingsFragment.
         private const val KEY_CUSTOM_LAN_URL = "custom_lan_url"
+
+        // v1.10.1: SharedPreferences key for the last successfully resolved base URL.
+        // Persisted so cold starts immediately prefetch against the last known good
+        // path (e.g. LAN ~10ms) instead of defaulting to Cloudflare Tunnel (1.4s+).
+        private const val KEY_LAST_RESOLVED_URL = "last_resolved_url"
 
         // LAN (NAS) URL — the home network address of the backend.
         // Port 8088 is the home-datacenter nginx/web container (bound

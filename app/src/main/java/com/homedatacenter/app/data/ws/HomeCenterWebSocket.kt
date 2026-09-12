@@ -44,6 +44,7 @@ class HomeCenterWebSocket(
     private val activeSubscriptions: MutableSet<String> = LinkedHashSet()
 
     fun connect() {
+        shouldReconnect = true
         if (webSocket != null) return
 
         val request = Request.Builder()
@@ -165,6 +166,7 @@ class HomeCenterWebSocket(
             Log.i(TAG, "ws closed: $code $reason")
             isConnected = false
             stopHeartbeat()
+            this@HomeCenterWebSocket.webSocket = null
             listener.onDisconnected(code, reason)
             if (shouldReconnect) scheduleReconnect()
         }

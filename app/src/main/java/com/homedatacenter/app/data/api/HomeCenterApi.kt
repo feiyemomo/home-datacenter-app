@@ -200,8 +200,7 @@ interface HomeCenterApi {
     ): ApiResponse
 
     @GET("api/v1/weather")
-    @retrofit2.http.Streaming
-    suspend fun getWeather(@Header("Authorization") auth: String): okhttp3.ResponseBody
+    suspend fun getWeather(@Header("Authorization") auth: String): ApiResponse
 
     // --- In-app self-update (v1.6.11) ---
 

@@ -64,9 +64,14 @@ class CameraAdapter(
         return CameraViewHolder(binding)
     }
 
+    private var lastAnimatedPosition = -1
+
     override fun onBindViewHolder(holder: CameraViewHolder, position: Int) {
         holder.bind(getItem(position))
-        AnimationHelper.slideInBottom(holder.itemView, 80L)
+        if (position > lastAnimatedPosition) {
+            AnimationHelper.slideInBottom(holder.itemView, 80L)
+            lastAnimatedPosition = position
+        }
     }
 
     override fun onViewRecycled(holder: CameraViewHolder) {
@@ -88,6 +93,7 @@ class CameraAdapter(
         private var thumbnailJob: Job? = null
         private var boundCamera: Camera? = null
 
+        private var currentCamera by mutableStateOf<Camera?>(null)
         private var thumbnail by mutableStateOf<Bitmap?>(null)
         private var thumbnailLoading by mutableStateOf(false)
         private var thumbnailError by mutableStateOf(false)
@@ -96,14 +102,29 @@ class CameraAdapter(
             binding.composeView.setViewCompositionStrategy(
                 ViewCompositionStrategy.DisposeOnDetachedFromWindowOrReleasedFromPool,
             )
+            binding.composeView.setContent {
+                MaterialTheme {
+                    val cam = currentCamera
+                    if (cam != null) {
+                        CameraCard(
+                            camera = cam,
+                            thumbnail = thumbnail,
+                            thumbnailLoading = thumbnailLoading,
+                            thumbnailError = thumbnailError,
+                            onClick = { onClick(cam) },
+                        )
+                    }
+                }
+            }
         }
 
         fun bind(camera: Camera) {
             val cameraChanged = boundCamera?.id != camera.id
+            boundCamera = camera
+            currentCamera = camera
             if (cameraChanged) {
                 thumbnailJob?.cancel()
                 thumbnailError = false
-                boundCamera = camera
                 // Check cache first — if we have a cached snapshot
                 // for this camera, show it immediately and skip the
                 // HTTP fetch. This makes scroll-back instant instead
@@ -115,20 +136,6 @@ class CameraAdapter(
                 } else {
                     thumbnail = null
                     loadThumbnail(camera)
-                }
-            } else {
-                boundCamera = camera
-            }
-
-            binding.composeView.setContent {
-                MaterialTheme {
-                    CameraCard(
-                        camera = camera,
-                        thumbnail = thumbnail,
-                        thumbnailLoading = thumbnailLoading,
-                        thumbnailError = thumbnailError,
-                        onClick = { onClick(camera) },
-                    )
                 }
             }
         }
@@ -220,6 +227,7 @@ class CameraAdapter(
             thumbnailJob?.cancel()
             thumbnailJob = null
             boundCamera = null
+            currentCamera = null
             thumbnail = null
             thumbnailLoading = false
             thumbnailError = false

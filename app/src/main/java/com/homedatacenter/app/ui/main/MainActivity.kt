@@ -24,11 +24,6 @@ class MainActivity : AppCompatActivity() {
     val binding get() = _binding
     lateinit var container: AppContainer
 
-    private lateinit var dashboardFragment: Fragment
-    private lateinit var camerasFragment: Fragment
-    private lateinit var logsFragment: Fragment
-    private lateinit var settingsFragment: Fragment
-    private lateinit var usersFragment: Fragment
     private var activeFragment: Fragment? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -102,20 +97,12 @@ class MainActivity : AppCompatActivity() {
     // screen showing dashboard, until the user clicks something.
     override fun onRestoreInstanceState(savedInstanceState: Bundle) {
         super.onRestoreInstanceState(savedInstanceState)
-        val target = when (binding.bottomNav.selectedItemId) {
-            R.id.nav_cameras -> camerasFragment
-            R.id.nav_logs -> logsFragment
-            R.id.nav_users -> usersFragment
-            R.id.nav_settings -> settingsFragment
-            else -> dashboardFragment
-        }
-        if (target !== activeFragment) {
-            supportFragmentManager.commit {
-                setCustomAnimations(R.anim.fragment_slide_in_right, R.anim.fragment_slide_out_left)
-                hide(activeFragment ?: return@commit)
-                show(target)
-            }
-            activeFragment = target
+        when (binding.bottomNav.selectedItemId) {
+            R.id.nav_cameras -> showFragmentByTag(TAG_CAMERAS) { CamerasFragment() }
+            R.id.nav_logs -> showFragmentByTag(TAG_LOGS) { ServiceLogsFragment() }
+            R.id.nav_users -> showFragmentByTag(TAG_USERS) { UsersFragment() }
+            R.id.nav_settings -> showFragmentByTag(TAG_SETTINGS) { SettingsFragment() }
+            else -> showFragmentByTag(TAG_DASHBOARD) { DashboardFragment() }
         }
     }
 
@@ -137,32 +124,24 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupFragments(savedInstanceState: Bundle?) {
         val fm = supportFragmentManager
-        dashboardFragment = fm.findFragmentByTag("dashboard") ?: DashboardFragment()
-        camerasFragment = fm.findFragmentByTag("cameras") ?: CamerasFragment()
-        logsFragment = fm.findFragmentByTag("logs") ?: ServiceLogsFragment()
-        usersFragment = fm.findFragmentByTag("users") ?: UsersFragment()
-        settingsFragment = fm.findFragmentByTag("settings") ?: SettingsFragment()
-
         if (savedInstanceState == null) {
-            // First creation: add all fragments, show dashboard.
+            // First creation: only add the default DashboardFragment lazily.
+            // Other tabs will be created and added on first navigation.
+            val dashboard = DashboardFragment()
             fm.commit {
-                add(R.id.nav_host_fragment, settingsFragment, "settings").hide(settingsFragment)
-                add(R.id.nav_host_fragment, usersFragment, "users").hide(usersFragment)
-                add(R.id.nav_host_fragment, logsFragment, "logs").hide(logsFragment)
-                add(R.id.nav_host_fragment, camerasFragment, "cameras").hide(camerasFragment)
-                add(R.id.nav_host_fragment, dashboardFragment, "dashboard")
+                add(R.id.nav_host_fragment, dashboard, TAG_DASHBOARD)
             }
-            activeFragment = dashboardFragment
+            activeFragment = dashboard
         } else {
             // After recreation (e.g. theme switch), super.onCreate has
             // already restored fragment state — fragments are added and
             // their show/hide state is preserved. Do NOT call add() again
             // or it throws IllegalStateException: Fragment already added.
             // Determine the currently-visible fragment from restored state.
-            activeFragment = listOf(
-                dashboardFragment, camerasFragment, logsFragment,
-                usersFragment, settingsFragment
-            ).firstOrNull { it.isAdded && !it.isHidden } ?: dashboardFragment
+            val tags = listOf(TAG_DASHBOARD, TAG_CAMERAS, TAG_LOGS, TAG_USERS, TAG_SETTINGS)
+            activeFragment = tags.mapNotNull { fm.findFragmentByTag(it) }
+                .firstOrNull { it.isAdded && !it.isHidden }
+                ?: fm.findFragmentByTag(TAG_DASHBOARD)
         }
     }
 
@@ -176,29 +155,46 @@ class MainActivity : AppCompatActivity() {
     private fun setupNavigation() {
         binding.bottomNav.setOnItemSelectedListener { item ->
             when (item.itemId) {
-                R.id.nav_dashboard -> { showFragment(dashboardFragment); true }
-                R.id.nav_cameras -> { showFragment(camerasFragment); true }
-                R.id.nav_logs -> { showFragment(logsFragment); true }
-                R.id.nav_users -> { showFragment(usersFragment); true }
-                R.id.nav_settings -> { showFragment(settingsFragment); true }
+                R.id.nav_dashboard -> { showFragmentByTag(TAG_DASHBOARD) { DashboardFragment() }; true }
+                R.id.nav_cameras -> { showFragmentByTag(TAG_CAMERAS) { CamerasFragment() }; true }
+                R.id.nav_logs -> { showFragmentByTag(TAG_LOGS) { ServiceLogsFragment() }; true }
+                R.id.nav_users -> { showFragmentByTag(TAG_USERS) { UsersFragment() }; true }
+                R.id.nav_settings -> { showFragmentByTag(TAG_SETTINGS) { SettingsFragment() }; true }
                 else -> false
             }
         }
     }
 
-    private fun showFragment(fragment: Fragment) {
-        if (fragment === activeFragment) return
-        supportFragmentManager.commit {
+    private fun showFragmentByTag(tag: String, factory: () -> Fragment) {
+        val fm = supportFragmentManager
+        val target = fm.findFragmentByTag(tag)
+        if (target != null && target === activeFragment) return
+
+        fm.commit {
             setCustomAnimations(R.anim.fragment_slide_in_right, R.anim.fragment_slide_out_left)
-            hide(activeFragment ?: return@commit)
-            show(fragment)
+            activeFragment?.let { hide(it) }
+            if (target == null) {
+                val newFragment = factory()
+                add(R.id.nav_host_fragment, newFragment, tag)
+                activeFragment = newFragment
+            } else {
+                show(target)
+                activeFragment = target
+            }
         }
-        activeFragment = fragment
     }
 
     fun navigateToLogin() {
         val intent = Intent(this, LoginActivity::class.java)
         startActivity(intent)
         finish()
+    }
+
+    companion object {
+        private const val TAG_DASHBOARD = "dashboard"
+        private const val TAG_CAMERAS = "cameras"
+        private const val TAG_LOGS = "logs"
+        private const val TAG_USERS = "users"
+        private const val TAG_SETTINGS = "settings"
     }
 }

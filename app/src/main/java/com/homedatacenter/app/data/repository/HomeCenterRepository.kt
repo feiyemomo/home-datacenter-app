@@ -1,4 +1,4 @@
-﻿package com.homedatacenter.app.data.repository
+package com.homedatacenter.app.data.repository
 
 import com.homedatacenter.app.data.api.HomeCenterApi
 import com.homedatacenter.app.data.model.ApiException
@@ -15,6 +15,7 @@ import com.homedatacenter.app.data.model.SystemStatus
 import com.homedatacenter.app.data.model.UpdateUserRequest
 import com.homedatacenter.app.data.model.User
 import com.homedatacenter.app.data.model.UserList
+import com.homedatacenter.app.data.model.WeatherResponse
 import com.homedatacenter.app.data.api.NetworkFactory
 import com.homedatacenter.app.util.PrefsManager
 
@@ -153,6 +154,19 @@ class HomeCenterRepository(
         try {
             fetchSystemStatusFromNetwork(token)
         } catch (_: Exception) {
+        }
+    }
+
+    /**
+     * Fetch weather for the fixed dashboard location.
+     * Returns null on HTTP error or deserialization failure.
+     */
+    suspend fun getWeather(token: String): WeatherResponse? {
+        val resp = api.getWeather(bearer(token))
+        return if (resp.isSuccess) {
+            resp.decodeData<WeatherResponse>()
+        } else {
+            null
         }
     }
 
