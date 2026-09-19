@@ -92,6 +92,8 @@ class RecordingsDialog(
     // grouped list to [dayAdapter] in one shot.
     private val allRecordings = mutableListOf<Recording>()
     private var earliestDay: DayRecording? = null
+    // v1.10.7: retry counter for network stutters on clip transitions
+    private var recordingRetryCount = 0
 
     // v1.5.11: big scrub bar state for the full-day playlist mode.
     // v1.8.37: [dayTotalMs] is now the ACTUAL recording-coverage
@@ -637,6 +639,9 @@ class RecordingsDialog(
             addListener(object : Player.Listener {
                 override fun onPlaybackStateChanged(state: Int) {
                     binding.progressPlayer.visibility = if (state == Player.STATE_BUFFERING) View.VISIBLE else View.GONE
+                    if (state == Player.STATE_READY) {
+                        recordingRetryCount = 0
+                    }
                     // v1.6.0: one-shot seek-to when the user opened
                     // the dialog via an alert click. We wait for
                     // STATE_READY (the first clip has loaded) then
@@ -682,6 +687,20 @@ class RecordingsDialog(
                         playDayAsPlaylist(Calendar.getInstance().apply {
                             timeInMillis = this@RecordingsDialog.dayStartLocalMillis
                         })
+                        return
+                    }
+                    // v1.10.7: self-healing network retry for clip boundary transitions
+                    val p = player
+                    if (p != null && recordingRetryCount < 2) {
+                        recordingRetryCount++
+                        val currentWindow = p.currentMediaItemIndex
+                        val currentPos = p.currentPosition
+                        android.util.Log.w("RecordingsDialog",
+                            "Network stutter in recording, retrying at window=$currentWindow pos=$currentPos (#$recordingRetryCount)")
+                        p.seekTo(currentWindow, currentPos)
+                        p.prepare()
+                        p.play()
+                        return
                     }
                 }
             })

@@ -116,6 +116,11 @@ class CameraDetailActivity : AppCompatActivity() {
     // per activity instance (re-fetched on retry if null).
     private var cachedIceConfig: IceConfig? = null
 
+    // v1.10.7: self-healing network retry state for remote/tunnel streams
+    private var streamRetryCount = 0
+    private var streamRetryJob: kotlinx.coroutines.Job? = null
+    private val maxStreamRetries = 3
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         _binding = ActivityCameraDetailBinding.inflate(layoutInflater)
@@ -202,6 +207,7 @@ class CameraDetailActivity : AppCompatActivity() {
         // render the next keyframe as soon as the activity resumes.
         // ExoPlayer is still released because MediaCodec is a
         // scarce system resource that other apps may need.
+        streamRetryJob?.cancel()
         releaseExoPlayerOnly()
     }
 
@@ -234,6 +240,8 @@ class CameraDetailActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        streamRetryJob?.cancel()
+        streamRetryJob = null
         releaseExoPlayerOnly()
         fullscreenHelper?.release()
         recordingsDialog?.dismiss()
@@ -874,6 +882,17 @@ class CameraDetailActivity : AppCompatActivity() {
         triedMp4 = false
         triedHls = false
 
+        binding.tvVideoError.setOnClickListener {
+            val c = camera
+            if (c != null && c.isOnline) {
+                streamRetryJob?.cancel()
+                streamRetryCount = 0
+                binding.tvVideoError.visibility = View.GONE
+                binding.progressVideo.visibility = View.VISIBLE
+                setupVideo()
+            }
+        }
+
         // v1.8.14: if camera is offline, show error immediately
         // instead of attempting WebRTC/MP4/HLS which will all fail
         // and waste network requests. The user sees a clear message
@@ -1146,6 +1165,9 @@ class CameraDetailActivity : AppCompatActivity() {
                 listener = object : WebRtcClient.Listener {
                     override fun onConnected() {
                         webRtcInProgress = false
+                        streamRetryCount = 0
+                        streamRetryJob?.cancel()
+                        binding.tvVideoError.text = getString(R.string.camera_video_failed)
                         binding.progressVideo.visibility = View.GONE
                         binding.tvVideoError.visibility = View.GONE
                         // v1.6.16: hide the JPEG preview frame once the
@@ -1377,6 +1399,9 @@ class CameraDetailActivity : AppCompatActivity() {
                     binding.progressVideo.visibility =
                         if (state == Player.STATE_BUFFERING) View.VISIBLE else View.GONE
                     if (state == Player.STATE_READY) {
+                        streamRetryCount = 0
+                        streamRetryJob?.cancel()
+                        binding.tvVideoError.text = getString(R.string.camera_video_failed)
                         binding.tvVideoError.visibility = View.GONE
                         hidePreviewFrame()
                     }
@@ -1399,14 +1424,11 @@ class CameraDetailActivity : AppCompatActivity() {
                         fallbackPlayer = null
                     } else if (this@CameraDetailActivity.player === newPlayer) {
                         // Promoted to main player: fall back to the
-                        // other transport (MP4 -> HLS), or give up.
+                        // other transport (MP4 -> HLS), or trigger self-healing retry.
                         if (useMp4 && hlsUrl.isNotBlank() && !triedHls) {
                             preparePlayback(mp4Url, hlsUrl, useMp4 = false)
                         } else {
-                            releasePlayer()
-                            binding.tvVideoError.visibility = View.VISIBLE
-                            binding.progressVideo.visibility = View.GONE
-                            updateStreamStrategy(null)
+                            handleStreamPlaybackFailure()
                         }
                     }
                 }
@@ -1522,6 +1544,9 @@ class CameraDetailActivity : AppCompatActivity() {
                     binding.progressVideo.visibility =
                         if (state == Player.STATE_BUFFERING) View.VISIBLE else View.GONE
                     if (state == Player.STATE_READY) {
+                        streamRetryCount = 0
+                        streamRetryJob?.cancel()
+                        binding.tvVideoError.text = getString(R.string.camera_video_failed)
                         binding.tvVideoError.visibility = View.GONE
                         // v1.6.16: hide the JPEG preview frame once
                         // ExoPlayer has its first frame ready.
@@ -1538,16 +1563,11 @@ class CameraDetailActivity : AppCompatActivity() {
                         "Playback error (useMp4=$useMp4): ${error.message}",
                         error,
                     )
-                    // Failover: MP4 → HLS → give up.
+                    // Failover: MP4 → HLS → self-healing retry.
                     if (useMp4 && hlsUrl.isNotBlank() && !triedHls) {
                         preparePlayback(mp4Url, hlsUrl, useMp4 = false)
                     } else {
-                        releasePlayer()
-                        binding.tvVideoError.visibility = View.VISIBLE
-                        binding.progressVideo.visibility = View.GONE
-                        // v1.5.9: both transports exhausted — hide
-                        // the badge so the error message stands alone.
-                        updateStreamStrategy(null)
+                        handleStreamPlaybackFailure()
                     }
                 }
             })
@@ -1555,6 +1575,38 @@ class CameraDetailActivity : AppCompatActivity() {
         }
         player = newPlayer
         fullscreenHelper?.onPlayerChanged(newPlayer)
+    }
+
+    /**
+     * v1.10.7: self-healing retry logic when both live transports have failed.
+     * Backs off up to 3 times (2s, 4s, 6s) before permanently showing the
+     * error state, allowing temporary Cloudflare Tunnel or WiFi drops to heal
+     * automatically without requiring the user to exit and re-enter.
+     */
+    private fun handleStreamPlaybackFailure() {
+        releasePlayer()
+        val cam = camera
+        if (cam != null && cam.isOnline && streamRetryCount < maxStreamRetries) {
+            streamRetryCount++
+            val delayMs = streamRetryCount * 2000L
+            binding.tvVideoError.text = "网络连接中断，正在重连 ($streamRetryCount/$maxStreamRetries)..."
+            binding.tvVideoError.visibility = View.VISIBLE
+            binding.progressVideo.visibility = View.VISIBLE
+            updateStreamStrategy("重连中")
+            streamRetryJob?.cancel()
+            streamRetryJob = lifecycleScope.launch {
+                delay(delayMs)
+                if (!isFinishing && !isDestroyed) {
+                    android.util.Log.i(TAG, "Retrying camera stream (attempt $streamRetryCount)...")
+                    setupVideo()
+                }
+            }
+        } else {
+            binding.tvVideoError.text = "视频加载失败，点击重试"
+            binding.tvVideoError.visibility = View.VISIBLE
+            binding.progressVideo.visibility = View.GONE
+            updateStreamStrategy(null)
+        }
     }
 
     private fun releasePlayer() {

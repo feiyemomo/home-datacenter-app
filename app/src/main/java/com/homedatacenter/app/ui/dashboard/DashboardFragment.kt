@@ -957,6 +957,11 @@ class DashboardFragment : Fragment() {
                     emptyList()
                 }
                 recentLogAdapter.submitList(logs)
+                // Check if there is an active recordings quota alert in recent logs
+                val quotaLog = logs.firstOrNull { it.event_type == "system.recordings_size" }
+                if (quotaLog != null) {
+                    handleQuotaAlert(quotaLog)
+                }
                 binding.tvRecentLogsEmpty.visibility = if (logs.isEmpty()) View.VISIBLE else View.GONE
                 binding.rvRecentLogs.visibility = if (logs.isEmpty()) View.GONE else View.VISIBLE
                 AnimationHelper.fadeIn(binding.rvRecentLogs, 300)
