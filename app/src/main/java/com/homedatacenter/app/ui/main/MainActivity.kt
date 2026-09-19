@@ -1,21 +1,29 @@
 package com.homedatacenter.app.ui.main
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.commit
 import androidx.lifecycle.lifecycleScope
 import com.homedatacenter.app.HomeCenterApp
 import com.homedatacenter.app.R
+import com.homedatacenter.app.data.api.NetworkFactory
+import com.homedatacenter.app.data.model.Camera
 import com.homedatacenter.app.databinding.ActivityMainBinding
 import com.homedatacenter.app.di.AppContainer
+import com.homedatacenter.app.ui.admin.UsersFragment
+import com.homedatacenter.app.ui.cameras.CameraDetailActivity
 import com.homedatacenter.app.ui.cameras.CamerasFragment
 import com.homedatacenter.app.ui.dashboard.DashboardFragment
-import com.homedatacenter.app.ui.logs.ServiceLogsFragment
 import com.homedatacenter.app.ui.login.LoginActivity
-import com.homedatacenter.app.ui.admin.UsersFragment
+import com.homedatacenter.app.ui.logs.ServiceLogsFragment
 import com.homedatacenter.app.ui.settings.SettingsFragment
+import com.homedatacenter.app.util.NotificationHelper
 import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
@@ -63,6 +71,61 @@ class MainActivity : AppCompatActivity() {
         // FAB on CamerasFragment, Users button in SettingsFragment)
         // shows correctly.
         refreshRole()
+
+        // Initialize system notification channels and request permission on Android 13+
+        NotificationHelper.createChannels(this)
+        checkNotificationPermission()
+        handleIntentNavigation(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIntentNavigation(intent)
+    }
+
+    private fun checkNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.POST_NOTIFICATIONS
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1001)
+            }
+        }
+    }
+
+    private fun handleIntentNavigation(intent: Intent) {
+        val tabId = intent.getIntExtra(NotificationHelper.EXTRA_NAVIGATE_TAB, 0)
+        if (tabId != 0 && tabId != binding.bottomNav.selectedItemId) {
+            binding.bottomNav.selectedItemId = tabId
+        }
+        val cameraId = intent.getLongExtra(NotificationHelper.EXTRA_ALERT_CAMERA_ID, 0L)
+        val startTs = intent.getLongExtra(NotificationHelper.EXTRA_ALERT_START_TS, 0L)
+        if (cameraId > 0L) {
+            jumpToCameraDetail(cameraId, startTs)
+        }
+    }
+
+    private fun jumpToCameraDetail(cameraId: Long, startTs: Long) {
+        lifecycleScope.launch {
+            try {
+                val token = container.prefsManager.token ?: return@launch
+                val cameras = container.getRepository().listCameras(token, useCache = true)
+                val cam = cameras.firstOrNull { it.id == cameraId } ?: return@launch
+                val cameraJson = NetworkFactory.json.encodeToString(Camera.serializer(), cam)
+                val intent = Intent(this@MainActivity, CameraDetailActivity::class.java).apply {
+                    putExtra(CameraDetailActivity.EXTRA_CAMERA_JSON, cameraJson)
+                    if (startTs > 0L) {
+                        putExtra(CameraDetailActivity.EXTRA_INITIAL_TIMESTAMP, startTs)
+                    }
+                }
+                startActivity(intent)
+            } catch (e: Exception) {
+                android.util.Log.w("MainActivity", "jumpToCameraDetail failed: ${e.message}")
+            }
+        }
     }
 
     override fun onResume() {

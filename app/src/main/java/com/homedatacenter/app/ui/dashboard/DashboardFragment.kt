@@ -37,6 +37,7 @@ import com.homedatacenter.app.ui.network.NetworkDetailActivity
 import com.homedatacenter.app.util.AnimationHelper
 import com.homedatacenter.app.util.CacheManager
 import com.homedatacenter.app.util.NetworkMonitor
+import com.homedatacenter.app.util.NotificationHelper
 import com.homedatacenter.app.util.StateLayout
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -719,6 +720,13 @@ class DashboardFragment : Fragment() {
         binding.quotaAlertBanner.setOnClickListener {
             (activity as? MainActivity)?.let { it.binding.bottomNav.selectedItemId = R.id.nav_logs }
         }
+        context?.let { ctx ->
+            NotificationHelper.showSystemAlertNotification(
+                ctx,
+                "存储配额告警",
+                log.message.ifBlank { "录像存储空间已达警戒阈值" },
+            )
+        }
     }
 
     private fun applyOnlineList(message: WsMessage) {
@@ -795,6 +803,11 @@ class DashboardFragment : Fragment() {
         lastLiveAlert = alert
         binding.liveAlertBanner.setOnClickListener {
             lastLiveAlert?.let { jumpToCamerasWithAlert(it) }
+        }
+
+        // Post system-level heads-up notification for security detection
+        context?.let { ctx ->
+            NotificationHelper.showSecurityAlertNotification(ctx, alert)
         }
 
         // Prepend to the alerts list (deduplicated)

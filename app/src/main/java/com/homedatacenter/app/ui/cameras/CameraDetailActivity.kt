@@ -1,8 +1,12 @@
 package com.homedatacenter.app.ui.cameras
 
 import android.app.AlertDialog
+import android.app.PictureInPictureParams
+import android.content.res.Configuration
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.util.Rational
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -130,6 +134,16 @@ class CameraDetailActivity : AppCompatActivity() {
         isAdmin = container.prefsManager.isAdmin
 
         binding.toolbar.setNavigationOnClickListener { finish() }
+        binding.toolbar.inflateMenu(R.menu.menu_camera_detail)
+        binding.toolbar.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                R.id.action_pip -> {
+                    enterPipMode()
+                    true
+                }
+                else -> false
+            }
+        }
 
         // Deserialize the camera passed in via Intent extra.
         val cameraJson = intent.getStringExtra(EXTRA_CAMERA_JSON)
@@ -193,8 +207,96 @@ class CameraDetailActivity : AppCompatActivity() {
         }
     }
 
+    fun enterPipMode(): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val aspectRatio = Rational(16, 9)
+            val builder = PictureInPictureParams.Builder()
+                .setAspectRatio(aspectRatio)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                builder.setAutoEnterEnabled(true)
+            }
+            return enterPictureInPictureMode(builder.build())
+        }
+        return false
+    }
+
+    private fun updatePipParams() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                val aspectRatio = Rational(16, 9)
+                val builder = PictureInPictureParams.Builder()
+                    .setAspectRatio(aspectRatio)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    builder.setAutoEnterEnabled(true)
+                }
+                setPictureInPictureParams(builder.build())
+            } catch (e: Exception) {
+                android.util.Log.w(TAG, "updatePipParams failed: ${e.message}")
+            }
+        }
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (isPlaybackActive()) {
+            enterPipMode()
+        }
+    }
+
+    private fun isPlaybackActive(): Boolean {
+        return (webRtcClient != null && (webRtcInProgress || binding.surfaceRenderer.visibility == View.VISIBLE)) ||
+                (player != null && (player?.isPlaying == true || player?.playbackState == Player.STATE_READY || player?.playbackState == Player.STATE_BUFFERING))
+    }
+
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: Configuration
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        if (isInPictureInPictureMode) {
+            binding.toolbar.visibility = View.GONE
+            binding.actionButtonsRow.visibility = View.GONE
+            binding.cardPtz.visibility = View.GONE
+            (binding.rvPresets.parent.parent as? View)?.visibility = View.GONE
+            binding.webRtcControls.visibility = View.GONE
+            binding.tvStreamStrategy.visibility = View.GONE
+            binding.tvHlsNotice.visibility = View.GONE
+            binding.tvVideoError.visibility = View.GONE
+            binding.playerView.useController = false
+
+            val lp = binding.videoContainer.layoutParams
+            lp.height = ViewGroup.LayoutParams.MATCH_PARENT
+            binding.videoContainer.layoutParams = lp
+            binding.playerView.layoutParams.height = ViewGroup.LayoutParams.MATCH_PARENT
+            binding.surfaceRenderer.layoutParams.height = ViewGroup.LayoutParams.MATCH_PARENT
+        } else {
+            binding.toolbar.visibility = View.VISIBLE
+            binding.actionButtonsRow.visibility = View.VISIBLE
+            binding.cardPtz.visibility = if (camera?.hasPtz == true) View.VISIBLE else View.GONE
+            (binding.rvPresets.parent.parent as? View)?.visibility = View.VISIBLE
+            binding.tvStreamStrategy.visibility =
+                if (binding.tvStreamStrategy.text.isNotEmpty()) View.VISIBLE else View.GONE
+            binding.playerView.useController = true
+
+            val density = resources.displayMetrics.density
+            val defaultHeight = (200 * density).toInt()
+            val lp = binding.videoContainer.layoutParams
+            lp.height = ViewGroup.LayoutParams.WRAP_CONTENT
+            binding.videoContainer.layoutParams = lp
+            binding.playerView.layoutParams.height = defaultHeight
+            binding.surfaceRenderer.layoutParams.height = defaultHeight
+            if (binding.surfaceRenderer.visibility == View.VISIBLE) {
+                binding.webRtcControls.visibility = View.VISIBLE
+            }
+        }
+    }
+
     override fun onPause() {
         super.onPause()
+        // If in PiP mode, the floating window is still actively playing and visible
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInPictureInPictureMode) {
+            return
+        }
         // v1.6.10: only release ExoPlayer here — NOT the WebRTC
         // PeerConnection. Previously onPause released both, which
         // meant every time the user pulled down the notification
@@ -209,6 +311,14 @@ class CameraDetailActivity : AppCompatActivity() {
         // scarce system resource that other apps may need.
         streamRetryJob?.cancel()
         releaseExoPlayerOnly()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInPictureInPictureMode) {
+            streamRetryJob?.cancel()
+            releaseExoPlayerOnly()
+        }
     }
 
     override fun onResume() {
@@ -765,6 +875,9 @@ class CameraDetailActivity : AppCompatActivity() {
             } catch (_: Exception) {}
             updateWebRtcControlButtons()
         }
+        binding.btnWebRtcPip.setOnClickListener {
+            enterPipMode()
+        }
     }
 
     private fun updateWebRtcControlButtons() {
@@ -1183,6 +1296,7 @@ class CameraDetailActivity : AppCompatActivity() {
                         // re-asserts it in case the user opened the
                         // page during the fallback window.
                         updateStreamStrategy("WebRTC")
+                        updatePipParams()
                         android.util.Log.d(TAG, "WebRTC connected")
                     }
 
@@ -1404,6 +1518,7 @@ class CameraDetailActivity : AppCompatActivity() {
                         binding.tvVideoError.text = getString(R.string.camera_video_failed)
                         binding.tvVideoError.visibility = View.GONE
                         hidePreviewFrame()
+                        updatePipParams()
                     }
                     if (state == Player.STATE_IDLE || state == Player.STATE_ENDED) {
                         binding.progressVideo.visibility = View.GONE
@@ -1551,6 +1666,7 @@ class CameraDetailActivity : AppCompatActivity() {
                         // v1.6.16: hide the JPEG preview frame once
                         // ExoPlayer has its first frame ready.
                         hidePreviewFrame()
+                        updatePipParams()
                     }
                     if (state == Player.STATE_IDLE || state == Player.STATE_ENDED) {
                         binding.progressVideo.visibility = View.GONE

@@ -167,6 +167,18 @@
                     android:layout_height="0dp"
                     android:layout_weight="1" />
 
+                <!-- PiP button in WebRTC control overlay -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnWebRtcPip"
+                    style="@style/Widget.Material3.Button.IconButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="2dp"
+                    android:background="@android:color/transparent"
+                    app:icon="@drawable/ic_pip"
+                    app:iconTint="@android:color/white"
+                    app:iconSize="24dp" />
+
                 <!-- Fullscreen button placed inside the control bar
                      so it's alongside the other controls. -->
                 <com.google.android.material.button.MaterialButton

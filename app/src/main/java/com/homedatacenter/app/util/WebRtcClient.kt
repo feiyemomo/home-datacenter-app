@@ -698,7 +698,8 @@ class WebRtcClient(
         // responsive when the path is broken. LAN stays at 5s
         // (host-candidate ICE completes in <500ms).
         if (!connectedOrFailed) {
-            val connectTimeoutMs = if (isLan) 5_000L else 6_000L
+            // v1.10.8: fast failover watchdog: 3.5s on LAN, 4.5s on remote
+            val connectTimeoutMs = if (isLan) 3_500L else 4_500L
             scope.launch {
                 delay(connectTimeoutMs)
                 if (!connectedOrFailed) {

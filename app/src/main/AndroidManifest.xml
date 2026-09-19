@@ -18,6 +18,8 @@
          must also explicitly grant "install unknown apps" for our app
          in Settings → Apps → Special access on first install. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Android 13+ runtime permission for security and system alert notifications -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- Camera and microphone are optional because the app receives streams
          and must remain installable on devices without capture hardware. -->
@@ -69,7 +71,8 @@
             android:name=".ui.cameras.CameraDetailActivity"
             android:exported="false"
             android:label="@string/camera_detail_title"
-            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout" />
+            android:supportsPictureInPicture="true"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize" />
 
         <activity
             android:name=".ui.admin.UsersActivity"

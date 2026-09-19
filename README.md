@@ -3,7 +3,7 @@
 家庭数据中心 Android 客户端 — 一个用 **Kotlin + Jetpack Compose + ExoPlayer + WebRTC** 实现的家庭 NVR / IoT 控制台，配合 [home-datacenter](https://github.com/feiyemomo/home-datacenter) 后端使用，提供摄像头预览、WebRTC/MP4/HLS 直播（含音频）、录像回放、报警查看、设备状态、天气信息、局域网/远程自动切换和实时 WebSocket 推送。
 
 > 服务端项目：<https://github.com/feiyemomo/home-datacenter>
-> 当前版本：**v1.10.7**（versionCode 136）
+> 当前版本：**v1.10.8**（versionCode 137）
 
 ---
 
@@ -36,7 +36,7 @@
 | Compile SDK | 36 |
 | Java / Kotlin | 17 / 2.0 |
 | AGP | 9.2.1 |
-| 当前版本 | 1.10.7 (versionCode 136) |
+| 当前版本 | 1.10.8 (versionCode 137) |
 | 默认服务器 | `https://api.feiyemomo.top/`（远程） / `http://192.168.31.235:8088/`（局域网，自动探测并持久化） |
 
 App 通过 `(user_id, access_key)` 换取 JWT 后访问 `home-datacenter` 的 REST API 与 WebSocket。**BaseUrlResolver** 在启动时通过后台守护线程异步探测局域网 `http://192.168.31.235:8088/` 是否可达（TTFB ~10ms vs Cloudflare Tunnel 1.4s+），可达则切到局域网，否则走远程 Cloudflare Tunnel。冷启动会优先恢复上次有效网络路径，使家庭 Wi-Fi 场景下首个请求即命中内网。启动调度采用指数退避重试（1.5s → 4s → 9s → 16s），覆盖真机「WiFi connected but not validated」窗口；同时附加 TCP socket 直连探测作为 OkHttp cleartext 拒绝时的兜底。NetworkChangeMonitor 注册 ConnectivityManager.NetworkCallback，在 WiFi/移动网络切换时立即触发 re-probe，无需等 5 分钟 TTL。摄像头直播走 go2rtc 暴露的 MP4（主）+ HLS（备），后端根据摄像头 `capabilities.audio` 在 go2rtc 流 URL 上自动追加 `#audio=aac` 启用音频转码，前端通过 ExoPlayer `volume` 控制静音/取消静音。
@@ -592,6 +592,11 @@ newPlayer.setAudioAttributes(
 ---
 
 ### 最新版本详情
+
+### v1.10.8 (versionCode 137) — 画中画悬浮播放与系统级安防告警通知 (2026-09)
+- **画中画（Picture-in-Picture）**：`CameraDetailActivity` 接入 Android 原生画中画模式，切出应用或按下 Home 键自动进入小窗监控，播放栏与顶栏提供专属画中画入口；浮窗模式下自动隐藏操作面板填满视口，返回前台无感复原。
+- **WebRTC 快速熔断降级**：看门狗超时调优（局域网 3.5s，远程 4.5s），消除网络抖动或防火墙阻断时的漫长黑屏等待，快速平滑降级至 MP4 直播流。
+- **系统级安防与运维通知（Heads-Up Notifications）**：注册安防警戒（高优先级、声音/振动）与系统运维两大独立通知渠道，实时捕获摄像头 AI 目标检测（人形/车辆/宠物）与存储配额告警；提供 5 秒防刷保护，点击通知直达对应摄像头并自动定位录像回放。
 
 ### v1.10.7 (versionCode 136) — 凭据滑动续签与流媒体自愈加固 (2026-09)
 - **凭据滑动续签**：对接服务端 `POST /api/v1/auth/refresh` 端点，`TokenManager` 新增 `refreshViaToken` 机制并支持 5 秒防抖互斥锁；后台自动续订优先采用老 Token 无缝滑动续期，免除频繁调用设备绑定的网络与鉴权开销。

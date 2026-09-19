@@ -174,8 +174,15 @@
     <string name="camera_action_recordings">查看录像</string>
     <string name="camera_action_alerts">报警记录</string>
     <string name="camera_action_reload">重新加载</string>
+    <string name="camera_action_pip">画中画</string>
     <string name="camera_video_loading">正在加载视频…</string>
     <string name="camera_video_failed">视频加载失败，点击重试</string>
+
+    <!-- Notification channels -->
+    <string name="notification_channel_security">安防警戒告警</string>
+    <string name="notification_channel_security_desc">接收摄像头人形、车辆、宠物识别等安防报警通知</string>
+    <string name="notification_channel_system">系统运维通知</string>
+    <string name="notification_channel_system_desc">接收存储配额、摄像头上下线等系统运行状态通知</string>
     <string name="camera_ptz_section">云台控制 (PTZ)</string>
     <string name="camera_ptz_up">上</string>
     <string name="camera_ptz_down">下</string>
