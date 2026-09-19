@@ -108,7 +108,8 @@ object ApkInstaller {
                 Log.d(TAG, "Resuming download: $existingBytes/$totalSize bytes (${(existingBytes * 100 / totalSize)}%)")
             }
 
-            val response = repo.downloadLatestApk(token, rangeHeader)
+            val flavorParam = if (info.isRelease) "release" else if (info.isDebug) "debug" else null
+            val response = repo.downloadLatestApk(token, rangeHeader, flavorParam)
             if (!response.isSuccessful) {
                 Log.e(TAG, "Download request failed: HTTP ${response.code()}")
                 // 416 Range Not Satisfiable can happen if the part

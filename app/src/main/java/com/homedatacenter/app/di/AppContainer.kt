@@ -259,7 +259,14 @@ class AppContainer(private val context: Context) {
 
         updateCheckJob = warmScope.launch {
             try {
-                val info = getRepository().getLatestRelease(token)
+                val isAdmin = prefsManager.isAdmin
+                val targetFlavor = if (isAdmin) null else "release"
+                val info = getRepository().getLatestRelease(token, targetFlavor)
+                // 普通用户只接受 release 版本的推送；admin 用户接受两种版本的推送
+                if (!isAdmin && !info.isRelease) {
+                    Log.d("AppContainer", "Skipping non-release update for regular user: ${info.file_name}")
+                    return@launch
+                }
                 // v1.6.14: compare versionName strings, NOT version_code.
                 // Backend derives version_code from the APK filename via
                 // parseVersionCode("1.6.12") = 10612, but the app's
@@ -274,7 +281,7 @@ class AppContainer(private val context: Context) {
                 if (hasUpdate) {
                     cachedUpdateInfo = info
                     Log.d("AppContainer",
-                        "Update available: ${info.version_name} (installed=$installedName)")
+                        "Update available: ${info.version_name} (flavor=${info.flavor.ifEmpty { if (info.isRelease) "release" else "debug" }}, installed=$installedName)")
                     // v1.6.28: start downloading the APK immediately
                     // so it's ready on disk when the user visits the
                     // settings page — no manual "download" step.
@@ -310,7 +317,15 @@ class AppContainer(private val context: Context) {
     suspend fun forceCheckUpdate(): com.homedatacenter.app.data.model.UpdateInfo? {
         val token = prefsManager.token ?: return null
         return try {
-            val info = getRepository().getLatestRelease(token)
+            val isAdmin = prefsManager.isAdmin
+            val targetFlavor = if (isAdmin) null else "release"
+            val info = getRepository().getLatestRelease(token, targetFlavor)
+            // 普通用户只接受 release 版本的推送；admin 用户接受两种版本的推送
+            if (!isAdmin && !info.isRelease) {
+                Log.d("AppContainer", "Skipping non-release update for regular user: ${info.file_name}")
+                cachedUpdateInfo = null
+                return null
+            }
             // v1.6.14: compare versionName strings (see checkUpdateOnStartup
             // for the version_code scale-mismatch explanation).
             val installedName = com.homedatacenter.app.util.ApkInstaller

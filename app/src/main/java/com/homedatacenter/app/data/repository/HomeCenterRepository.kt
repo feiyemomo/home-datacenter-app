@@ -499,8 +499,11 @@ class HomeCenterRepository(
      * available. Network-only — no cache, since the user wants
      * up-to-the-minute accuracy when they tap "Check for updates".
      */
-    suspend fun getLatestRelease(token: String): com.homedatacenter.app.data.model.UpdateInfo {
-        val resp = api.getLatestRelease(bearer(token))
+    suspend fun getLatestRelease(
+        token: String,
+        flavor: String? = null,
+    ): com.homedatacenter.app.data.model.UpdateInfo {
+        val resp = api.getLatestRelease(bearer(token), flavor)
         ensureSuccess(resp)
         return resp.decodeDataOrThrow()
     }
@@ -518,8 +521,9 @@ class HomeCenterRepository(
     suspend fun downloadLatestApk(
         token: String,
         range: String? = null,
+        flavor: String? = null,
     ): retrofit2.Response<okhttp3.ResponseBody> {
-        return api.downloadLatestApk(bearer(token), range)
+        return api.downloadLatestApk(bearer(token), range, flavor)
     }
 
     private fun bearer(token: String): String = "Bearer $token"

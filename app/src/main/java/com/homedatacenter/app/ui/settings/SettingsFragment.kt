@@ -366,11 +366,14 @@ class SettingsFragment : Fragment() {
         val info = container.getCachedUpdateInfo()
         val apkFile = container.getCachedDownloadedApk()
 
+        val flavorSuffix = if (container.prefsManager.isAdmin && info?.isDebug == true) " (Debug)" else ""
+        val displayVersion = (info?.version_name ?: "") + flavorSuffix
+
         when {
             // APK fully downloaded — ready to install.
             apkFile != null && info != null -> {
                 binding.tvUpdateStatus.text = getString(
-                    R.string.update_ready_to_install_format, info.version_name
+                    R.string.update_ready_to_install_format, displayVersion
                 )
                 binding.tvUpdateStatus.setTextColor(
                     requireContext().getColor(R.color.online)
@@ -382,7 +385,7 @@ class SettingsFragment : Fragment() {
             container.isDownloadingApk() && info != null -> {
                 binding.tvUpdateStatus.text = getString(
                     R.string.update_downloading_format,
-                    info.version_name,
+                    displayVersion,
                     container.getDownloadProgress()
                 )
                 binding.tvUpdateStatus.setTextColor(
@@ -403,7 +406,7 @@ class SettingsFragment : Fragment() {
             // Update available but not yet downloading — fallback.
             info != null -> {
                 binding.tvUpdateStatus.text = getString(
-                    R.string.setting_check_update_new_format, info.version_name
+                    R.string.setting_check_update_new_format, displayVersion
                 )
                 binding.tvUpdateStatus.setTextColor(
                     requireContext().getColor(R.color.primary)

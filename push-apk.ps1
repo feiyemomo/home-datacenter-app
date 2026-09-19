@@ -3,13 +3,19 @@
 # release_handler.go can parse the version from either prefix.
 param(
     [ValidateSet("debug", "release")]
-    [string]$Flavor = "debug",
+    [string]$Flavor = "release",
     # Release notes text written to release-notes-vX.Y.Z.txt on the NAS.
     [string]$Notes,
     # NAS password (SSH_ASKPASS). Omit to use SSH key / interactive prompt.
     [string]$Password = "<NAS_PASSWORD>",
     # Preview the push without touching the NAS.
-    [switch]$DryRun
+    [switch]$DryRun,
+    # Automatically bump patch version (e.g. 1.10.5 -> 1.10.6, versionCode + 1)
+    [switch]$Bump,
+    # Specify an explicit new version (e.g. "1.10.6")
+    [string]$NewVersion,
+    # Force rebuild the APK before pushing
+    [switch]$Rebuild
 )
 
 $NAS_USER = "fnos-momo"
@@ -52,25 +58,65 @@ function Invoke-NasSCP {
     finally { $ErrorActionPreference = $prev }
 }
 
-# v1.6.12: read version from build.gradle.kts so we don't have to
-# maintain the version string in two places. Parses the versionName
-# line and converts "1.6.12" → "1.6.12" for both the APK filename
-# and the release-notes filename.
-$buildGradle = Get-Content "d:\Projects\Android\app\build.gradle.kts" -Raw
+# Read version from build.gradle.kts
+$gradlePath = "d:\Projects\Android\app\build.gradle.kts"
+$buildGradle = Get-Content $gradlePath -Raw
 $versionMatch = [regex]::Match($buildGradle, 'versionName\s*=\s*"([^"]+)"')
-if (-not $versionMatch.Success) {
-    Write-Host "ERROR: could not parse versionName from build.gradle.kts"
+$codeMatch = [regex]::Match($buildGradle, 'versionCode\s*=\s*(\d+)')
+
+if (-not $versionMatch.Success -or -not $codeMatch.Success) {
+    Write-Host "ERROR: could not parse versionName or versionCode from build.gradle.kts"
     exit 1
 }
-$version = $versionMatch.Groups[1].Value
-Write-Host "Detected version: $version (flavor=$Flavor)"
 
-# v1.8.44: pick the APK path by flavor. The debug/release build types
-# output to different directories and carry different signatures.
+$version = $versionMatch.Groups[1].Value
+$code = [int]$codeMatch.Groups[1].Value
+
+# Auto-bump or manual new version
+if ($Bump -or $NewVersion) {
+    $nextCode = $code + 1
+    if ($NewVersion) {
+        $nextVersion = $NewVersion
+    } else {
+        $parts = $version.Split('.')
+        if ($parts.Length -ge 3) {
+            $parts[-1] = [string]([int]$parts[-1] + 1)
+            $nextVersion = $parts -join '.'
+        } else {
+            $nextVersion = "$version.1"
+        }
+    }
+    Write-Host "==> Bumping version: v$version ($code) -> v$nextVersion ($nextCode)" -ForegroundColor Green
+    $buildGradle = $buildGradle -replace 'versionCode\s*=\s*\d+', "versionCode = $nextCode"
+    $buildGradle = $buildGradle -replace 'versionName\s*=\s*"[^"]+"', "versionName = `"$nextVersion`""
+    Set-Content -Path $gradlePath -Value $buildGradle -Encoding UTF8
+    $version = $nextVersion
+    $code = $nextCode
+
+    # Sync README if present
+    $readmePath = "d:\Projects\Android\README.md"
+    if (Test-Path $readmePath) {
+        $rm = [System.IO.File]::ReadAllText($readmePath, [System.Text.Encoding]::UTF8)
+        $rm = [regex]::Replace($rm, 'v\d+\.\d+\.\d+\*\*.*?versionCode\s*\d+', "v$nextVersion**（versionCode $nextCode")
+        $rm = [regex]::Replace($rm, '\|\s*\d+\.\d+\.\d+\s*\(versionCode\s*\d+\)\s*\|', "| $nextVersion (versionCode $nextCode) |")
+        [System.IO.File]::WriteAllText($readmePath, $rm, [System.Text.Encoding]::UTF8)
+    }
+
+    $Rebuild = $true
+}
+
+Write-Host "Detected version: $version (code=$code, flavor=$Flavor)"
+
+# Pick the APK path by flavor
 $apkPath = "d:\Projects\Android\app\build\outputs\apk\$Flavor\app-$Flavor.apk"
-if (-not (Test-Path $apkPath)) {
-    Write-Host "ERROR: APK not found at $apkPath — run the gradle build first (or build-all.ps1)."
-    exit 1
+if ($Rebuild -or (-not (Test-Path $apkPath))) {
+    Write-Host "Building $Flavor APK..." -ForegroundColor Cyan
+    $taskName = "assemble" + ($Flavor.Substring(0,1).ToUpper() + $Flavor.Substring(1).ToLower())
+    & "d:\Projects\Android\gradlew.bat" $taskName --console=plain
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $apkPath)) {
+        Write-Host "ERROR: Gradle build failed or APK still missing at $apkPath" -ForegroundColor Red
+        exit 1
+    }
 }
 # v1.6.11: target the data/releases/ directory. The api container
 # has this bind-mounted at /data/releases (read-only) and scans it

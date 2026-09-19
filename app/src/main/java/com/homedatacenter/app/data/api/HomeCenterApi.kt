@@ -206,7 +206,10 @@ interface HomeCenterApi {
 
     /** GET /api/v1/release/latest → UpdateInfo (version, size, url). */
     @GET("api/v1/release/latest")
-    suspend fun getLatestRelease(@Header("Authorization") auth: String): ApiResponse
+    suspend fun getLatestRelease(
+        @Header("Authorization") auth: String,
+        @Query("flavor") flavor: String? = null,
+    ): ApiResponse
 
     /**
      * GET /api/v1/release/latest/apk → APK file stream. Returns
@@ -225,6 +228,7 @@ interface HomeCenterApi {
     suspend fun downloadLatestApk(
         @Header("Authorization") auth: String,
         @Header("Range") range: String? = null,
+        @Query("flavor") flavor: String? = null,
     ): retrofit2.Response<okhttp3.ResponseBody>
 
     // --- Camera audio toggle (admin) ---

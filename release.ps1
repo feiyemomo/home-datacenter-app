@@ -1,4 +1,4 @@
-﻿# release.ps1 — one-click release flow: build debug APK + push to NAS.
+# release.ps1 — one-click release flow: build debug APK + push to NAS.
 #
 # Pipeline:
 #   1. Read versionName from app\build.gradle.kts
@@ -11,6 +11,8 @@
 
 [CmdletBinding()]
 param(
+    [ValidateSet("debug", "release")]
+    [string]$Flavor = "release",
     [switch]$WhatIf
 )
 
@@ -60,8 +62,9 @@ if (-not $versionMatch.Success) {
 $version = $versionMatch.Groups[1].Value
 Write-Ok "检测到版本号：$version"
 
-# ---------- Step 2: build debug APK ------------------------------------
-Write-Step "步骤 2/4：构建 Debug APK（assembleDebug）"
+# ---------- Step 2: build APK ------------------------------------------
+$taskName = "assemble" + ($Flavor.Substring(0,1).ToUpper() + $Flavor.Substring(1).ToLower())
+Write-Step "步骤 2/4：构建 $Flavor APK（$taskName）"
 
 $gradlew = Join-Path $scriptDir "gradlew.bat"
 if (-not (Test-Path $gradlew)) {
@@ -71,10 +74,10 @@ if (-not (Test-Path $gradlew)) {
 
 if ($WhatIf) {
     Write-Warn "WhatIf 模式：跳过实际构建。"
-    Write-Host "        将执行：& $gradlew assembleDebug"
+    Write-Host "        将执行：& $gradlew $taskName"
 } else {
-    Write-Host "正在执行 gradlew assembleDebug（可能需要数分钟，请耐心等待）..."
-    & $gradlew assembleDebug 2>&1 | Out-Host
+    Write-Host "正在执行 gradlew $taskName（可能需要数分钟，请耐心等待）..."
+    & $gradlew $taskName 2>&1 | Out-Host
     $buildExit = $LASTEXITCODE
     if ($null -eq $buildExit) { $buildExit = 0 }
     if ($buildExit -ne 0) {
@@ -85,7 +88,7 @@ if ($WhatIf) {
 }
 
 # Confirm the build artifact exists before attempting to push.
-$apkPath = Join-Path $scriptDir "app\build\outputs\apk\debug\app-debug.apk"
+$apkPath = Join-Path $scriptDir "app\build\outputs\apk\$Flavor\app-$Flavor.apk"
 if (-not (Test-Path $apkPath)) {
     Write-Err "未找到构建产物：$apkPath"
     exit 1
@@ -102,13 +105,13 @@ if (-not (Test-Path $pushScript)) {
 
 if ($WhatIf) {
     Write-Warn "WhatIf 模式：跳过实际推送。"
-    Write-Host "        将调用：powershell -ExecutionPolicy Bypass -File $pushScript"
+    Write-Host "        将调用：powershell -ExecutionPolicy Bypass -File $pushScript -Flavor $Flavor"
 } else {
     # Run push-apk.ps1 in a CHILD powershell process. push-apk.ps1 ends
     # with `exit <code>`, which would otherwise terminate this script too
     # if invoked in-process. A child process isolates the exit and lets
     # us capture $LASTEXITCODE here.
-    & powershell -ExecutionPolicy Bypass -File $pushScript 2>&1 | Out-Host
+    & powershell -ExecutionPolicy Bypass -File $pushScript -Flavor $Flavor 2>&1 | Out-Host
     $pushExit = $LASTEXITCODE
     if ($null -eq $pushExit) { $pushExit = 0 }
     if ($pushExit -ne 0) {

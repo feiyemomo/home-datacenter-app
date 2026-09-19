@@ -30,4 +30,15 @@ data class UpdateInfo(
      *  backend scans files from disk and doesn't read release notes
      *  from anywhere. Reserved for future use. */
     val release_notes: String = "",
-)
+    /** Build flavor: "release" or "debug". */
+    val flavor: String = "",
+) {
+    /** True if this is a production release build. */
+    val isRelease: Boolean
+        get() = flavor.equals("release", ignoreCase = true) || file_name.startsWith("app-release-")
+
+    /** True if this is an internal debug build. */
+    val isDebug: Boolean
+        get() = flavor.equals("debug", ignoreCase = true) || file_name.startsWith("app-debug-")
+}
+

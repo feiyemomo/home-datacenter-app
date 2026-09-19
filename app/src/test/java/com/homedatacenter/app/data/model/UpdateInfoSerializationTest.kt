@@ -61,4 +61,24 @@ class UpdateInfoSerializationTest {
         assertEquals(123_456_789L, restored.size_bytes)
         assertEquals("2.0.0", restored.version_name)
     }
+
+    @Test
+    fun flavor_detectsReleaseAndDebug() {
+        val releaseInfo = UpdateInfo(file_name = "app-release-v1.10.4.apk", flavor = "release")
+        val debugInfo = UpdateInfo(file_name = "app-debug-v1.10.4.apk", flavor = "debug")
+        val legacyRelease = UpdateInfo(file_name = "app-release-v1.10.4.apk")
+        val legacyDebug = UpdateInfo(file_name = "app-debug-v1.10.4.apk")
+
+        assertEquals(true, releaseInfo.isRelease)
+        assertEquals(false, releaseInfo.isDebug)
+
+        assertEquals(false, debugInfo.isRelease)
+        assertEquals(true, debugInfo.isDebug)
+
+        assertEquals(true, legacyRelease.isRelease)
+        assertEquals(false, legacyRelease.isDebug)
+
+        assertEquals(false, legacyDebug.isRelease)
+        assertEquals(true, legacyDebug.isDebug)
+    }
 }
