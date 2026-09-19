@@ -63,14 +63,44 @@ class AlertsDialog(
     private val visibleAlerts = mutableListOf<Alert>()
     private var isLoadingMore = false
     private val pageBatchSize = 20
+    private var selectedCategory: String? = null
 
     init {
         binding = DialogAlertsBinding.inflate(LayoutInflater.from(context))
         setContentView(binding.root)
         setupRecyclerView()
+        setupFilters()
         loadAlerts()
         binding.toolbar.setNavigationOnClickListener { dismiss() }
         binding.toolbar.title = "${camera.name} - 报警"
+    }
+
+    private fun setupFilters() {
+        binding.chipGroupFilter.setOnCheckedStateChangeListener { _, checkedIds ->
+            selectedCategory = when (checkedIds.firstOrNull()) {
+                R.id.chipPerson -> "person"
+                R.id.chipCar -> "car"
+                R.id.chipAnimal -> "dog"
+                else -> null
+            }
+            applyCategoryFilter()
+        }
+    }
+
+    private fun applyCategoryFilter() {
+        val cat = selectedCategory
+        val filtered = if (cat.isNullOrEmpty()) {
+            allAlerts
+        } else {
+            allAlerts.filter { it.label.equals(cat, ignoreCase = true) }
+        }
+        visibleAlerts.clear()
+        visibleAlerts.addAll(filtered.take(pageBatchSize))
+        adapter.submitList(visibleAlerts.toList())
+        binding.tvEmpty.visibility = if (filtered.isEmpty()) View.VISIBLE else View.GONE
+        if (filtered.isEmpty()) {
+            binding.tvEmpty.text = "未找到${when(cat) { "person" -> "人形"; "car" -> "车辆"; "dog" -> "动物"; else -> "" }}相关报警"
+        }
     }
 
     private fun setupRecyclerView() {
@@ -130,30 +160,12 @@ class AlertsDialog(
                 val filtered = filterAlertsForCamera(fetchedAlerts, fetchedAlerts)
 
                 withContext(Dispatchers.Main) {
-                    // v1.5.10: keep the full list, expose only the
-                    // first page to the adapter. Subsequent pages
-                    // are appended on scroll via [loadMoreAlerts].
-                    // Note: [filterAlertsForCamera]'s strategy 3
-                    // returns the same list reference passed in —
-                    // copy first so we don't clear the data we're
-                    // about to addAll.
                     val filteredCopy = filtered.toList()
                     allAlerts.clear()
                     allAlerts.addAll(filteredCopy)
-                    visibleAlerts.clear()
-                    visibleAlerts.addAll(filteredCopy.take(pageBatchSize))
-                    adapter.submitList(visibleAlerts.toList())
                     binding.progressBar.visibility = View.GONE
                     binding.recyclerView.visibility = View.VISIBLE
-                    binding.tvEmpty.visibility = if (filteredCopy.isEmpty()) View.VISIBLE else View.GONE
-                    if (filteredCopy.isEmpty()) {
-                        binding.tvEmpty.text = if (resp.isSuccess) {
-                            if (allAlerts.isEmpty()) "暂无报警事件"
-                            else "未找到此摄像头的报警（共 ${allAlerts.size} 条）"
-                        } else {
-                            "加载失败: ${resp.message}"
-                        }
-                    }
+                    applyCategoryFilter()
                 }
             } catch (e: Exception) {
                 android.util.Log.e("AlertsDialog", "Exception loading alerts: ${e.message}", e)

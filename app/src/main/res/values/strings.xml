@@ -313,4 +313,10 @@
     <string name="lan_config_saved">局域网地址已保存，正在重新探测…</string>
     <string name="lan_config_reset">已恢复默认局域网地址</string>
     <string name="lan_config_invalid">请输入有效的 URL（例如 http://192.168.1.100:8088/）</string>
+
+    <!-- v1.10.9: multi camera split view -->
+    <string name="multi_camera_title">多路监控大厅</string>
+    <string name="multi_camera_subtitle">4路实时同屏预览</string>
+    <string name="multi_camera_empty">暂无可用摄像头</string>
+    <string name="multi_camera_action">四分屏</string>
 </resources>

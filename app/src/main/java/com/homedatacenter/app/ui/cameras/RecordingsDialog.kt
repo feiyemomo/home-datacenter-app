@@ -1,9 +1,14 @@
 package com.homedatacenter.app.ui.cameras
 
 import android.app.Dialog
+import android.content.ContentValues
 import android.content.Context
+import android.media.MediaScannerConnection
+import android.os.Build
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.provider.MediaStore
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -92,6 +97,8 @@ class RecordingsDialog(
     // grouped list to [dayAdapter] in one shot.
     private val allRecordings = mutableListOf<Recording>()
     private var earliestDay: DayRecording? = null
+    // v1.10.9: stashes active day's recordings so user can download the current clip
+    private var currentDayRecordings: List<Recording> = emptyList()
     // v1.10.7: retry counter for network stutters on clip transitions
     private var recordingRetryCount = 0
 
@@ -199,7 +206,29 @@ class RecordingsDialog(
         setContentView(binding.root)
         setupRecyclerView()
         loadRecordings()
-        binding.toolbar.setNavigationOnClickListener { dismiss() }
+        binding.toolbar.setNavigationOnClickListener {
+            if (binding.videoContainer.visibility == View.VISIBLE) {
+                player?.stop()
+                player?.release()
+                player = null
+                daySeekHandler.removeCallbacks(daySeekUpdateRunnable)
+                binding.videoContainer.visibility = View.GONE
+                binding.recyclerView.visibility = View.VISIBLE
+                binding.btnDownloadClip.visibility = View.GONE
+                binding.toolbar.title = "${camera.name} - 录像"
+            } else {
+                dismiss()
+            }
+        }
+        binding.btnDownloadClip.setOnClickListener {
+            val idx = player?.currentMediaItemIndex ?: 0
+            val rec = currentDayRecordings.getOrNull(idx) ?: currentDayRecordings.firstOrNull()
+            if (rec != null) {
+                downloadRecordingClip(rec)
+            } else {
+                Toast.makeText(context, "当前无播放录像片段", Toast.LENGTH_SHORT).show()
+            }
+        }
         binding.toolbar.title = "${camera.name} - 录像"
         // v1.6.2: btnPlayDay is no longer used. v1.5.x opened a
         // DatePickerDialog to pick a day for full-day playback; but
@@ -563,6 +592,8 @@ class RecordingsDialog(
 
         binding.videoContainer.visibility = View.VISIBLE
         binding.recyclerView.visibility = View.GONE
+        this.currentDayRecordings = dayRecordings
+        binding.btnDownloadClip.visibility = View.VISIBLE
 
         player?.release()
         // v1.5.11: stop any pending scrub updates from a previous
@@ -1466,6 +1497,83 @@ class RecordingsDialog(
         val segmentCount: Int,
         val peakObjects: Int,
     )
+
+    /**
+     * v1.10.9: downloads a single 60s recording clip directly into the phone's
+     * Movies/HomeDatacenter directory and registers it with MediaStore so it
+     * immediately appears in the system gallery.
+     */
+     private fun downloadRecordingClip(rec: Recording) {
+        val ctx = context
+        Toast.makeText(ctx, "开始保存录像片段到系统相册...", Toast.LENGTH_SHORT).show()
+        val downloadUrl = "${buildRecordingUrl(rec.id)}?download=1"
+        val fileName = "camera_${camera.name}_${rec.id}.mp4"
+
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val reqBuilder = okhttp3.Request.Builder().url(downloadUrl)
+                if (!token.isNullOrEmpty()) {
+                    reqBuilder.header("Authorization", "Bearer $token")
+                    reqBuilder.header("Cookie", "home_token=$token")
+                }
+                val resp = container.okHttpClient.newCall(reqBuilder.build()).execute()
+                if (!resp.isSuccessful) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(ctx, "下载失败: HTTP ${resp.code}", Toast.LENGTH_SHORT).show()
+                    }
+                    return@launch
+                }
+                val body = resp.body ?: return@launch
+                val resolver = ctx.contentResolver
+
+                val values = ContentValues().apply {
+                    put(MediaStore.Video.Media.DISPLAY_NAME, fileName)
+                    put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/HomeDatacenter")
+                        put(MediaStore.Video.Media.IS_PENDING, 1)
+                    }
+                }
+
+                val collection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                } else {
+                    MediaStore.Video.Media.EXTERNAL_CONTENT_URI
+                }
+
+                val uri = resolver.insert(collection, values)
+                if (uri == null) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(ctx, "创建系统媒体文件失败", Toast.LENGTH_SHORT).show()
+                    }
+                    return@launch
+                }
+
+                resolver.openOutputStream(uri)?.use { output ->
+                    body.byteStream().use { input ->
+                        input.copyTo(output)
+                    }
+                }
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    values.clear()
+                    values.put(MediaStore.Video.Media.IS_PENDING, 0)
+                    resolver.update(uri, values, null, null)
+                } else {
+                    MediaScannerConnection.scanFile(ctx, arrayOf(uri.path), arrayOf("video/mp4"), null)
+                }
+
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(ctx, "录像已保存至系统相册 (Movies/HomeDatacenter)", Toast.LENGTH_LONG).show()
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("RecordingsDialog", "Failed to download recording: ${e.message}", e)
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(ctx, "保存失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
 
     /**
      * v1.6.2: data class for the per-day list view. Each instance

@@ -140,6 +140,11 @@ class CamerasFragment : Fragment() {
             RegisterCameraDialog(ctx, mainActivity.container) { loadCamerasFromNetwork() }.show()
         }
 
+        binding.btnMultiCamera?.setOnClickListener {
+            val ctx = context ?: return@setOnClickListener
+            startActivity(Intent(ctx, MultiCameraActivity::class.java))
+        }
+
         // v1.5.7: pre-fetch ICE config so the first WebRTC stream
         // doesn't wait for an extra round-trip. Idempotent — the
         // AppContainer skips if already cached. Mirrors

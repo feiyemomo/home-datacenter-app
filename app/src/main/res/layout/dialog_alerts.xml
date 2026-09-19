@@ -14,6 +14,53 @@
         app:navigationIcon="@drawable/ic_baseline_arrow_back_24"
         app:titleTextColor="@android:color/white" />
 
+    <HorizontalScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:scrollbars="none"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp">
+
+        <com.google.android.material.chip.ChipGroup
+            android:id="@+id/chipGroupFilter"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            app:singleSelection="true">
+
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipAll"
+                style="@style/Widget.Material3.Chip.Filter"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:checked="true"
+                android:text="全部" />
+
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipPerson"
+                style="@style/Widget.Material3.Chip.Filter"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="人形" />
+
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipCar"
+                style="@style/Widget.Material3.Chip.Filter"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="车辆" />
+
+            <com.google.android.material.chip.Chip
+                android:id="@+id/chipAnimal"
+                style="@style/Widget.Material3.Chip.Filter"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="动物" />
+
+        </com.google.android.material.chip.ChipGroup>
+    </HorizontalScrollView>
+
     <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"

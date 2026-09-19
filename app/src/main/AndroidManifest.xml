@@ -75,6 +75,12 @@
             android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|smallestScreenSize" />
 
         <activity
+            android:name=".ui.cameras.MultiCameraActivity"
+            android:exported="false"
+            android:label="@string/multi_camera_title"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize" />
+
+        <activity
             android:name=".ui.admin.UsersActivity"
             android:exported="false"
             android:label="@string/users_title" />
