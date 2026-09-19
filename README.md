@@ -3,7 +3,7 @@
 家庭数据中心 Android 客户端 — 一个用 **Kotlin + Jetpack Compose + ExoPlayer + WebRTC** 实现的家庭 NVR / IoT 控制台，配合 [home-datacenter](https://github.com/feiyemomo/home-datacenter) 后端使用，提供摄像头预览、WebRTC/MP4/HLS 直播（含音频）、录像回放、报警查看、设备状态、天气信息、局域网/远程自动切换和实时 WebSocket 推送。
 
 > 服务端项目：<https://github.com/feiyemomo/home-datacenter>
-> 当前版本：**v1.10.6**（versionCode 135）
+> 当前版本：**v1.10.7**（versionCode 136）
 
 ---
 
@@ -36,7 +36,7 @@
 | Compile SDK | 36 |
 | Java / Kotlin | 17 / 2.0 |
 | AGP | 9.2.1 |
-| 当前版本 | 1.10.6 (versionCode 135) |
+| 当前版本 | 1.10.7 (versionCode 136) |
 | 默认服务器 | `https://api.feiyemomo.top/`（远程） / `http://192.168.31.235:8088/`（局域网，自动探测并持久化） |
 
 App 通过 `(user_id, access_key)` 换取 JWT 后访问 `home-datacenter` 的 REST API 与 WebSocket。**BaseUrlResolver** 在启动时通过后台守护线程异步探测局域网 `http://192.168.31.235:8088/` 是否可达（TTFB ~10ms vs Cloudflare Tunnel 1.4s+），可达则切到局域网，否则走远程 Cloudflare Tunnel。冷启动会优先恢复上次有效网络路径，使家庭 Wi-Fi 场景下首个请求即命中内网。启动调度采用指数退避重试（1.5s → 4s → 9s → 16s），覆盖真机「WiFi connected but not validated」窗口；同时附加 TCP socket 直连探测作为 OkHttp cleartext 拒绝时的兜底。NetworkChangeMonitor 注册 ConnectivityManager.NetworkCallback，在 WiFi/移动网络切换时立即触发 re-probe，无需等 5 分钟 TTL。摄像头直播走 go2rtc 暴露的 MP4（主）+ HLS（备），后端根据摄像头 `capabilities.audio` 在 go2rtc 流 URL 上自动追加 `#audio=aac` 启用音频转码，前端通过 ExoPlayer `volume` 控制静音/取消静音。
@@ -592,6 +592,12 @@ newPlayer.setAudioAttributes(
 ---
 
 ### 最新版本详情
+
+### v1.10.7 (versionCode 136) — 凭据滑动续签与流媒体自愈加固 (2026-09)
+- **凭据滑动续签**：对接服务端 `POST /api/v1/auth/refresh` 端点，`TokenManager` 新增 `refreshViaToken` 机制并支持 5 秒防抖互斥锁；后台自动续订优先采用老 Token 无缝滑动续期，免除频繁调用设备绑定的网络与鉴权开销。
+- **直播弱网自愈与退避重试**：`CameraDetailActivity` 针对 WebRTC 及 ExoPlayer 直播断流增加指数退避自愈机制（最多 3 次，间隔 2s / 4s / 6s），断流时界面提供点触重试交互；播放就绪或恢复连接时自动复位重试计数器。
+- **录像切片断流自愈**：`RecordingsDialog` 录像回放增加跨分段与弱网抖动自愈重试逻辑（最多 2 次），显著提升录像片段切换时的播放平滑度。
+- **存储配额告警主动同步**：`DashboardFragment` 在冷启动与下拉刷新拉取近期系统日志时，主动嗅探是否存在 `system.recordings_size` 存储配额报警，避免未收到实时 WebSocket 广播时开屏漏显告警横幅。
 
 ### v1.10.6 (versionCode 135) — 用户角色推送分流与发包自动化 (2026-09)
 - **更新推送分流**：普通用户仅接收经过官方 Keystore 签名的 Release 版本；Admin 用户可同时接收 Debug 与 Release 版本的最新更新。
