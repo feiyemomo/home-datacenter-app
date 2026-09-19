@@ -23,6 +23,10 @@ interface HomeCenterApi {
     @POST("api/v1/auth/bind")
     suspend fun bindDevice(@Body req: BindRequest): ApiResponse
 
+    /** POST /api/v1/auth/refresh — re-issue a fresh 365-day JWT for the caller. */
+    @POST("api/v1/auth/refresh")
+    suspend fun refreshToken(@Header("Authorization") auth: String): ApiResponse
+
     @GET("api/v1/user/me")
     suspend fun getMe(@Header("Authorization") auth: String): ApiResponse
 

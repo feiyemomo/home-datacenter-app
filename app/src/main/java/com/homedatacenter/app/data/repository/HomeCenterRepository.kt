@@ -30,6 +30,12 @@ class HomeCenterRepository(
         return resp.decodeData<BindData>()!!.token
     }
 
+    suspend fun refreshToken(token: String): String {
+        val resp = api.refreshToken(bearer(token))
+        ensureSuccess(resp)
+        return resp.decodeData<BindData>()!!.token
+    }
+
     suspend fun getMe(token: String): User {
         val resp = api.getMe(bearer(token))
         ensureSuccess(resp)

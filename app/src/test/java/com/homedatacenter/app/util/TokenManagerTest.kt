@@ -74,4 +74,23 @@ class TokenManagerTest {
         Thread.sleep(200)
         assertEquals(0, server.requestCount)
     }
+
+    @Test
+    fun `successful token refresh parses token and persists`() {
+        server.enqueue(MockResponse().setBody("""{"code":0,"data":{"token":"tk-fresh-sliding","device_id":2}}""").setHeader("Content-Type", "application/json"))
+        val token = tokenManager.refreshViaTokenAndPersist("tk-existing")
+        assertEquals("tk-fresh-sliding", token)
+        verify(prefs).token = "tk-fresh-sliding"
+        verify(prefs).lastTokenRefreshTime = org.mockito.ArgumentMatchers.anyLong()
+        val req = server.takeRequest()
+        assertTrue(req.path!!.startsWith("/api/v1/auth/refresh"))
+        assertEquals("Bearer tk-existing", req.getHeader("Authorization"))
+    }
+
+    @Test
+    fun `token refresh http error returns null and does not persist`() {
+        server.enqueue(MockResponse().setResponseCode(401).setBody("""{"code":401,"message":"token expired"}"""))
+        val token = tokenManager.refreshViaToken("tk-expired")
+        assertNull(token)
+    }
 }

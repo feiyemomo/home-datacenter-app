@@ -55,6 +55,17 @@ class TokenManager(
         null
     }
 
+    /**
+     * Exchanges the current valid JWT for a fresh JWT via POST /api/v1/auth/refresh.
+     * Returns the new token string, or null on ANY failure.
+     * Never throws - safe to call from background jobs.
+     */
+    fun refreshViaToken(currentToken: String): String? = try {
+        performRefresh(currentToken)
+    } catch (_: Exception) {
+        null
+    }
+
     private val refreshLock = Any()
 
     /**
@@ -76,6 +87,22 @@ class TokenManager(
         newToken
     }
 
+    /**
+     * Refresh via token + persist: on success stores the new token and bumps
+     * lastTokenRefreshTime. Returns the new token, or null.
+     */
+    fun refreshViaTokenAndPersist(currentToken: String): String? = synchronized(refreshLock) {
+        val now = System.currentTimeMillis()
+        val stored = prefsManager.token
+        if (!stored.isNullOrEmpty() && (now - prefsManager.lastTokenRefreshTime) < 5_000L) {
+            return stored
+        }
+        val newToken = refreshViaToken(currentToken) ?: return null
+        prefsManager.token = newToken
+        prefsManager.lastTokenRefreshTime = System.currentTimeMillis()
+        newToken
+    }
+
     // --- Monthly silent refresh (moved from AppContainer, v1.8.15) ---
 
     private val refreshScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -85,13 +112,14 @@ class TokenManager(
      * Checks and performs the once-per-month silent JWT refresh.
      * Called from HomeCenterApp.onCreate. No-op when credentials are
      * missing or the last refresh is younger than 30 days.
+     *
+     * Prefers POST /api/v1/auth/refresh with the existing valid JWT;
+     * falls back to full re-bind with (userId, accessKey) if token refresh fails.
      */
     fun tryAutoRefreshToken() {
         if (refreshJob?.isActive == true) return
-        if (prefsManager.token.isNullOrEmpty()) return
-        val accessKey = prefsManager.accessKey ?: return
-        val userId = prefsManager.userId
-        if (userId <= 0L) return
+        val currentToken = prefsManager.token
+        if (currentToken.isNullOrEmpty()) return
 
         val lastRefresh = prefsManager.lastTokenRefreshTime
         val now = System.currentTimeMillis()
@@ -100,8 +128,16 @@ class TokenManager(
         // Refreshed within the last 30 days - skip.
         if (lastRefresh > 0 && (now - lastRefresh) < thirtyDaysMs) return
 
+        val accessKey = prefsManager.accessKey
+        val userId = prefsManager.userId
+
         refreshJob = refreshScope.launch {
-            val newToken = refreshAndPersist(userId, accessKey)
+            // First try silent sliding refresh with current token (no credentials transmitted)
+            var newToken = refreshViaTokenAndPersist(currentToken)
+            if (newToken == null && !accessKey.isNullOrEmpty() && userId > 0L) {
+                // Fallback to full credential re-bind if token refresh was rejected
+                newToken = refreshAndPersist(userId, accessKey)
+            }
             if (newToken != null) {
                 android.util.Log.d(TAG, "Token auto-refreshed (monthly)")
             } else {
@@ -140,6 +176,36 @@ class TokenManager(
             ?: throw RuntimeException("bind response missing data")
         return data["token"]?.jsonPrimitive?.content
             ?: throw RuntimeException("bind response missing token")
+    }
+
+    private fun performRefresh(currentToken: String): String {
+        val baseUrl = baseUrlProvider().trimEnd('/')
+        val refreshUrl = "$baseUrl/api/v1/auth/refresh"
+
+        val request = Request.Builder()
+            .url(refreshUrl)
+            .header("Authorization", "Bearer $currentToken")
+            .post("{}".toRequestBody("application/json".toMediaType()))
+            .build()
+
+        val response = bindClient.newCall(request).execute()
+        val body = response.body?.string() ?: throw RuntimeException("empty refresh response")
+
+        if (!response.isSuccessful) {
+            throw RuntimeException("refresh failed: code=${response.code} body=$body")
+        }
+
+        // Parse the JSON response: {"code":0,"data":{"token":"...","device_id":...}}
+        val root = json.parseToJsonElement(body).jsonObject
+        val code = root["code"]?.jsonPrimitive?.content?.toIntOrNull() ?: -1
+        if (code != 0) {
+            throw RuntimeException("refresh returned code=$code")
+        }
+
+        val data = root["data"]?.jsonObject
+            ?: throw RuntimeException("refresh response missing data")
+        return data["token"]?.jsonPrimitive?.content
+            ?: throw RuntimeException("refresh response missing token")
     }
 
     companion object {
