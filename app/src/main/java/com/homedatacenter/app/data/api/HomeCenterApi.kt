@@ -307,4 +307,44 @@ interface HomeCenterApi {
         @Header("Authorization") auth: String,
         @Path("id") cameraId: Long,
     ): ApiResponse
+
+    // --- Security Guard Mode ---
+
+    @GET("api/v1/security/guard")
+    suspend fun getSecurityGuard(
+        @Header("Authorization") auth: String
+    ): ApiResponse
+
+    @PUT("api/v1/security/guard")
+    suspend fun setSecurityGuard(
+        @Header("Authorization") auth: String,
+        @Body request: com.homedatacenter.app.data.model.SetSecurityGuardRequest
+    ): ApiResponse
+
+    // --- Automation Rules ---
+
+    @GET("api/v1/automation/rules")
+    suspend fun listAutomationRules(
+        @Header("Authorization") auth: String
+    ): ApiResponse
+
+    @PUT("api/v1/automation/rules/{id}")
+    suspend fun updateAutomationRule(
+        @Header("Authorization") auth: String,
+        @Path("id") id: Long,
+        @Body request: com.homedatacenter.app.data.model.UpdateAutomationRuleRequest
+    ): ApiResponse
+
+    @POST("api/v1/automation/rules/{id}/test")
+    suspend fun testAutomationRule(
+        @Header("Authorization") auth: String,
+        @Path("id") id: Long
+    ): ApiResponse
+
+    // --- System Maintenance ---
+
+    @POST("api/v1/system/clean-cache")
+    suspend fun cleanSystemCache(
+        @Header("Authorization") auth: String
+    ): ApiResponse
 }

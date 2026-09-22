@@ -280,6 +280,91 @@
                     android:visibility="gone" />
             </FrameLayout>
 
+            <!-- Security Guard Mode Card -->
+            <LinearLayout
+                android:id="@+id/securityGuardCard"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/bg_card_rounded"
+                android:padding="14dp"
+                android:layout_marginTop="10dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <ImageView
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:src="@drawable/ic_security_shield"
+                        app:tint="@color/accent"
+                        android:contentDescription="security mode" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:layout_marginStart="8dp"
+                        android:text="安防布控模式"
+                        android:textSize="14sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/text_primary" />
+
+                    <TextView
+                        android:id="@+id/tvSecurityModeStatus"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textSize="12sp"
+                        android:text="离家布防"
+                        android:textColor="@color/accent"
+                        android:textStyle="bold" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginTop="10dp">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnGuardAway"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="0dp"
+                        android:layout_height="38dp"
+                        android:layout_weight="1"
+                        android:layout_marginEnd="4dp"
+                        android:padding="0dp"
+                        android:textSize="12sp"
+                        android:text="离家布防" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnGuardHome"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="0dp"
+                        android:layout_height="38dp"
+                        android:layout_weight="1"
+                        android:layout_marginStart="2dp"
+                        android:layout_marginEnd="2dp"
+                        android:padding="0dp"
+                        android:textSize="12sp"
+                        android:text="在家守护" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnGuardDisarmed"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="0dp"
+                        android:layout_height="38dp"
+                        android:layout_weight="1"
+                        android:layout_marginStart="4dp"
+                        android:padding="0dp"
+                        android:textSize="12sp"
+                        android:text="撤防免打扰" />
+                </LinearLayout>
+            </LinearLayout>
+
             <!-- System status grid (4 cards: Devices, MQTT, WS Clients, Uptime).
                  v1.6.8: columnCount now reads from
                  @integer/dashboard_stats_column_count so phones use 2
@@ -551,6 +636,120 @@
                             android:layout_marginStart="6dp" />
                     </LinearLayout>
                 </LinearLayout>
+            </LinearLayout>
+
+            <!-- Host & Storage Resource Monitoring Card (v1.11.0) -->
+            <LinearLayout
+                android:id="@+id/cardSystemMetrics"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/bg_card_rounded"
+                android:padding="14dp"
+                android:layout_marginTop="10dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="宿主机与存储监控"
+                        android:textSize="12sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/text_secondary"
+                        android:textAllCaps="true" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnCleanCache"
+                        style="@style/Widget.MaterialComponents.Button.TextButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="32dp"
+                        android:paddingStart="8dp"
+                        android:paddingEnd="8dp"
+                        android:textSize="11sp"
+                        android:text="清理转码缓存" />
+                </LinearLayout>
+
+                <!-- CPU and Memory stats -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginTop="6dp">
+
+                    <TextView
+                        android:id="@+id/tvCpuPercent"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="CPU: --"
+                        android:textSize="12sp"
+                        android:textColor="@color/text_primary" />
+
+                    <TextView
+                        android:id="@+id/tvMemoryPercent"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="内存: --"
+                        android:textSize="12sp"
+                        android:textColor="@color/text_primary" />
+                </LinearLayout>
+
+                <!-- Recording storage quota -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:layout_marginTop="8dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="录像配额 (上限 400 GB)"
+                            android:textSize="11sp"
+                            android:textColor="@color/text_secondary" />
+
+                        <TextView
+                            android:id="@+id/tvStorageQuotaText"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="-- / 400 GB"
+                            android:textSize="11sp"
+                            android:textColor="@color/text_primary" />
+                    </LinearLayout>
+
+                    <ProgressBar
+                        android:id="@+id/pbStorageQuota"
+                        style="@android:style/Widget.ProgressBar.Horizontal"
+                        android:layout_width="match_parent"
+                        android:layout_height="6dp"
+                        android:layout_marginTop="4dp"
+                        android:max="100"
+                        android:progress="0"
+                        android:progressTint="@color/accent" />
+                </LinearLayout>
+
+                <!-- Transcode cache info -->
+                <TextView
+                    android:id="@+id/tvTranscodeCache"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="转码缓存占用: --"
+                    android:textSize="11sp"
+                    android:textColor="@color/text_hint"
+                    android:layout_marginTop="6dp" />
             </LinearLayout>
 
             <!-- Recent alerts section -->

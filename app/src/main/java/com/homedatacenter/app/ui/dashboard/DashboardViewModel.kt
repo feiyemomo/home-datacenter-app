@@ -63,6 +63,12 @@ class DashboardViewModel(
     private val _networkStatusFailed = MutableStateFlow(false)
     val networkStatusFailed: StateFlow<Boolean> = _networkStatusFailed.asStateFlow()
 
+    private val _securityGuard = MutableStateFlow<com.homedatacenter.app.data.model.SecurityGuard?>(null)
+    val securityGuard: StateFlow<com.homedatacenter.app.data.model.SecurityGuard?> = _securityGuard.asStateFlow()
+
+    private val _securityGuardLoading = MutableStateFlow(false)
+    val securityGuardLoading: StateFlow<Boolean> = _securityGuardLoading.asStateFlow()
+
     // v1.6.30: force refresh=true on the FIRST network status fetch so
     // the initial Dashboard shows current network quality instead of
     // up to 60s of backend cache staleness. The ViewModel dies with
@@ -172,6 +178,61 @@ class DashboardViewModel(
                 _networkStatusFailed.value = true
             } finally {
                 _networkStatusLoading.value = false
+            }
+        }
+    }
+
+    fun refreshSecurityGuard(token: String?) {
+        if (token.isNullOrEmpty()) return
+        viewModelScope.launch {
+            _securityGuardLoading.value = true
+            try {
+                val guard = repository.getSecurityGuard(token)
+                _securityGuard.value = guard
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+            } finally {
+                _securityGuardLoading.value = false
+            }
+        }
+    }
+
+    fun setSecurityGuard(
+        token: String?,
+        mode: String,
+        onSuccess: (() -> Unit)? = null,
+        onError: ((String) -> Unit)? = null
+    ) {
+        if (token.isNullOrEmpty()) return
+        viewModelScope.launch {
+            try {
+                val guard = repository.setSecurityGuard(token, mode)
+                _securityGuard.value = guard
+                onSuccess?.invoke()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                onError?.invoke(e.message ?: "设置安防模式失败")
+            }
+        }
+    }
+
+    fun cleanSystemCache(
+        token: String?,
+        onSuccess: (() -> Unit)? = null,
+        onError: ((String) -> Unit)? = null
+    ) {
+        if (token.isNullOrEmpty()) return
+        viewModelScope.launch {
+            try {
+                repository.cleanSystemCache(token)
+                refreshSystemStatus(token)
+                onSuccess?.invoke()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                onError?.invoke(e.message ?: "清理转码缓存失败")
             }
         }
     }

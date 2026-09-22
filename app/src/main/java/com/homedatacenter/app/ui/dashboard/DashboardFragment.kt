@@ -145,12 +145,18 @@ class DashboardFragment : Fragment() {
             startActivity(Intent(requireContext(), NetworkDetailActivity::class.java))
         }
 
+        binding.btnGuardAway.setOnClickListener { setGuardMode("away") }
+        binding.btnGuardHome.setOnClickListener { setGuardMode("home") }
+        binding.btnGuardDisarmed.setOnClickListener { setGuardMode("disarmed") }
+        binding.btnCleanCache.setOnClickListener { cleanTranscodeCache() }
+
         // Non-admin users see a simplified dashboard: the 4 stat
         // cards are hidden, but the network quality card with more
         // details is shown. The recent logs section is hidden.
         val isAdmin = (activity as? MainActivity)?.container?.prefsManager?.isAdmin == true
         if (!isAdmin) {
             binding.gridStats.visibility = View.GONE
+            binding.cardSystemMetrics.visibility = View.GONE
             // v1.6.40: show the network quality card with more details
             // for non-admin users (strategy label, path chip, IPv6/P2P/Relay dots).
             // v1.6.40: hide the "最近日志" section for non-admin users
@@ -207,6 +213,11 @@ class DashboardFragment : Fragment() {
                         if (failed && _binding != null) updateNetworkStatusError()
                     }
                 }
+                launch {
+                    viewModel.securityGuard.collect { guard ->
+                        if (guard != null && _binding != null) updateSecurityGuardUI(guard)
+                    }
+                }
             }
         }
     }
@@ -250,6 +261,7 @@ class DashboardFragment : Fragment() {
         loadNetworkStatus()
         loadRecentAlerts()
         loadRecentLogs()
+        loadSecurityGuard()
         loadSystemStatus(onComplete = {
             if (_binding != null) binding.swipeRefresh.isRefreshing = false
         })
@@ -473,6 +485,9 @@ class DashboardFragment : Fragment() {
 
         // Top status banner — aggregates MQTT + WS + devices into one pill.
         updateStatusBanner(status)
+
+        // Update Host & Storage monitoring metrics (v1.11.0)
+        updateMetricsUI(status.metrics)
     }
 
     /** Update the top-right compact status pill based on overall system health. */
@@ -672,6 +687,9 @@ class DashboardFragment : Fragment() {
             message.topic == "camera.online" || message.topic == "camera.offline" -> {
                 loadSystemStatus()
             }
+            message.topic == "security" || message.topic == "security.guard" -> {
+                loadSecurityGuard()
+            }
             message.topic == "camera.motion" -> showLiveDetection(message)
             message.topic == "system.log" -> {
                 // v1.7.10: skip processing system.log for non-admin users
@@ -805,9 +823,12 @@ class DashboardFragment : Fragment() {
             lastLiveAlert?.let { jumpToCamerasWithAlert(it) }
         }
 
-        // Post system-level heads-up notification for security detection
-        context?.let { ctx ->
-            NotificationHelper.showSecurityAlertNotification(ctx, alert)
+        // Post system-level heads-up notification for security detection if not muted (disarmed mode)
+        val isMuted = payload["muted"]?.jsonPrimitive?.booleanOrNull == true
+        if (!isMuted) {
+            context?.let { ctx ->
+                NotificationHelper.showSecurityAlertNotification(ctx, alert)
+            }
         }
 
         // Prepend to the alerts list (deduplicated)
@@ -987,6 +1008,116 @@ class DashboardFragment : Fragment() {
                 }
             }
         }
+    }
+
+    private fun loadSecurityGuard() {
+        val mainActivity = activity as? MainActivity ?: return
+        viewModel.refreshSecurityGuard(mainActivity.container.prefsManager.token)
+    }
+
+    private fun updateSecurityGuardUI(guard: com.homedatacenter.app.data.model.SecurityGuard) {
+        if (_binding == null) return
+        binding.tvSecurityModeStatus.text = guard.modeLabel
+        val context = context ?: return
+        val activeColor = androidx.core.content.ContextCompat.getColor(context, R.color.accent)
+        val inactiveColor = androidx.core.content.ContextCompat.getColor(context, R.color.text_secondary)
+        val primaryColor = androidx.core.content.ContextCompat.getColor(context, R.color.primary)
+        val warnColor = androidx.core.content.ContextCompat.getColor(context, R.color.warning)
+
+        when (guard.mode) {
+            "away" -> {
+                binding.tvSecurityModeStatus.setTextColor(activeColor)
+                binding.btnGuardAway.strokeColor = android.content.res.ColorStateList.valueOf(activeColor)
+                binding.btnGuardAway.setTextColor(activeColor)
+                binding.btnGuardHome.strokeColor = android.content.res.ColorStateList.valueOf(inactiveColor)
+                binding.btnGuardHome.setTextColor(inactiveColor)
+                binding.btnGuardDisarmed.strokeColor = android.content.res.ColorStateList.valueOf(inactiveColor)
+                binding.btnGuardDisarmed.setTextColor(inactiveColor)
+            }
+            "home" -> {
+                binding.tvSecurityModeStatus.setTextColor(primaryColor)
+                binding.btnGuardHome.strokeColor = android.content.res.ColorStateList.valueOf(primaryColor)
+                binding.btnGuardHome.setTextColor(primaryColor)
+                binding.btnGuardAway.strokeColor = android.content.res.ColorStateList.valueOf(inactiveColor)
+                binding.btnGuardAway.setTextColor(inactiveColor)
+                binding.btnGuardDisarmed.strokeColor = android.content.res.ColorStateList.valueOf(inactiveColor)
+                binding.btnGuardDisarmed.setTextColor(inactiveColor)
+            }
+            "disarmed" -> {
+                binding.tvSecurityModeStatus.setTextColor(warnColor)
+                binding.btnGuardDisarmed.strokeColor = android.content.res.ColorStateList.valueOf(warnColor)
+                binding.btnGuardDisarmed.setTextColor(warnColor)
+                binding.btnGuardAway.strokeColor = android.content.res.ColorStateList.valueOf(inactiveColor)
+                binding.btnGuardAway.setTextColor(inactiveColor)
+                binding.btnGuardHome.strokeColor = android.content.res.ColorStateList.valueOf(inactiveColor)
+                binding.btnGuardHome.setTextColor(inactiveColor)
+            }
+        }
+    }
+
+    private fun setGuardMode(mode: String) {
+        val mainActivity = activity as? MainActivity ?: return
+        val token = mainActivity.container.prefsManager.token ?: return
+        viewModel.setSecurityGuard(
+            token = token,
+            mode = mode,
+            onSuccess = {
+                if (isAdded) {
+                    android.widget.Toast.makeText(requireContext(), "安防模式已切换", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            },
+            onError = { msg ->
+                if (isAdded) {
+                    android.widget.Toast.makeText(requireContext(), msg, android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        )
+    }
+
+    private fun updateMetricsUI(metrics: com.homedatacenter.app.data.model.SystemStatusMetrics?) {
+        if (_binding == null || metrics == null) return
+        binding.tvCpuPercent.text = String.format(Locale.getDefault(), "CPU: %.1f%%", metrics.cpuPercent)
+        binding.tvMemoryPercent.text = String.format(
+            Locale.getDefault(),
+            "内存: %dMB / %dMB (%.1f%%)",
+            metrics.memoryUsedMb,
+            metrics.memoryTotalMb,
+            metrics.memoryPercent
+        )
+        binding.tvStorageQuotaText.text = String.format(
+            Locale.getDefault(),
+            "%.1f GB / %.0f GB (%.1f%%)",
+            metrics.recordingsUsedGb,
+            metrics.recordingsLimitGb,
+            metrics.recordingsPercent
+        )
+        binding.pbStorageQuota.progress = metrics.recordingsPercent.toInt().coerceIn(0, 100)
+        binding.tvTranscodeCache.text = String.format(
+            Locale.getDefault(),
+            "转码缓存占用: %d MB",
+            metrics.transcodeCacheMb
+        )
+    }
+
+    private fun cleanTranscodeCache() {
+        val mainActivity = activity as? MainActivity ?: return
+        val token = mainActivity.container.prefsManager.token ?: return
+        binding.btnCleanCache.isEnabled = false
+        viewModel.cleanSystemCache(
+            token = token,
+            onSuccess = {
+                if (_binding != null) {
+                    binding.btnCleanCache.isEnabled = true
+                    android.widget.Toast.makeText(requireContext(), "转码缓存已清理", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            },
+            onError = { msg ->
+                if (_binding != null) {
+                    binding.btnCleanCache.isEnabled = true
+                    android.widget.Toast.makeText(requireContext(), msg, android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        )
     }
 
     override fun onDestroyView() {

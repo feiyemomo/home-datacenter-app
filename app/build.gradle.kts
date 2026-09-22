@@ -1,4 +1,4 @@
-import java.util.Properties
+﻿import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
@@ -18,8 +18,8 @@ android {
         applicationId = "com.homedatacenter.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = 138
-        versionName = "1.10.9"
+        versionCode = 139
+        versionName = "1.11.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -28,8 +28,8 @@ android {
         // Project-fixed keystore so every debug build (regardless of
         // which developer/machine builds it) carries the SAME signature.
         // Without this, a fresh debug build from a different machine
-        // cannot overwrite a previously-installed version — Android's
-        // package installer reports "安装包无效" / "package invalid"
+        // cannot overwrite a previously-installed version 鈥?Android's
+        // package installer reports "瀹夎鍖呮棤鏁? / "package invalid"
         // because the SHA-1 fingerprints don't match.
         //
         // The keystore is checked into the repo under app/keystore/
@@ -50,7 +50,7 @@ android {
         // passwords live in keystore.properties (gitignored) so the
         // release private key is NEVER committed. Re-generate with keytool
         // (see keystore.properties header). This is the identity used for
-        // published APKs — guard it carefully: losing it means you can no
+        // published APKs 鈥?guard it carefully: losing it means you can no
         // longer issue update installs over an existing release.
         create("releaseSigning") {
             val props = Properties()
@@ -73,8 +73,8 @@ android {
             signingConfig = signingConfigs.getByName("projectDebug")
             // v1.8.44: debug gets its own applicationId (".debug" suffix) so
             // debug and release builds can coexist on one device. They use
-            // different keystores — same package name + different signature
-            // is an install conflict ("软件包与现有软件包存在冲突"). With this,
+            // different keystores 鈥?same package name + different signature
+            // is an install conflict ("杞欢鍖呬笌鐜版湁杞欢鍖呭瓨鍦ㄥ啿绐?). With this,
             // debug = com.homedatacenter.app.debug, release = com.homedatacenter.app,
             // two independent apps that never collide.
             applicationIdSuffix = ".debug"
@@ -107,7 +107,7 @@ android {
         // BuildConfig.VERSION_NAME is generated for the unified UA.
         buildConfig = true
     }
-    // v1.5.4: packaging block — keep useLegacyPackaging=false so AGP
+    // v1.5.4: packaging block 鈥?keep useLegacyPackaging=false so AGP
     // stores .so files uncompressed and page-aligned in the APK. This
     // is required for 16 KB page size compatibility on Android 15+
     // devices (along with .so files compiled with -Wl,-z,max-page-size=16384).
@@ -155,13 +155,13 @@ dependencies {
     implementation(libs.exoplayer.hls)
     implementation(libs.exoplayer.ui)
 
-    // WebRTC — used for sub-second live streams via go2rtc's /api/v1/webrtc
+    // WebRTC 鈥?used for sub-second live streams via go2rtc's /api/v1/webrtc
     // endpoint. Stream's Android WebRTC build is the maintained successor
     // to Google's deprecated org.webrtc:google-webrtc; ships arm64-v8a +
     // armeabi-v7a + x86_64 + x86 ABIs. Used as the primary live transport
     // in v1.5.3 (MP4 + HLS kept as fallback when WebRTC fails or when
     // the backend doesn't expose go2rtc's WebRTC route).
-    // v1.5.4: upgraded 1.1.0 → 1.3.10 to fix Android 15+ "16 KB page size
+    // v1.5.4: upgraded 1.1.0 鈫?1.3.10 to fix Android 15+ "16 KB page size
     // not compatible" warning. 1.1.0's libjingle_peerconnection_so.so
     // was compiled with 4 KB LOAD segment alignment; 1.3.x ships .so
     // files aligned to 16 KB. API surface stays compatible
@@ -170,7 +170,7 @@ dependencies {
 
     testImplementation(libs.junit)
     // org.json is bundled with android.jar at runtime but absent on the
-    // JVM — needed so JwtUtil (which parses JWT payloads with JSONObject)
+    // JVM 鈥?needed so JwtUtil (which parses JWT payloads with JSONObject)
     // is unit-testable locally.
     testImplementation("org.json:json:20240303")
     // v1.9.0: MockWebServer for OkHttp interceptor tests (RetryInterceptor,
@@ -183,3 +183,4 @@ dependencies {
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
 }
+

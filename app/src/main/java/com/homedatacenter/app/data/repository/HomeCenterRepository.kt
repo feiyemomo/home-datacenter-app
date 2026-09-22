@@ -532,6 +532,52 @@ class HomeCenterRepository(
         return api.downloadLatestApk(bearer(token), range, flavor)
     }
 
+    suspend fun getSecurityGuard(token: String): com.homedatacenter.app.data.model.SecurityGuard {
+        val resp = api.getSecurityGuard(bearer(token))
+        ensureSuccess(resp)
+        return resp.decodeDataOrThrow()
+    }
+
+    suspend fun setSecurityGuard(token: String, mode: String): com.homedatacenter.app.data.model.SecurityGuard {
+        val resp = api.setSecurityGuard(
+            bearer(token),
+            com.homedatacenter.app.data.model.SetSecurityGuardRequest(mode = mode)
+        )
+        ensureSuccess(resp)
+        return resp.decodeDataOrThrow()
+    }
+
+    suspend fun listAutomationRules(token: String): List<com.homedatacenter.app.data.model.AutomationRule> {
+        val resp = api.listAutomationRules(bearer(token))
+        ensureSuccess(resp)
+        return resp.decodeDataOrThrow()
+    }
+
+    suspend fun updateAutomationRule(
+        token: String,
+        id: Long,
+        name: String? = null,
+        enabled: Boolean? = null
+    ): com.homedatacenter.app.data.model.AutomationRule {
+        val resp = api.updateAutomationRule(
+            bearer(token),
+            id,
+            com.homedatacenter.app.data.model.UpdateAutomationRuleRequest(name = name, enabled = enabled)
+        )
+        ensureSuccess(resp)
+        return resp.decodeDataOrThrow()
+    }
+
+    suspend fun testAutomationRule(token: String, id: Long) {
+        val resp = api.testAutomationRule(bearer(token), id)
+        ensureSuccess(resp)
+    }
+
+    suspend fun cleanSystemCache(token: String) {
+        val resp = api.cleanSystemCache(bearer(token))
+        ensureSuccess(resp)
+    }
+
     private fun bearer(token: String): String = "Bearer $token"
 
     private fun ensureSuccess(resp: com.homedatacenter.app.data.model.ApiResponse) {
