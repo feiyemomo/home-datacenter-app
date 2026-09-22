@@ -93,4 +93,20 @@ class TokenManagerTest {
         val token = tokenManager.refreshViaToken("tk-expired")
         assertNull(token)
     }
+
+    @Test
+    fun `auto refresh triggers sliding refresh when debounce period passed`() {
+        server.enqueue(MockResponse().setBody("""{"code":0,"data":{"token":"tk-auto-refreshed","device_id":2}}""").setHeader("Content-Type", "application/json"))
+        `when`(prefs.token).thenReturn("tk-current")
+        `when`(prefs.accessKey).thenReturn("ak-123")
+        `when`(prefs.userId).thenReturn(42L)
+        `when`(prefs.lastTokenRefreshTime).thenReturn(System.currentTimeMillis() - 10_000L)
+        val job = tokenManager.tryAutoRefreshToken()
+        kotlinx.coroutines.runBlocking { job?.join() }
+        assertEquals(1, server.requestCount)
+        val req = server.takeRequest()
+        assertTrue(req.path!!.startsWith("/api/v1/auth/refresh"))
+        assertEquals("Bearer tk-current", req.getHeader("Authorization"))
+        verify(prefs).token = "tk-auto-refreshed"
+    }
 }

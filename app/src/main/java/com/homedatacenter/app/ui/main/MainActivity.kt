@@ -72,6 +72,9 @@ class MainActivity : AppCompatActivity() {
         // shows correctly.
         refreshRole()
 
+        // Refresh token sliding expiry on app open / enter
+        container.tryAutoRefreshToken()
+
         // Initialize system notification channels and request permission on Android 13+
         NotificationHelper.createChannels(this)
         checkNotificationPermission()
@@ -130,6 +133,8 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        // Sliding refresh token if debounce elapsed
+        container.tryAutoRefreshToken()
         // Returning to MainActivity from another activity (e.g. after
         // the user changed WiFi settings, switched VPN, came back from
         // background) is a strong signal to re-probe. forceProbe is a

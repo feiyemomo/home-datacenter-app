@@ -1076,26 +1076,26 @@ class DashboardFragment : Fragment() {
 
     private fun updateMetricsUI(metrics: com.homedatacenter.app.data.model.SystemStatusMetrics?) {
         if (_binding == null || metrics == null) return
-        binding.tvCpuPercent.text = String.format(Locale.getDefault(), "CPU: %.1f%%", metrics.cpuPercent)
+        binding.tvCpuPercent.text = String.format(Locale.getDefault(), "CPU: %.1f%%", metrics.effectiveCpuPercent)
         binding.tvMemoryPercent.text = String.format(
             Locale.getDefault(),
             "内存: %dMB / %dMB (%.1f%%)",
-            metrics.memoryUsedMb,
-            metrics.memoryTotalMb,
-            metrics.memoryPercent
+            metrics.effectiveMemoryUsedMb,
+            metrics.effectiveMemoryTotalMb,
+            metrics.effectiveMemoryPercent
         )
         binding.tvStorageQuotaText.text = String.format(
             Locale.getDefault(),
             "%.1f GB / %.0f GB (%.1f%%)",
-            metrics.recordingsUsedGb,
-            metrics.recordingsLimitGb,
-            metrics.recordingsPercent
+            metrics.effectiveRecordingsUsedGb,
+            metrics.effectiveRecordingsLimitGb,
+            metrics.effectiveRecordingsPercent
         )
-        binding.pbStorageQuota.progress = metrics.recordingsPercent.toInt().coerceIn(0, 100)
+        binding.pbStorageQuota.progress = metrics.effectiveRecordingsPercent.toInt().coerceIn(0, 100)
         binding.tvTranscodeCache.text = String.format(
             Locale.getDefault(),
             "转码缓存占用: %d MB",
-            metrics.transcodeCacheMb
+            metrics.effectiveTranscodeCacheMb
         )
     }
 

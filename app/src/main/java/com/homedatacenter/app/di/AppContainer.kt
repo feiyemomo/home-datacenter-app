@@ -572,7 +572,7 @@ class AppContainer(private val context: Context) {
      * Implementation moved to TokenManager (shared with the
      * TokenRefreshInterceptor bind flow).
      */
-    fun tryAutoRefreshToken() = tokenManager.tryAutoRefreshToken()
+    fun tryAutoRefreshToken(force: Boolean = false) = tokenManager.tryAutoRefreshToken(force)
 
     companion object {
         const val DEFAULT_BASE_URL = "https://api.feiyemomo.top/"

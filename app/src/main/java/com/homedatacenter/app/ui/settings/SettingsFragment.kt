@@ -21,7 +21,9 @@ import com.homedatacenter.app.util.JwtUtil
 import com.homedatacenter.app.util.PrefsManager
 import com.homedatacenter.app.util.ThemeManager
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -81,6 +83,14 @@ class SettingsFragment : Fragment() {
 
         loadUserInfo()
         setupVersion()
+    }
+
+    override fun onHiddenChanged(hidden: Boolean) {
+        super.onHiddenChanged(hidden)
+        if (!hidden) {
+            val mainActivity = activity as? MainActivity ?: return
+            setupJwtInfo(mainActivity.container.prefsManager)
+        }
     }
 
     private fun setupThemeSelector(prefs: PrefsManager) {
@@ -158,6 +168,25 @@ class SettingsFragment : Fragment() {
             }
         } else {
             "${getString(R.string.profile_token_remaining)}: -"
+        }
+
+        binding.tvTokenIssued.setOnClickListener {
+            val mainActivity = activity as? MainActivity ?: return@setOnClickListener
+            viewLifecycleOwner.lifecycleScope.launch {
+                Toast.makeText(requireContext(), "正在刷新令牌...", Toast.LENGTH_SHORT).show()
+                val refreshed = withContext(Dispatchers.IO) {
+                    mainActivity.container.tokenManager.refreshViaTokenAndPersist(prefs.token ?: "", force = true)
+                        ?: if (!prefs.accessKey.isNullOrEmpty() && prefs.userId > 0L) {
+                            mainActivity.container.tokenManager.refreshAndPersist(prefs.userId, prefs.accessKey!!, force = true)
+                        } else null
+                }
+                if (refreshed != null) {
+                    setupJwtInfo(prefs)
+                    Toast.makeText(requireContext(), "令牌已更新", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(requireContext(), "令牌刷新失败", Toast.LENGTH_SHORT).show()
+                }
+            }
         }
     }
 
@@ -469,6 +498,7 @@ class SettingsFragment : Fragment() {
             // elsewhere (e.g. cleared from another settings entry point).
             val mainActivity = activity as? MainActivity
             if (mainActivity != null) {
+                setupJwtInfo(mainActivity.container.prefsManager)
                 val resolver = mainActivity.container.baseUrlResolver
                 val custom = resolver.getCustomLanUrl()
                 val effective = custom ?: BaseUrlResolver.LAN_URL

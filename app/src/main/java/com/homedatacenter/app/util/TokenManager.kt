@@ -75,10 +75,13 @@ class TokenManager(
      * Synchronized with double-checked caching: prevents multiple concurrent
      * 401s from spamming /api/v1/auth/bind with redundant re-bind calls.
      */
-    fun refreshAndPersist(userId: Long, accessKey: String): String? = synchronized(refreshLock) {
+    fun refreshAndPersist(userId: Long, accessKey: String): String? =
+        refreshAndPersist(userId, accessKey, force = false)
+
+    fun refreshAndPersist(userId: Long, accessKey: String, force: Boolean): String? = synchronized(refreshLock) {
         val now = System.currentTimeMillis()
         val currentToken = prefsManager.token
-        if (!currentToken.isNullOrEmpty() && (now - prefsManager.lastTokenRefreshTime) < 5_000L) {
+        if (!force && !currentToken.isNullOrEmpty() && (now - prefsManager.lastTokenRefreshTime) < 5_000L) {
             return currentToken
         }
         val newToken = refreshToken(userId, accessKey) ?: return null
@@ -91,10 +94,13 @@ class TokenManager(
      * Refresh via token + persist: on success stores the new token and bumps
      * lastTokenRefreshTime. Returns the new token, or null.
      */
-    fun refreshViaTokenAndPersist(currentToken: String): String? = synchronized(refreshLock) {
+    fun refreshViaTokenAndPersist(currentToken: String): String? =
+        refreshViaTokenAndPersist(currentToken, force = false)
+
+    fun refreshViaTokenAndPersist(currentToken: String, force: Boolean): String? = synchronized(refreshLock) {
         val now = System.currentTimeMillis()
         val stored = prefsManager.token
-        if (!stored.isNullOrEmpty() && (now - prefsManager.lastTokenRefreshTime) < 5_000L) {
+        if (!force && !stored.isNullOrEmpty() && (now - prefsManager.lastTokenRefreshTime) < 5_000L) {
             return stored
         }
         val newToken = refreshViaToken(currentToken) ?: return null
@@ -103,47 +109,47 @@ class TokenManager(
         newToken
     }
 
-    // --- Monthly silent refresh (moved from AppContainer, v1.8.15) ---
+    // --- Sliding refresh on app open & periodically (moved from AppContainer, v1.8.15) ---
 
     private val refreshScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var refreshJob: Job? = null
 
     /**
-     * Checks and performs the once-per-month silent JWT refresh.
-     * Called from HomeCenterApp.onCreate. No-op when credentials are
-     * missing or the last refresh is younger than 30 days.
+     * Checks and performs the silent JWT refresh whenever the app opens or returns to foreground.
+     * Debounced by 5 seconds so frequent activity switching does not spam the server.
+     * Pass [force] = true to bypass the debounce.
      *
      * Prefers POST /api/v1/auth/refresh with the existing valid JWT;
      * falls back to full re-bind with (userId, accessKey) if token refresh fails.
      */
-    fun tryAutoRefreshToken() {
-        if (refreshJob?.isActive == true) return
+    fun tryAutoRefreshToken(force: Boolean = false): Job? {
+        if (refreshJob?.isActive == true) return refreshJob
         val currentToken = prefsManager.token
-        if (currentToken.isNullOrEmpty()) return
+        if (currentToken.isNullOrEmpty()) return null
 
         val lastRefresh = prefsManager.lastTokenRefreshTime
         val now = System.currentTimeMillis()
-        val thirtyDaysMs = 30L * 24 * 60 * 60 * 1000
+        val debounceMs = 5_000L
 
-        // Refreshed within the last 30 days - skip.
-        if (lastRefresh > 0 && (now - lastRefresh) < thirtyDaysMs) return
+        // Debounce calls within 5 seconds to prevent spam
+        if (!force && lastRefresh > 0 && (now - lastRefresh) < debounceMs) return null
 
         val accessKey = prefsManager.accessKey
         val userId = prefsManager.userId
 
-        refreshJob = refreshScope.launch {
+        return refreshScope.launch {
             // First try silent sliding refresh with current token (no credentials transmitted)
-            var newToken = refreshViaTokenAndPersist(currentToken)
+            var newToken = refreshViaTokenAndPersist(currentToken, force = force)
             if (newToken == null && !accessKey.isNullOrEmpty() && userId > 0L) {
                 // Fallback to full credential re-bind if token refresh was rejected
-                newToken = refreshAndPersist(userId, accessKey)
+                newToken = refreshAndPersist(userId, accessKey, force = force)
             }
             if (newToken != null) {
-                android.util.Log.d(TAG, "Token auto-refreshed (monthly)")
+                android.util.Log.d(TAG, "Token auto-refreshed successfully")
             } else {
                 android.util.Log.w(TAG, "Token auto-refresh failed")
             }
-        }
+        }.also { refreshJob = it }
     }
 
     private fun performBind(userId: Long, accessKey: String): String {

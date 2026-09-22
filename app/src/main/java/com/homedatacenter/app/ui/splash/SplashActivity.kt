@@ -154,6 +154,14 @@ class SplashActivity : AppCompatActivity() {
         return listOf(
             prefetchScope.launch {
                 try {
+                    container.tryAutoRefreshToken(force = true)?.join()
+                    Log.d(TAG, "Prefetched token auto-refresh")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Prefetch token refresh failed: ${e.message}")
+                }
+            },
+            prefetchScope.launch {
+                try {
                     val status = repository.getSystemStatus(token, useCache = true)
                     cacheManager.set("dashboard.status", status)
                     Log.d(TAG, "Prefetched dashboard.status")
