@@ -319,4 +319,20 @@
     <string name="multi_camera_subtitle">4路实时同屏预览</string>
     <string name="multi_camera_empty">暂无可用摄像头</string>
     <string name="multi_camera_action">四分屏</string>
+
+    <!-- v1.12.0: Automation linkage & rules -->
+    <string name="automations_title">智能联动与自动化</string>
+    <string name="automations_subtitle">设备与安防场景自愈中枢</string>
+    <string name="automations_empty">暂无自动化规则，点击右下角添加</string>
+    <string name="automations_create">新建规则</string>
+    <string name="automations_edit">编辑规则</string>
+    <string name="automations_test">测试触发</string>
+    <string name="automations_test_success">规则测试执行成功</string>
+    <string name="automations_test_failed">测试失败: %1$s</string>
+    <string name="automations_toggle_success">规则状态已更新</string>
+    <string name="automations_delete_confirm">确定要删除规则「%1$s」吗？</string>
+    <string name="automations_metrics_rules">%1$d 个生效 / %2$d 个规则</string>
+    <string name="automations_metrics_triggers">总触发 %1$d 次</string>
+    <string name="automations_card_title">智能联动中枢</string>
+    <string name="automations_card_desc">联动规则管理与执行</string>
 </resources>

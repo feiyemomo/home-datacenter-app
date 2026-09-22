@@ -328,6 +328,18 @@ interface HomeCenterApi {
         @Header("Authorization") auth: String
     ): ApiResponse
 
+    @POST("api/v1/automation/rules")
+    suspend fun createAutomationRule(
+        @Header("Authorization") auth: String,
+        @Body request: com.homedatacenter.app.data.model.CreateAutomationRuleRequest
+    ): ApiResponse
+
+    @GET("api/v1/automation/rules/{id}")
+    suspend fun getAutomationRule(
+        @Header("Authorization") auth: String,
+        @Path("id") id: Long
+    ): ApiResponse
+
     @PUT("api/v1/automation/rules/{id}")
     suspend fun updateAutomationRule(
         @Header("Authorization") auth: String,
@@ -335,10 +347,21 @@ interface HomeCenterApi {
         @Body request: com.homedatacenter.app.data.model.UpdateAutomationRuleRequest
     ): ApiResponse
 
+    @DELETE("api/v1/automation/rules/{id}")
+    suspend fun deleteAutomationRule(
+        @Header("Authorization") auth: String,
+        @Path("id") id: Long
+    ): ApiResponse
+
     @POST("api/v1/automation/rules/{id}/test")
     suspend fun testAutomationRule(
         @Header("Authorization") auth: String,
         @Path("id") id: Long
+    ): ApiResponse
+
+    @GET("api/v1/automation/metrics")
+    suspend fun getAutomationMetrics(
+        @Header("Authorization") auth: String
     ): ApiResponse
 
     // --- System Maintenance ---

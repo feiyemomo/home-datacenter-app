@@ -30,6 +30,7 @@ import com.homedatacenter.app.databinding.FragmentDashboardBinding
 import com.homedatacenter.app.databinding.ItemStatCardBinding
 import com.homedatacenter.app.ui.alerts.AlertListAdapter
 import com.homedatacenter.app.ui.alerts.AlertSnapshotDialogFragment
+import com.homedatacenter.app.ui.automations.AutomationsActivity
 import com.homedatacenter.app.ui.cameras.CameraDetailActivity
 import com.homedatacenter.app.ui.cameras.CamerasFragment
 import com.homedatacenter.app.ui.main.MainActivity
@@ -144,6 +145,9 @@ class DashboardFragment : Fragment() {
         binding.cardNetwork.setOnClickListener {
             startActivity(Intent(requireContext(), NetworkDetailActivity::class.java))
         }
+        binding.cardAutomationLinkage.setOnClickListener {
+            startActivity(Intent(requireContext(), AutomationsActivity::class.java))
+        }
 
         binding.btnGuardAway.setOnClickListener { setGuardMode("away") }
         binding.btnGuardHome.setOnClickListener { setGuardMode("home") }
@@ -157,6 +161,7 @@ class DashboardFragment : Fragment() {
         if (!isAdmin) {
             binding.gridStats.visibility = View.GONE
             binding.cardSystemMetrics.visibility = View.GONE
+            binding.cardAutomationLinkage.visibility = View.GONE
             // v1.6.40: show the network quality card with more details
             // for non-admin users (strategy label, path chip, IPv6/P2P/Relay dots).
             // v1.6.40: hide the "最近日志" section for non-admin users
@@ -262,6 +267,7 @@ class DashboardFragment : Fragment() {
         loadRecentAlerts()
         loadRecentLogs()
         loadSecurityGuard()
+        loadAutomationSummary()
         loadSystemStatus(onComplete = {
             if (_binding != null) binding.swipeRefresh.isRefreshing = false
         })
@@ -270,6 +276,24 @@ class DashboardFragment : Fragment() {
         // AppContainer skips if already cached.
         (activity as? MainActivity)?.container?.prefetchIceConfig()
 
+    }
+
+    private fun loadAutomationSummary() {
+        val mainActivity = activity as? MainActivity ?: return
+        val prefs = mainActivity.container.prefsManager
+        if (!prefs.isAdmin) return
+        val token = prefs.token ?: return
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val rules = mainActivity.container.getRepository().listAutomationRules(token)
+                if (_binding != null) {
+                    val activeCount = rules.count { it.enabled }
+                    binding.tvAutomationSummary.text = "${activeCount} 个规则生效中 · 共 ${rules.size} 个"
+                }
+            } catch (_: Exception) {
+            }
+        }
     }
 
     /**

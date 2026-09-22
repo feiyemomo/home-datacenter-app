@@ -1,6 +1,7 @@
 package com.homedatacenter.app.ui.settings
 
 import android.app.AlertDialog
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.os.Handler
@@ -14,6 +15,8 @@ import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.homedatacenter.app.R
 import com.homedatacenter.app.databinding.FragmentSettingsBinding
+import com.homedatacenter.app.ui.admin.UsersActivity
+import com.homedatacenter.app.ui.automations.AutomationsActivity
 import com.homedatacenter.app.ui.main.MainActivity
 import com.homedatacenter.app.util.ApkInstaller
 import com.homedatacenter.app.util.BaseUrlResolver
@@ -70,6 +73,7 @@ class SettingsFragment : Fragment() {
         setupProfileCard(prefs)
         setupJwtInfo(prefs)
         setupLanConfig()
+        setupAdminSection(prefs)
         setupUpdateSection()
 
         binding.btnAccountManagement.setOnClickListener {
@@ -204,11 +208,25 @@ class SettingsFragment : Fragment() {
                     " (${getString(R.string.setting_admin_label)})"
                 } else ""
                 binding.tvUserName.text = user.name + adminLabel
-                // Admin section was removed — no refresh needed.
+                binding.tvAdminSectionHeader.visibility = if (user.isAdmin) View.VISIBLE else View.GONE
+                binding.cardAdminSection.visibility = if (user.isAdmin) View.VISIBLE else View.GONE
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
             }
+        }
+    }
+
+    private fun setupAdminSection(prefs: PrefsManager) {
+        val isAdmin = prefs.isAdmin
+        binding.tvAdminSectionHeader.visibility = if (isAdmin) View.VISIBLE else View.GONE
+        binding.cardAdminSection.visibility = if (isAdmin) View.VISIBLE else View.GONE
+
+        binding.btnSettingsAutomations.setOnClickListener {
+            startActivity(Intent(requireContext(), AutomationsActivity::class.java))
+        }
+        binding.btnSettingsUsers.setOnClickListener {
+            startActivity(Intent(requireContext(), UsersActivity::class.java))
         }
     }
 

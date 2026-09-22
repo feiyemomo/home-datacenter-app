@@ -284,6 +284,131 @@
 
         </LinearLayout>
 
+        <!-- Admin & Management Section (Admin Only) -->
+        <TextView
+            android:id="@+id/tvAdminSectionHeader"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="系统管理"
+            android:textSize="14sp"
+            android:textColor="@color/text_secondary"
+            android:layout_marginBottom="8dp" />
+
+        <LinearLayout
+            android:id="@+id/cardAdminSection"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_glass_card"
+            android:orientation="vertical"
+            android:padding="16dp"
+            android:layout_marginBottom="24dp">
+
+            <!-- Automations Linkage -->
+            <LinearLayout
+                android:id="@+id/btnSettingsAutomations"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="?attr/selectableItemBackground"
+                android:paddingVertical="10dp">
+
+                <ImageView
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
+                    android:src="@drawable/ic_bolt"
+                    app:tint="@color/accent"
+                    android:contentDescription="automations" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical"
+                    android:layout_marginStart="12dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/automations_title"
+                        android:textSize="15sp"
+                        android:textColor="@color/text_primary" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/automations_subtitle"
+                        android:textSize="12sp"
+                        android:textColor="@color/text_secondary" />
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="›"
+                    android:textSize="18sp"
+                    android:textColor="@color/text_hint" />
+            </LinearLayout>
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="@color/divider"
+                android:layout_marginVertical="6dp" />
+
+            <!-- User Management -->
+            <LinearLayout
+                android:id="@+id/btnSettingsUsers"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="?attr/selectableItemBackground"
+                android:paddingVertical="10dp">
+
+                <ImageView
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
+                    android:src="@drawable/ic_admin_users"
+                    app:tint="@color/primary"
+                    android:contentDescription="users" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical"
+                    android:layout_marginStart="12dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/users_title"
+                        android:textSize="15sp"
+                        android:textColor="@color/text_primary" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="管理系统成员账号与权限"
+                        android:textSize="12sp"
+                        android:textColor="@color/text_secondary" />
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="›"
+                    android:textSize="18sp"
+                    android:textColor="@color/text_hint" />
+            </LinearLayout>
+
+        </LinearLayout>
+
         <!-- v1.6.11: About / Update section. Houses the "Check for
              updates" button and a small status summary below it.
              The same card style as the admin card (bg_glass_card)

@@ -86,6 +86,11 @@
             android:label="@string/users_title" />
 
         <activity
+            android:name=".ui.automations.AutomationsActivity"
+            android:exported="false"
+            android:label="@string/automations_title" />
+
+        <activity
             android:name=".ui.network.NetworkDetailActivity"
             android:exported="false"
             android:label="@string/network_detail_title" />

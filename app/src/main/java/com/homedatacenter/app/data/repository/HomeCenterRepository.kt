@@ -550,27 +550,43 @@ class HomeCenterRepository(
     suspend fun listAutomationRules(token: String): List<com.homedatacenter.app.data.model.AutomationRule> {
         val resp = api.listAutomationRules(bearer(token))
         ensureSuccess(resp)
+        return resp.decodeData<com.homedatacenter.app.data.model.AutomationRulesData>()?.rules ?: emptyList()
+    }
+
+    suspend fun createAutomationRule(
+        token: String,
+        request: com.homedatacenter.app.data.model.CreateAutomationRuleRequest
+    ): com.homedatacenter.app.data.model.AutomationRule {
+        val resp = api.createAutomationRule(bearer(token), request)
+        ensureSuccess(resp)
         return resp.decodeDataOrThrow()
     }
 
     suspend fun updateAutomationRule(
         token: String,
         id: Long,
-        name: String? = null,
-        enabled: Boolean? = null
+        request: com.homedatacenter.app.data.model.UpdateAutomationRuleRequest
     ): com.homedatacenter.app.data.model.AutomationRule {
-        val resp = api.updateAutomationRule(
-            bearer(token),
-            id,
-            com.homedatacenter.app.data.model.UpdateAutomationRuleRequest(name = name, enabled = enabled)
-        )
+        val resp = api.updateAutomationRule(bearer(token), id, request)
         ensureSuccess(resp)
         return resp.decodeDataOrThrow()
     }
 
-    suspend fun testAutomationRule(token: String, id: Long) {
+    suspend fun deleteAutomationRule(token: String, id: Long) {
+        val resp = api.deleteAutomationRule(bearer(token), id)
+        ensureSuccess(resp)
+    }
+
+    suspend fun testAutomationRule(token: String, id: Long): com.homedatacenter.app.data.model.TestRuleResponse {
         val resp = api.testAutomationRule(bearer(token), id)
         ensureSuccess(resp)
+        return resp.decodeDataOrThrow()
+    }
+
+    suspend fun getAutomationMetrics(token: String): com.homedatacenter.app.data.model.AutomationMetrics? {
+        val resp = api.getAutomationMetrics(bearer(token))
+        ensureSuccess(resp)
+        return resp.decodeData()
     }
 
     suspend fun cleanSystemCache(token: String) {
