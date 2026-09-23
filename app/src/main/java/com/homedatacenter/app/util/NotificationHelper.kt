@@ -142,6 +142,66 @@ object NotificationHelper {
         }
     }
 
+    fun showFallAlertNotification(context: Context, cameraSlug: String, cameraName: String) {
+        val title = "🚨 紧急告警：检测到人员摔倒！"
+        val message = "监控设备【${cameraName.ifBlank { cameraSlug.ifBlank { "室内摄像头" } }}】检测到人员异常跌倒，请立即确认！"
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra(EXTRA_NAVIGATE_TAB, R.id.nav_cameras)
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            9999,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val notification = NotificationCompat.Builder(context, CHANNEL_SECURITY_ALERTS)
+            .setSmallIcon(R.drawable.ic_camera)
+            .setContentTitle(title)
+            .setContentText(message)
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setAutoCancel(true)
+            .setVibrate(longArrayOf(0, 500, 200, 500))
+            .setContentIntent(pendingIntent)
+            .build()
+
+        try {
+            NotificationManagerCompat.from(context).notify(9999, notification)
+        } catch (_: SecurityException) {
+            // Android 13+ permission might not be granted yet
+        }
+    }
+
+    fun showPersonRecognizedNotification(context: Context, name: String, cameraName: String) {
+        val title = "👤 视觉识别通知"
+        val message = "摄像头【${cameraName.ifBlank { "安防监控" }}】识别到家庭成员【$name】"
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra(EXTRA_NAVIGATE_TAB, R.id.nav_cameras)
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            9998,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val notification = NotificationCompat.Builder(context, CHANNEL_SECURITY_ALERTS)
+            .setSmallIcon(R.drawable.ic_camera)
+            .setContentTitle(title)
+            .setContentText(message)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .build()
+
+        try {
+            NotificationManagerCompat.from(context).notify(9998, notification)
+        } catch (_: SecurityException) {
+            // Android 13+ permission might not be granted yet
+        }
+    }
+
     private fun formatDetectionLabel(context: Context, label: String): String {
         val res = when (label.lowercase()) {
             "person" -> R.string.detection_label_person

@@ -677,6 +677,8 @@ class DashboardFragment : Fragment() {
                     dashboardWebSocket?.subscribe("device")
                     dashboardWebSocket?.subscribe("camera")
                     dashboardWebSocket?.subscribe("camera.motion")
+                    dashboardWebSocket?.subscribe("camera.fall_detected")
+                    dashboardWebSocket?.subscribe("camera.person_recognized")
                     dashboardWebSocket?.subscribe("system.log")
                 }
 
@@ -715,6 +717,20 @@ class DashboardFragment : Fragment() {
                 loadSecurityGuard()
             }
             message.topic == "camera.motion" -> showLiveDetection(message)
+            message.topic == "camera.fall_detected" -> {
+                val camSlug = message.payload?.get("camera_slug")?.toString()?.replace("\"", "") ?: ""
+                val camName = message.payload?.get("camera_name")?.toString()?.replace("\"", "") ?: camSlug
+                context?.let { ctx ->
+                    NotificationHelper.showFallAlertNotification(ctx, camSlug, camName)
+                }
+            }
+            message.topic == "camera.person_recognized" -> {
+                val name = message.payload?.get("name")?.toString()?.replace("\"", "") ?: "家庭成员"
+                val camName = message.payload?.get("camera_name")?.toString()?.replace("\"", "") ?: ""
+                context?.let { ctx ->
+                    NotificationHelper.showPersonRecognizedNotification(ctx, name, camName)
+                }
+            }
             message.topic == "system.log" -> {
                 // v1.7.10: skip processing system.log for non-admin users
                 if ((activity as? MainActivity)?.container?.prefsManager?.isAdmin != true) return
