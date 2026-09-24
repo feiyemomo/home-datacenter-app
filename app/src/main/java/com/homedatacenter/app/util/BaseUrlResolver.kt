@@ -751,7 +751,7 @@ class BaseUrlResolver(
             // by the next API call.
             val request = Request.Builder()
                 .url("${url.trimEnd('/')}/api/v1/system/status")
-                .head()
+                .get()
                 .build()
             warmupClient.newCall(request).execute().use { response ->
                 android.util.Log.i(

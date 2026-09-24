@@ -149,8 +149,8 @@ class DashboardFragment : Fragment() {
             startActivity(Intent(requireContext(), AutomationsActivity::class.java))
         }
 
-        binding.btnGuardAway.setOnClickListener { setGuardMode("away") }
-        binding.btnGuardHome.setOnClickListener { setGuardMode("home") }
+        binding.btnGuardAway.setOnClickListener { setGuardMode("armed_away") }
+        binding.btnGuardHome.setOnClickListener { setGuardMode("armed_home") }
         binding.btnGuardDisarmed.setOnClickListener { setGuardMode("disarmed") }
         binding.btnCleanCache.setOnClickListener { cleanTranscodeCache() }
 
@@ -1064,8 +1064,8 @@ class DashboardFragment : Fragment() {
         val primaryColor = androidx.core.content.ContextCompat.getColor(context, R.color.primary)
         val warnColor = androidx.core.content.ContextCompat.getColor(context, R.color.warning)
 
-        when (guard.mode) {
-            "away" -> {
+        when {
+            guard.isAway -> {
                 binding.tvSecurityModeStatus.setTextColor(activeColor)
                 binding.btnGuardAway.strokeColor = android.content.res.ColorStateList.valueOf(activeColor)
                 binding.btnGuardAway.setTextColor(activeColor)
@@ -1074,7 +1074,7 @@ class DashboardFragment : Fragment() {
                 binding.btnGuardDisarmed.strokeColor = android.content.res.ColorStateList.valueOf(inactiveColor)
                 binding.btnGuardDisarmed.setTextColor(inactiveColor)
             }
-            "home" -> {
+            guard.isHome -> {
                 binding.tvSecurityModeStatus.setTextColor(primaryColor)
                 binding.btnGuardHome.strokeColor = android.content.res.ColorStateList.valueOf(primaryColor)
                 binding.btnGuardHome.setTextColor(primaryColor)
@@ -1083,7 +1083,7 @@ class DashboardFragment : Fragment() {
                 binding.btnGuardDisarmed.strokeColor = android.content.res.ColorStateList.valueOf(inactiveColor)
                 binding.btnGuardDisarmed.setTextColor(inactiveColor)
             }
-            "disarmed" -> {
+            guard.isDisarmed -> {
                 binding.tvSecurityModeStatus.setTextColor(warnColor)
                 binding.btnGuardDisarmed.strokeColor = android.content.res.ColorStateList.valueOf(warnColor)
                 binding.btnGuardDisarmed.setTextColor(warnColor)

@@ -123,7 +123,7 @@ class MultiCameraActivity : AppCompatActivity() {
                     val cam = cameras[i]
                     val iv = previews[i]
                     try {
-                        val frameUrl = "$baseUrl/api/v1/cameras/${cam.id}/frame"
+                        val frameUrl = "$baseUrl/api/v1/cameras/${cam.id}/frame?width=320&quality=20"
                         val reqBuilder = Request.Builder().url(frameUrl)
                         if (!token.isNullOrEmpty()) {
                             reqBuilder.header("Authorization", "Bearer $token")

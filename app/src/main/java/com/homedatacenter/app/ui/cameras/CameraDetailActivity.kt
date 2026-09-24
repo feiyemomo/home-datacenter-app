@@ -866,6 +866,9 @@ class CameraDetailActivity : AppCompatActivity() {
             try {
                 webRtcClient?.setVideoEnabled(!webRtcPaused)
             } catch (_: Exception) {}
+            try {
+                player?.playWhenReady = !webRtcPaused
+            } catch (_: Exception) {}
             updateWebRtcControlButtons()
         }
         binding.btnWebRtcMute.setOnClickListener {

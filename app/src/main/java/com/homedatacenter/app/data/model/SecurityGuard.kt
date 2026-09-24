@@ -9,15 +9,15 @@ data class SecurityGuard(
     @SerialName("updated_at") val updatedAt: Long = 0,
     @SerialName("updated_by") val updatedBy: String = ""
 ) {
-    val isAway: Boolean get() = mode == "away"
-    val isHome: Boolean get() = mode == "home"
-    val isDisarmed: Boolean get() = mode == "disarmed"
+    val isAway: Boolean get() = mode == "away" || mode == "armed_away"
+    val isHome: Boolean get() = mode == "home" || mode == "armed_home"
+    val isDisarmed: Boolean get() = mode == "disarmed" || mode == "disarm"
 
     val modeLabel: String
-        get() = when (mode) {
-            "away" -> "离家布防"
-            "home" -> "在家守护"
-            "disarmed" -> "撤防免打扰"
+        get() = when {
+            isAway -> "离家布防"
+            isHome -> "在家守护"
+            isDisarmed -> "撤防免打扰"
             else -> mode
         }
 }

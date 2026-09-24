@@ -147,7 +147,27 @@ class WebRtcClient(
      * resume is instant (no re-negotiation needed).
      */
     fun setVideoEnabled(enabled: Boolean) {
-        videoTrack?.setEnabled(enabled)
+        val vt = videoTrack
+        val sink = activeSurfaceRenderer
+        if (enabled) {
+            vt?.setEnabled(true)
+            if (sink != null && vt != null) {
+                try {
+                    vt.addSink(sink)
+                } catch (_: Exception) {}
+            }
+            if (audioEnabledByUser) {
+                audioTrack?.setEnabled(true)
+            }
+        } else {
+            if (sink != null && vt != null) {
+                try {
+                    vt.removeSink(sink)
+                } catch (_: Exception) {}
+            }
+            vt?.setEnabled(false)
+            audioTrack?.setEnabled(false)
+        }
     }
 
     /**
