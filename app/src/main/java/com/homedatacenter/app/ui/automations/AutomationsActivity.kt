@@ -30,8 +30,22 @@ class AutomationsActivity : AppCompatActivity() {
     private lateinit var container: AppContainer
     private lateinit var adapter: AutomationRuleAdapter
 
-    private val triggerKeys = listOf("detection", "alert", "camera.offline", "camera.online")
-    private val triggerLabels = listOf("目标检测 (detection)", "安全告警 (alert)", "摄像头离线 (camera.offline)", "摄像头上线 (camera.online)")
+    private val triggerKeys = listOf(
+        "detection",
+        "camera.fall_detected",
+        "camera.person_recognized",
+        "alert",
+        "camera.offline",
+        "camera.online"
+    )
+    private val triggerLabels = listOf(
+        "目标检测 (detection)",
+        "摔倒高危告警 (fall_detected)",
+        "家人面部识别 (person_recognized)",
+        "安全告警 (alert)",
+        "摄像头离线 (camera.offline)",
+        "摄像头上线 (camera.online)"
+    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -157,8 +171,17 @@ class AutomationsActivity : AppCompatActivity() {
         val sheetBinding = BottomSheetEditRuleBinding.inflate(layoutInflater)
         sheetDialog.setContentView(sheetBinding.root)
 
-        // Spinner setup
-        val spinnerAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, triggerLabels)
+        // Make system bottom sheet container transparent so custom rounded corners and shadow show cleanly
+        sheetDialog.setOnShowListener {
+            val bottomSheet = sheetDialog.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)
+            bottomSheet?.setBackgroundResource(android.R.color.transparent)
+        }
+
+        // Spinner setup with high-contrast custom layouts and themed popup background
+        sheetBinding.spinnerTrigger.setPopupBackgroundResource(R.drawable.bg_spinner_popup)
+        val spinnerAdapter = ArrayAdapter(this, R.layout.item_spinner_trigger, triggerLabels).apply {
+            setDropDownViewResource(R.layout.item_spinner_dropdown)
+        }
         sheetBinding.spinnerTrigger.adapter = spinnerAdapter
 
         // Switch trigger event visibility for detection filters
@@ -188,6 +211,28 @@ class AutomationsActivity : AppCompatActivity() {
             sheetBinding.rbActionNotify.isChecked = true
             sheetBinding.etNotifyTitle.setText("夜间人形入侵告警")
             sheetBinding.etNotifyMessage.setText("监控摄像头检测到夜间有人走动，请留意！")
+            sheetBinding.etCooldown.setText("60")
+        }
+
+        sheetBinding.chipTplFallAlert.setOnClickListener {
+            sheetBinding.etRuleName.setText("摔倒紧急强提醒")
+            sheetBinding.spinnerTrigger.setSelection(triggerKeys.indexOf("camera.fall_detected").coerceAtLeast(0))
+            sheetBinding.etTimeStart.setText("")
+            sheetBinding.etTimeEnd.setText("")
+            sheetBinding.rbActionNotify.isChecked = true
+            sheetBinding.etNotifyTitle.setText("人员摔倒高危告警！")
+            sheetBinding.etNotifyMessage.setText("监控摄像头检测到疑似摔倒姿态，请立即前往确认！")
+            sheetBinding.etCooldown.setText("30")
+        }
+
+        sheetBinding.chipTplFamilyWelcome.setOnClickListener {
+            sheetBinding.etRuleName.setText("家人回家提醒")
+            sheetBinding.spinnerTrigger.setSelection(triggerKeys.indexOf("camera.person_recognized").coerceAtLeast(0))
+            sheetBinding.etTimeStart.setText("")
+            sheetBinding.etTimeEnd.setText("")
+            sheetBinding.rbActionNotify.isChecked = true
+            sheetBinding.etNotifyTitle.setText("家人回家提醒")
+            sheetBinding.etNotifyMessage.setText("摄像头识别到家人已到家")
             sheetBinding.etCooldown.setText("60")
         }
 

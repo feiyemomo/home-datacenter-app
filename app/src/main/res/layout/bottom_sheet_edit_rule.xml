@@ -5,13 +5,24 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:background="@drawable/bg_glass_dark_panel"
-    android:padding="20dp">
+    android:background="@drawable/bg_bottom_sheet"
+    android:paddingStart="20dp"
+    android:paddingEnd="20dp"
+    android:paddingTop="12dp"
+    android:paddingBottom="24dp">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical">
+
+        <!-- Top Drag Handle -->
+        <View
+            android:layout_width="36dp"
+            android:layout_height="4dp"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginBottom="16dp"
+            android:background="@drawable/bg_bottom_sheet_handle" />
 
         <!-- Header -->
         <LinearLayout
@@ -74,6 +85,34 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="🌙 夜间人形入侵"
+                    app:chipBackgroundColor="@color/bg_secondary"
+                    app:chipStrokeColor="@color/divider"
+                    app:chipStrokeWidth="1dp"
+                    android:textColor="@color/text_primary"
+                    android:textSize="12sp" />
+
+                <com.google.android.material.chip.Chip
+                    android:id="@+id/chipTplFallAlert"
+                    style="@style/Widget.Material3.Chip.Suggestion"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="🚨 摔倒紧急强提醒"
+                    app:chipBackgroundColor="@color/bg_secondary"
+                    app:chipStrokeColor="@color/divider"
+                    app:chipStrokeWidth="1dp"
+                    android:textColor="@color/text_primary"
+                    android:textSize="12sp" />
+
+                <com.google.android.material.chip.Chip
+                    android:id="@+id/chipTplFamilyWelcome"
+                    style="@style/Widget.Material3.Chip.Suggestion"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="👤 家人识别回家"
+                    app:chipBackgroundColor="@color/bg_secondary"
+                    app:chipStrokeColor="@color/divider"
+                    app:chipStrokeWidth="1dp"
+                    android:textColor="@color/text_primary"
                     android:textSize="12sp" />
 
                 <com.google.android.material.chip.Chip
@@ -82,6 +121,10 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="📷 摄像头离线"
+                    app:chipBackgroundColor="@color/bg_secondary"
+                    app:chipStrokeColor="@color/divider"
+                    app:chipStrokeWidth="1dp"
+                    android:textColor="@color/text_primary"
                     android:textSize="12sp" />
 
                 <com.google.android.material.chip.Chip
@@ -90,6 +133,10 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="💡 人来开灯 (MQTT)"
+                    app:chipBackgroundColor="@color/bg_secondary"
+                    app:chipStrokeColor="@color/divider"
+                    app:chipStrokeWidth="1dp"
+                    android:textColor="@color/text_primary"
                     android:textSize="12sp" />
 
                 <com.google.android.material.chip.Chip
@@ -98,6 +145,10 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="🌐 外部 Webhook"
+                    app:chipBackgroundColor="@color/bg_secondary"
+                    app:chipStrokeColor="@color/divider"
+                    app:chipStrokeWidth="1dp"
+                    android:textColor="@color/text_primary"
                     android:textSize="12sp" />
             </com.google.android.material.chip.ChipGroup>
         </HorizontalScrollView>
@@ -109,13 +160,17 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
             android:hint="规则名称"
-            app:boxStrokeColor="@color/primary">
+            app:boxBackgroundColor="@color/bg_secondary"
+            app:boxStrokeColor="@color/primary"
+            app:hintTextColor="@color/primary"
+            android:textColorHint="@color/text_hint">
 
             <com.google.android.material.textfield.TextInputEditText
                 android:id="@+id/etRuleName"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:singleLine="true"
+                android:textColor="@color/text_primary"
                 android:textSize="14sp" />
         </com.google.android.material.textfield.TextInputLayout>
 
@@ -128,12 +183,29 @@
             android:textSize="12sp"
             android:textColor="@color/text_secondary" />
 
-        <Spinner
-            android:id="@+id/spinnerTrigger"
+        <FrameLayout
             android:layout_width="match_parent"
-            android:layout_height="46dp"
+            android:layout_height="48dp"
             android:layout_marginTop="4dp"
-            android:background="@drawable/bg_glass_card" />
+            android:background="@drawable/bg_spinner_border">
+
+            <Spinner
+                android:id="@+id/spinnerTrigger"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@android:color/transparent"
+                android:paddingStart="14dp"
+                android:paddingEnd="36dp" />
+
+            <ImageView
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_gravity="end|center_vertical"
+                android:layout_marginEnd="12dp"
+                android:src="@drawable/ic_chevron_down"
+                app:tint="@color/text_secondary"
+                android:contentDescription="dropdown" />
+        </FrameLayout>
 
         <!-- Condition: Time range -->
         <TextView
@@ -155,13 +227,18 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:hint="起始 (如 22:00)">
+                android:hint="起始 (如 22:00)"
+                app:boxBackgroundColor="@color/bg_secondary"
+                app:boxStrokeColor="@color/primary"
+                app:hintTextColor="@color/primary"
+                android:textColorHint="@color/text_hint">
 
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/etTimeStart"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:singleLine="true"
+                    android:textColor="@color/text_primary"
                     android:textSize="13sp" />
             </com.google.android.material.textfield.TextInputLayout>
 
@@ -178,13 +255,18 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:hint="结束 (如 06:00)">
+                android:hint="结束 (如 06:00)"
+                app:boxBackgroundColor="@color/bg_secondary"
+                app:boxStrokeColor="@color/primary"
+                app:hintTextColor="@color/primary"
+                android:textColorHint="@color/text_hint">
 
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/etTimeEnd"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:singleLine="true"
+                    android:textColor="@color/text_primary"
                     android:textSize="13sp" />
             </com.google.android.material.textfield.TextInputLayout>
         </LinearLayout>
@@ -202,7 +284,11 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:hint="识别类别 (person/car)">
+                android:hint="识别类别 (person/car)"
+                app:boxBackgroundColor="@color/bg_secondary"
+                app:boxStrokeColor="@color/primary"
+                app:hintTextColor="@color/primary"
+                android:textColorHint="@color/text_hint">
 
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/etLabel"
@@ -210,6 +296,7 @@
                     android:layout_height="wrap_content"
                     android:text="person"
                     android:singleLine="true"
+                    android:textColor="@color/text_primary"
                     android:textSize="13sp" />
             </com.google.android.material.textfield.TextInputLayout>
 
@@ -222,7 +309,11 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:hint="最低置信度 (0.0-1.0)">
+                android:hint="最低置信度 (0.0-1.0)"
+                app:boxBackgroundColor="@color/bg_secondary"
+                app:boxStrokeColor="@color/primary"
+                app:hintTextColor="@color/primary"
+                android:textColorHint="@color/text_hint">
 
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/etConfidence"
@@ -231,6 +322,7 @@
                     android:text="0.80"
                     android:inputType="numberDecimal"
                     android:singleLine="true"
+                    android:textColor="@color/text_primary"
                     android:textSize="13sp" />
             </com.google.android.material.textfield.TextInputLayout>
         </LinearLayout>
@@ -257,6 +349,7 @@
                 android:layout_height="wrap_content"
                 android:checked="true"
                 android:text="系统通知"
+                android:textColor="@color/text_primary"
                 android:textSize="13sp" />
 
             <com.google.android.material.radiobutton.MaterialRadioButton
@@ -265,6 +358,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginStart="8dp"
                 android:text="MQTT 指令"
+                android:textColor="@color/text_primary"
                 android:textSize="13sp" />
 
             <com.google.android.material.radiobutton.MaterialRadioButton
@@ -273,6 +367,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginStart="8dp"
                 android:text="Webhook"
+                android:textColor="@color/text_primary"
                 android:textSize="13sp" />
         </RadioGroup>
 
@@ -288,12 +383,17 @@
                 style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:hint="通知标题">
+                android:hint="通知标题"
+                app:boxBackgroundColor="@color/bg_secondary"
+                app:boxStrokeColor="@color/primary"
+                app:hintTextColor="@color/primary"
+                android:textColorHint="@color/text_hint">
 
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/etNotifyTitle"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
+                    android:textColor="@color/text_primary"
                     android:textSize="13sp" />
             </com.google.android.material.textfield.TextInputLayout>
 
@@ -302,12 +402,17 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
-                android:hint="通知内容">
+                android:hint="通知内容"
+                app:boxBackgroundColor="@color/bg_secondary"
+                app:boxStrokeColor="@color/primary"
+                app:hintTextColor="@color/primary"
+                android:textColorHint="@color/text_hint">
 
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/etNotifyMessage"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
+                    android:textColor="@color/text_primary"
                     android:textSize="13sp" />
             </com.google.android.material.textfield.TextInputLayout>
         </LinearLayout>
@@ -325,12 +430,17 @@
                 style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:hint="MQTT Topic (如 home/light/switch)">
+                android:hint="MQTT Topic (如 home/light/switch)"
+                app:boxBackgroundColor="@color/bg_secondary"
+                app:boxStrokeColor="@color/primary"
+                app:hintTextColor="@color/primary"
+                android:textColorHint="@color/text_hint">
 
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/etMqttTopic"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
+                    android:textColor="@color/text_primary"
                     android:textSize="13sp" />
             </com.google.android.material.textfield.TextInputLayout>
 
@@ -339,12 +449,17 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
-                android:hint="Payload JSON (如 {&quot;state&quot;:&quot;ON&quot;})">
+                android:hint="Payload JSON (如 {&quot;state&quot;:&quot;ON&quot;})"
+                app:boxBackgroundColor="@color/bg_secondary"
+                app:boxStrokeColor="@color/primary"
+                app:hintTextColor="@color/primary"
+                android:textColorHint="@color/text_hint">
 
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/etMqttPayload"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
+                    android:textColor="@color/text_primary"
                     android:textSize="13sp" />
             </com.google.android.material.textfield.TextInputLayout>
         </LinearLayout>
@@ -362,13 +477,18 @@
                 style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:hint="Webhook URL (http:// 或 https://)">
+                android:hint="Webhook URL (http:// 或 https://)"
+                app:boxBackgroundColor="@color/bg_secondary"
+                app:boxStrokeColor="@color/primary"
+                app:hintTextColor="@color/primary"
+                android:textColorHint="@color/text_hint">
 
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/etWebhookUrl"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:inputType="textUri"
+                    android:textColor="@color/text_primary"
                     android:textSize="13sp" />
             </com.google.android.material.textfield.TextInputLayout>
         </LinearLayout>
@@ -379,7 +499,11 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
-            android:hint="节流冷却时间 (秒)">
+            android:hint="节流冷却时间 (秒)"
+            app:boxBackgroundColor="@color/bg_secondary"
+            app:boxStrokeColor="@color/primary"
+            app:hintTextColor="@color/primary"
+            android:textColorHint="@color/text_hint">
 
             <com.google.android.material.textfield.TextInputEditText
                 android:id="@+id/etCooldown"
@@ -387,6 +511,7 @@
                 android:layout_height="wrap_content"
                 android:inputType="number"
                 android:text="60"
+                android:textColor="@color/text_primary"
                 android:textSize="13sp" />
         </com.google.android.material.textfield.TextInputLayout>
 
@@ -395,24 +520,28 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:layout_marginTop="20dp">
+            android:layout_marginTop="24dp">
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnCancel"
-                style="@style/Widget.Material3.Button.TextButton"
+                style="@style/Widget.Material3.Button.OutlinedButton"
                 android:layout_width="0dp"
                 android:layout_weight="1"
-                android:layout_height="wrap_content"
+                android:layout_height="48dp"
                 android:text="@string/btn_cancel"
+                android:textColor="@color/text_secondary"
+                app:strokeColor="@color/divider"
                 android:layout_marginEnd="8dp" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btnSave"
-                style="@style/Widget.Material3.Button.TonalButton"
+                style="@style/Widget.Material3.Button"
                 android:layout_width="0dp"
                 android:layout_weight="1"
-                android:layout_height="wrap_content"
+                android:layout_height="48dp"
                 android:text="@string/btn_save"
+                android:textColor="@color/text_on_primary"
+                app:backgroundTint="@color/primary"
                 android:layout_marginStart="8dp" />
         </LinearLayout>
 
