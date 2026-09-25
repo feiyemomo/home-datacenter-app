@@ -1,15 +1,72 @@
 package com.homedatacenter.app.ui.automations
 
-import android.app.AlertDialog
 import android.os.Bundle
-import android.view.View
-import android.widget.AdapterView
-import android.widget.ArrayAdapter
 import android.widget.Toast
-import androidx.appcompat.app.AppCompatActivity
-import androidx.lifecycle.lifecycleScope
-import androidx.recyclerview.widget.LinearLayoutManager
-import com.google.android.material.bottomsheet.BottomSheetDialog
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.homedatacenter.app.HomeCenterApp
 import com.homedatacenter.app.R
 import com.homedatacenter.app.data.model.AutomationRule
@@ -19,389 +76,861 @@ import com.homedatacenter.app.data.model.RuleAction
 import com.homedatacenter.app.data.model.RuleCondition
 import com.homedatacenter.app.data.model.RuleThrottle
 import com.homedatacenter.app.data.model.UpdateAutomationRuleRequest
-import com.homedatacenter.app.databinding.ActivityAutomationsBinding
-import com.homedatacenter.app.databinding.BottomSheetEditRuleBinding
-import com.homedatacenter.app.di.AppContainer
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
-class AutomationsActivity : AppCompatActivity() {
-
-    private lateinit var binding: ActivityAutomationsBinding
-    private lateinit var container: AppContainer
-    private lateinit var adapter: AutomationRuleAdapter
-
-    private val triggerKeys = listOf(
-        "detection",
-        "camera.fall_detected",
-        "camera.person_recognized",
-        "alert",
-        "camera.offline",
-        "camera.online"
-    )
-    private val triggerLabels = listOf(
-        "目标检测 (detection)",
-        "摔倒高危告警 (fall_detected)",
-        "家人面部识别 (person_recognized)",
-        "安全告警 (alert)",
-        "摄像头离线 (camera.offline)",
-        "摄像头上线 (camera.online)"
-    )
+/**
+ * AutomationsActivity — Full Jetpack Compose declarative architecture (v1.13.0, 四.2).
+ * Features a visual pipeline card design:
+ *   [触发源 (Trigger)] ➔ [过滤规则 (Filter)] ➔ [联动动作 (Action)]
+ * with execution heat indicators, metrics banner, and live rule testing.
+ */
+class AutomationsActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        binding = ActivityAutomationsBinding.inflate(layoutInflater)
-        setContentView(binding.root)
+        val container = (application as HomeCenterApp).container
 
-        container = (application as HomeCenterApp).container
-
-        binding.toolbar.setNavigationOnClickListener { finish() }
-        binding.swipeRefresh.setOnRefreshListener { loadData() }
-        binding.fabAdd.setOnClickListener { showEditRuleBottomSheet(null) }
-        binding.btnEmptyAdd.setOnClickListener { showEditRuleBottomSheet(null) }
-
-        adapter = AutomationRuleAdapter(
-            onToggle = { rule, isChecked -> toggleRule(rule, isChecked) },
-            onTest = { rule -> testRule(rule) },
-            onEdit = { rule -> showEditRuleBottomSheet(rule) },
-            onDelete = { rule -> confirmDeleteRule(rule) },
-        )
-        binding.rvRules.layoutManager = LinearLayoutManager(this)
-        binding.rvRules.adapter = adapter
-
-        loadData()
-    }
-
-    private fun loadData() {
-        val token = container.prefsManager.token ?: return
-        lifecycleScope.launch {
-            binding.swipeRefresh.isRefreshing = true
-            try {
-                val rules = container.getRepository().listAutomationRules(token)
-                adapter.submitList(rules)
-
-                val activeCount = rules.count { it.enabled }
-                val totalCount = rules.size
-                binding.tvMetricsRules.text = getString(R.string.automations_metrics_rules, activeCount, totalCount)
-
-                val totalFires = rules.sumOf { it.fireCount }
-                binding.tvMetricsTriggers.text = getString(R.string.automations_metrics_triggers, totalFires)
-
-                val isEmpty = rules.isEmpty()
-                binding.layoutEmpty.visibility = if (isEmpty) View.VISIBLE else View.GONE
-                binding.rvRules.visibility = if (isEmpty) View.GONE else View.VISIBLE
-            } catch (e: Exception) {
-                Toast.makeText(this@AutomationsActivity, "加载失败: ${e.message}", Toast.LENGTH_SHORT).show()
-            } finally {
-                binding.swipeRefresh.isRefreshing = false
-            }
-        }
-    }
-
-    private fun toggleRule(rule: AutomationRule, isChecked: Boolean) {
-        val token = container.prefsManager.token ?: return
-        lifecycleScope.launch {
-            try {
-                val req = UpdateAutomationRuleRequest(
-                    name = rule.name,
-                    trigger = rule.trigger,
-                    condition = rule.condition,
-                    action = rule.action,
-                    throttle = rule.throttle,
-                    enabled = isChecked,
+        setContent {
+            val isDark = isSystemInDarkTheme()
+            val colorScheme = if (isDark) {
+                darkColorScheme(
+                    primary = Color(0xFF64B5F6),
+                    secondary = Color(0xFF81C784),
+                    background = Color(0xFF121418),
+                    surface = Color(0xFF1E222A),
+                    onPrimary = Color.Black,
+                    onSurface = Color(0xFFE8EAED),
                 )
-                val updated = container.getRepository().updateAutomationRule(token, rule.id, req)
-                val current = adapter.currentList.map { if (it.id == rule.id) updated else it }
-                adapter.submitList(current)
+            } else {
+                lightColorScheme(
+                    primary = Color(0xFF1976D2),
+                    secondary = Color(0xFF388E3C),
+                    background = Color(0xFFF7F9FC),
+                    surface = Color(0xFFFFFFFF),
+                    onPrimary = Color.White,
+                    onSurface = Color(0xFF1A1C1E),
+                )
+            }
 
-                val activeCount = current.count { it.enabled }
-                binding.tvMetricsRules.text = getString(R.string.automations_metrics_rules, activeCount, current.size)
-                Toast.makeText(this@AutomationsActivity, getString(R.string.automations_toggle_success), Toast.LENGTH_SHORT).show()
-            } catch (e: Exception) {
-                Toast.makeText(this@AutomationsActivity, "更新失败: ${e.message}", Toast.LENGTH_SHORT).show()
-                // Revert switch on failure by reloading
-                loadData()
+            MaterialTheme(colorScheme = colorScheme) {
+                AutomationsScreen(
+                    container = container,
+                    onBack = { finish() }
+                )
             }
         }
     }
+}
 
-    private fun testRule(rule: AutomationRule) {
-        val token = container.prefsManager.token ?: return
-        lifecycleScope.launch {
-            try {
-                Toast.makeText(this@AutomationsActivity, "正在测试规则...", Toast.LENGTH_SHORT).show()
-                val res = container.getRepository().testAutomationRule(token, rule.id)
-                AlertDialog.Builder(this@AutomationsActivity)
-                    .setTitle("测试触发成功")
-                    .setMessage("规则「${res.name}」已手动触发！\n执行动作: ${res.action}\n状态: 测试通过")
-                    .setPositiveButton(R.string.action_done, null)
-                    .show()
-                loadData()
-            } catch (e: Exception) {
-                Toast.makeText(this@AutomationsActivity, getString(R.string.automations_test_failed, e.message), Toast.LENGTH_LONG).show()
-            }
-        }
-    }
+private val TRIGGER_OPTIONS = listOf(
+    "detection" to "目标检测 (detection)",
+    "camera.fall_detected" to "🚨 摔倒高危告警 (fall_detected)",
+    "camera.person_recognized" to "👤 家人面部识别 (person_recognized)",
+    "alert" to "安全告警 (alert)",
+    "camera.offline" to "摄像头离线 (camera.offline)",
+    "camera.online" to "摄像头上线 (camera.online)",
+)
 
-    private fun confirmDeleteRule(rule: AutomationRule) {
-        AlertDialog.Builder(this)
-            .setTitle(R.string.btn_delete)
-            .setMessage(getString(R.string.automations_delete_confirm, rule.name))
-            .setPositiveButton(R.string.btn_confirm) { _, _ ->
-                deleteRule(rule)
-            }
-            .setNegativeButton(R.string.btn_cancel, null)
-            .show()
-    }
+private val ACTION_OPTIONS = listOf(
+    "notify" to "📢 移动端富媒体推送 (notify)",
+    "mqtt" to "📡 MQTT 智能家居联动 (mqtt)",
+    "webhook" to "🌐 Webhook 自定义接口 (webhook)",
+)
 
-    private fun deleteRule(rule: AutomationRule) {
-        val token = container.prefsManager.token ?: return
-        lifecycleScope.launch {
-            try {
-                container.getRepository().deleteAutomationRule(token, rule.id)
-                Toast.makeText(this@AutomationsActivity, "规则已删除", Toast.LENGTH_SHORT).show()
-                loadData()
-            } catch (e: Exception) {
-                Toast.makeText(this@AutomationsActivity, "删除失败: ${e.message}", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AutomationsScreen(
+    container: com.homedatacenter.app.di.AppContainer,
+    onBack: () -> Unit,
+) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    var rules by remember { mutableStateOf<List<AutomationRule>>(emptyList()) }
+    var isLoading by remember { mutableStateOf(false) }
 
-    private fun showEditRuleBottomSheet(ruleToEdit: AutomationRule?) {
-        val sheetDialog = BottomSheetDialog(this)
-        val sheetBinding = BottomSheetEditRuleBinding.inflate(layoutInflater)
-        sheetDialog.setContentView(sheetBinding.root)
+    var sheetRuleToEdit by remember { mutableStateOf<AutomationRule?>(null) }
+    var isSheetOpen by remember { mutableStateOf(false) }
 
-        // Make system bottom sheet container transparent so custom rounded corners and shadow show cleanly
-        sheetDialog.setOnShowListener {
-            val bottomSheet = sheetDialog.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)
-            bottomSheet?.setBackgroundResource(android.R.color.transparent)
-        }
+    var testDialogRule by remember { mutableStateOf<AutomationRule?>(null) }
+    var testResultText by remember { mutableStateOf<String?>(null) }
 
-        // Spinner setup with high-contrast custom layouts and themed popup background
-        sheetBinding.spinnerTrigger.setPopupBackgroundResource(R.drawable.bg_spinner_popup)
-        val spinnerAdapter = ArrayAdapter(this, R.layout.item_spinner_trigger, triggerLabels).apply {
-            setDropDownViewResource(R.layout.item_spinner_dropdown)
-        }
-        sheetBinding.spinnerTrigger.adapter = spinnerAdapter
+    var deleteConfirmRule by remember { mutableStateOf<AutomationRule?>(null) }
 
-        // Switch trigger event visibility for detection filters
-        sheetBinding.spinnerTrigger.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                val isDetection = triggerKeys.getOrNull(position) == "detection"
-                sheetBinding.layoutDetectionFilter.visibility = if (isDetection) View.VISIBLE else View.GONE
-            }
-            override fun onNothingSelected(parent: AdapterView<*>?) = Unit
-        }
-
-        // Action RadioGroup listener
-        sheetBinding.rgActionType.setOnCheckedChangeListener { _, checkedId ->
-            sheetBinding.layoutActionNotify.visibility = if (checkedId == R.id.rbActionNotify) View.VISIBLE else View.GONE
-            sheetBinding.layoutActionMqtt.visibility = if (checkedId == R.id.rbActionMqtt) View.VISIBLE else View.GONE
-            sheetBinding.layoutActionWebhook.visibility = if (checkedId == R.id.rbActionWebhook) View.VISIBLE else View.GONE
-        }
-
-        // Preset templates
-        sheetBinding.chipTplNightIntrusion.setOnClickListener {
-            sheetBinding.etRuleName.setText("夜间人形入侵告警")
-            sheetBinding.spinnerTrigger.setSelection(triggerKeys.indexOf("detection").coerceAtLeast(0))
-            sheetBinding.etTimeStart.setText("22:00")
-            sheetBinding.etTimeEnd.setText("06:00")
-            sheetBinding.etLabel.setText("person")
-            sheetBinding.etConfidence.setText("0.80")
-            sheetBinding.rbActionNotify.isChecked = true
-            sheetBinding.etNotifyTitle.setText("夜间人形入侵告警")
-            sheetBinding.etNotifyMessage.setText("监控摄像头检测到夜间有人走动，请留意！")
-            sheetBinding.etCooldown.setText("60")
-        }
-
-        sheetBinding.chipTplFallAlert.setOnClickListener {
-            sheetBinding.etRuleName.setText("摔倒紧急强提醒")
-            sheetBinding.spinnerTrigger.setSelection(triggerKeys.indexOf("camera.fall_detected").coerceAtLeast(0))
-            sheetBinding.etTimeStart.setText("")
-            sheetBinding.etTimeEnd.setText("")
-            sheetBinding.rbActionNotify.isChecked = true
-            sheetBinding.etNotifyTitle.setText("人员摔倒高危告警！")
-            sheetBinding.etNotifyMessage.setText("监控摄像头检测到疑似摔倒姿态，请立即前往确认！")
-            sheetBinding.etCooldown.setText("30")
-        }
-
-        sheetBinding.chipTplFamilyWelcome.setOnClickListener {
-            sheetBinding.etRuleName.setText("家人回家提醒")
-            sheetBinding.spinnerTrigger.setSelection(triggerKeys.indexOf("camera.person_recognized").coerceAtLeast(0))
-            sheetBinding.etTimeStart.setText("")
-            sheetBinding.etTimeEnd.setText("")
-            sheetBinding.rbActionNotify.isChecked = true
-            sheetBinding.etNotifyTitle.setText("家人回家提醒")
-            sheetBinding.etNotifyMessage.setText("摄像头识别到家人已到家")
-            sheetBinding.etCooldown.setText("60")
-        }
-
-        sheetBinding.chipTplCamOffline.setOnClickListener {
-            sheetBinding.etRuleName.setText("摄像头离线告警")
-            sheetBinding.spinnerTrigger.setSelection(triggerKeys.indexOf("camera.offline").coerceAtLeast(0))
-            sheetBinding.etTimeStart.setText("")
-            sheetBinding.etTimeEnd.setText("")
-            sheetBinding.rbActionNotify.isChecked = true
-            sheetBinding.etNotifyTitle.setText("摄像头离线告警")
-            sheetBinding.etNotifyMessage.setText("有摄像头断开连接，请检查局域网供电和网线")
-            sheetBinding.etCooldown.setText("300")
-        }
-
-        sheetBinding.chipTplMqttLight.setOnClickListener {
-            sheetBinding.etRuleName.setText("人来亮灯联动")
-            sheetBinding.spinnerTrigger.setSelection(triggerKeys.indexOf("detection").coerceAtLeast(0))
-            sheetBinding.etTimeStart.setText("18:30")
-            sheetBinding.etTimeEnd.setText("06:00")
-            sheetBinding.etLabel.setText("person")
-            sheetBinding.etConfidence.setText("0.75")
-            sheetBinding.rbActionMqtt.isChecked = true
-            sheetBinding.etMqttTopic.setText("home/light/porch/set")
-            sheetBinding.etMqttPayload.setText("{\"state\":\"ON\"}")
-            sheetBinding.etCooldown.setText("30")
-        }
-
-        sheetBinding.chipTplWebhook.setOnClickListener {
-            sheetBinding.etRuleName.setText("外部报警 Webhook")
-            sheetBinding.spinnerTrigger.setSelection(triggerKeys.indexOf("alert").coerceAtLeast(0))
-            sheetBinding.etTimeStart.setText("")
-            sheetBinding.etTimeEnd.setText("")
-            sheetBinding.rbActionWebhook.isChecked = true
-            sheetBinding.etWebhookUrl.setText("https://api.pushdeer.com/message/push")
-            sheetBinding.etCooldown.setText("60")
-        }
-
-        // If editing existing rule, populate fields
-        if (ruleToEdit != null) {
-            sheetBinding.tvSheetTitle.text = getString(R.string.automations_edit)
-            sheetBinding.scrollTemplates.visibility = View.GONE
-            sheetBinding.tvTemplateHeader.visibility = View.GONE
-            sheetBinding.switchSheetEnabled.isChecked = ruleToEdit.enabled
-            sheetBinding.etRuleName.setText(ruleToEdit.name)
-
-            val trigIdx = triggerKeys.indexOf(ruleToEdit.trigger).takeIf { it >= 0 } ?: 0
-            sheetBinding.spinnerTrigger.setSelection(trigIdx)
-
-            ruleToEdit.condition?.let { cond ->
-                sheetBinding.etTimeStart.setText(cond.startTime.orEmpty())
-                sheetBinding.etTimeEnd.setText(cond.endTime.orEmpty())
-                sheetBinding.etLabel.setText(cond.label.orEmpty().ifBlank { "person" })
-                sheetBinding.etConfidence.setText(cond.confidence?.toString() ?: "0.80")
-            }
-
-            ruleToEdit.action?.let { action ->
-                when (action.type) {
-                    "notify" -> {
-                        sheetBinding.rbActionNotify.isChecked = true
-                        sheetBinding.etNotifyTitle.setText(action.title.orEmpty())
-                        sheetBinding.etNotifyMessage.setText(action.body.orEmpty())
-                    }
-                    "mqtt" -> {
-                        sheetBinding.rbActionMqtt.isChecked = true
-                        sheetBinding.etMqttTopic.setText(action.topic.orEmpty())
-                        sheetBinding.etMqttPayload.setText(action.payload.orEmpty())
-                    }
-                    "webhook" -> {
-                        sheetBinding.rbActionWebhook.isChecked = true
-                        sheetBinding.etWebhookUrl.setText(action.url.orEmpty())
-                    }
-                }
-            }
-
-            sheetBinding.etCooldown.setText(ruleToEdit.throttle?.cooldownSeconds?.toString() ?: "60")
-        }
-
-        sheetBinding.btnCancel.setOnClickListener { sheetDialog.dismiss() }
-
-        sheetBinding.btnSave.setOnClickListener {
-            val name = sheetBinding.etRuleName.text?.toString()?.trim().orEmpty()
-            if (name.isBlank()) {
-                Toast.makeText(this, "请输入规则名称", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-
-            val triggerPos = sheetBinding.spinnerTrigger.selectedItemPosition
-            val trigger = triggerKeys.getOrElse(triggerPos) { "detection" }
-
-            val timeStart = sheetBinding.etTimeStart.text?.toString()?.trim().takeIf { !it.isNullOrBlank() }
-            val timeEnd = sheetBinding.etTimeEnd.text?.toString()?.trim().takeIf { !it.isNullOrBlank() }
-            val label = sheetBinding.etLabel.text?.toString()?.trim().takeIf { trigger == "detection" && !it.isNullOrBlank() }
-            val confidence = sheetBinding.etConfidence.text?.toString()?.toDoubleOrNull().takeIf { trigger == "detection" }
-
-            val condition = if (timeStart != null || timeEnd != null || label != null || confidence != null) {
-                RuleCondition(
-                    timeGte = timeStart,
-                    timeLte = timeEnd,
-                    payloadEq = label?.let { mapOf("label" to it) },
-                    threshold = confidence?.let { mapOf("confidence" to NumberOp(op = ">=", value = it)) },
-                )
-            } else null
-
-            val actionType = when (sheetBinding.rgActionType.checkedRadioButtonId) {
-                R.id.rbActionMqtt -> "mqtt"
-                R.id.rbActionWebhook -> "webhook"
-                else -> "notify"
-            }
-
-            val action = when (actionType) {
-                "notify" -> RuleAction(
-                    type = "notify",
-                    title = sheetBinding.etNotifyTitle.text?.toString()?.trim().takeIf { !it.isNullOrBlank() },
-                    body = sheetBinding.etNotifyMessage.text?.toString()?.trim().takeIf { !it.isNullOrBlank() },
-                )
-                "mqtt" -> RuleAction(
-                    type = "mqtt",
-                    topic = sheetBinding.etMqttTopic.text?.toString()?.trim().takeIf { !it.isNullOrBlank() },
-                    payload = sheetBinding.etMqttPayload.text?.toString()?.trim().takeIf { !it.isNullOrBlank() },
-                )
-                "webhook" -> RuleAction(
-                    type = "webhook",
-                    url = sheetBinding.etWebhookUrl.text?.toString()?.trim().takeIf { !it.isNullOrBlank() },
-                )
-                else -> RuleAction(type = "notify")
-            }
-
-            val cooldown = sheetBinding.etCooldown.text?.toString()?.toIntOrNull() ?: 60
-            val throttle = RuleThrottle(cooldownS = cooldown)
-            val enabled = sheetBinding.switchSheetEnabled.isChecked
-
-            val token = container.prefsManager.token ?: return@setOnClickListener
-
-            lifecycleScope.launch {
+    val loadRules: () -> Unit = {
+        val token = container.prefsManager.token
+        if (!token.isNullOrEmpty()) {
+            coroutineScope.launch {
+                isLoading = true
                 try {
-                    sheetBinding.btnSave.isEnabled = false
-                    if (ruleToEdit == null) {
-                        val createReq = CreateAutomationRuleRequest(
-                            name = name,
-                            trigger = trigger,
-                            condition = condition,
-                            action = action,
-                            throttle = throttle,
-                            enabled = enabled,
-                        )
-                        container.getRepository().createAutomationRule(token, createReq)
-                        Toast.makeText(this@AutomationsActivity, "规则创建成功", Toast.LENGTH_SHORT).show()
-                    } else {
-                        val updateReq = UpdateAutomationRuleRequest(
-                            name = name,
-                            trigger = trigger,
-                            condition = condition,
-                            action = action,
-                            throttle = throttle,
-                            enabled = enabled,
-                        )
-                        container.getRepository().updateAutomationRule(token, ruleToEdit.id, updateReq)
-                        Toast.makeText(this@AutomationsActivity, "规则更新成功", Toast.LENGTH_SHORT).show()
+                    val list = withContext(Dispatchers.IO) {
+                        container.getRepository().listAutomationRules(token)
                     }
-                    sheetDialog.dismiss()
-                    loadData()
+                    rules = list
                 } catch (e: Exception) {
-                    Toast.makeText(this@AutomationsActivity, "保存失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "获取规则失败: ${e.message}", Toast.LENGTH_SHORT).show()
                 } finally {
-                    sheetBinding.btnSave.isEnabled = true
+                    isLoading = false
                 }
             }
         }
+    }
 
-        sheetDialog.show()
+    LaunchedEffect(Unit) {
+        loadRules()
+    }
+
+    val toggleRule: (AutomationRule, Boolean) -> Unit = { rule, newEnabled ->
+        val token = container.prefsManager.token
+        if (!token.isNullOrEmpty()) {
+            coroutineScope.launch {
+                try {
+                    val req = UpdateAutomationRuleRequest(
+                        name = rule.name,
+                        trigger = rule.trigger,
+                        condition = rule.condition,
+                        action = rule.action,
+                        throttle = rule.throttle,
+                        enabled = newEnabled,
+                    )
+                    val updated = withContext(Dispatchers.IO) {
+                        container.getRepository().updateAutomationRule(token, rule.id, req)
+                    }
+                    rules = rules.map { if (it.id == rule.id) updated else it }
+                    Toast.makeText(context, if (newEnabled) "规则已启用" else "规则已停用", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    Toast.makeText(context, "更新失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                    loadRules()
+                }
+            }
+        }
+    }
+
+    val testRule: (AutomationRule) -> Unit = { rule ->
+        val token = container.prefsManager.token
+        if (!token.isNullOrEmpty()) {
+            coroutineScope.launch {
+                try {
+                    Toast.makeText(context, "正在测试触发规则...", Toast.LENGTH_SHORT).show()
+                    val res = withContext(Dispatchers.IO) {
+                        container.getRepository().testAutomationRule(token, rule.id)
+                    }
+                    testDialogRule = rule
+                    testResultText = "规则「${res.name}」已成功触发！\n执行动作: ${res.action}\n状态: 测试运行正常"
+                    loadRules()
+                } catch (e: Exception) {
+                    Toast.makeText(context, "测试失败: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+
+    val deleteRule: (AutomationRule) -> Unit = { rule ->
+        val token = container.prefsManager.token
+        if (!token.isNullOrEmpty()) {
+            coroutineScope.launch {
+                try {
+                    withContext(Dispatchers.IO) {
+                        container.getRepository().deleteAutomationRule(token, rule.id)
+                    }
+                    rules = rules.filter { it.id != rule.id }
+                    Toast.makeText(context, "规则已删除", Toast.LENGTH_SHORT).show()
+                } catch (e: Exception) {
+                    Toast.makeText(context, "删除失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Column {
+                        Text(
+                            text = "自动化联动规则",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "端云协同智能防护与告警流转",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f)
+                        )
+                    }
+                },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_baseline_arrow_back_24),
+                            contentDescription = "返回",
+                            tint = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                },
+                actions = {
+                    IconButton(onClick = loadRules) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_refresh),
+                            contentDescription = "刷新",
+                            tint = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.surface
+                )
+            )
+        },
+        floatingActionButton = {
+            FloatingActionButton(
+                onClick = {
+                    sheetRuleToEdit = null
+                    isSheetOpen = true
+                },
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
+                shape = CircleShape
+            ) {
+                Icon(
+                    painter = painterResource(id = R.drawable.ic_add),
+                    contentDescription = "新建规则",
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+        },
+        containerColor = MaterialTheme.colorScheme.background
+    ) { innerPadding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding)
+        ) {
+            // Metrics Banner
+            val activeCount = rules.count { it.enabled }
+            val totalCount = rules.size
+            val totalFires = rules.sumOf { it.fireCount }
+
+            AutomationsMetricsCard(
+                activeCount = activeCount,
+                totalCount = totalCount,
+                totalFires = totalFires,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+            )
+
+            if (rules.isEmpty() && !isLoading) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_bolt),
+                            contentDescription = null,
+                            modifier = Modifier.size(64.dp),
+                            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "暂无自动化联动规则",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "创建规则以实现多设备自动联动与智能防护",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                        )
+                        Spacer(modifier = Modifier.height(20.dp))
+                        Button(
+                            onClick = {
+                                sheetRuleToEdit = null
+                                isSheetOpen = true
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                        ) {
+                            Text("新建首条联动规则")
+                        }
+                    }
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    items(rules, key = { it.id }) { rule ->
+                        AutomationPipelineCard(
+                            rule = rule,
+                            onToggle = { newEnabled -> toggleRule(rule, newEnabled) },
+                            onTest = { testRule(rule) },
+                            onEdit = {
+                                sheetRuleToEdit = rule
+                                isSheetOpen = true
+                            },
+                            onDelete = { deleteConfirmRule = rule }
+                        )
+                    }
+                    item {
+                        Spacer(modifier = Modifier.height(80.dp))
+                    }
+                }
+            }
+        }
+    }
+
+    // Add / Edit Rule ModalBottomSheet
+    if (isSheetOpen) {
+        RuleEditSheet(
+            rule = sheetRuleToEdit,
+            onDismiss = { isSheetOpen = false },
+            onSave = { name, trigger, condition, action, throttle ->
+                val token = container.prefsManager.token ?: return@RuleEditSheet
+                coroutineScope.launch {
+                    try {
+                        if (sheetRuleToEdit == null) {
+                            val req = CreateAutomationRuleRequest(
+                                name = name,
+                                trigger = trigger,
+                                condition = condition,
+                                action = action,
+                                throttle = throttle,
+                                enabled = true
+                            )
+                            withContext(Dispatchers.IO) {
+                                container.getRepository().createAutomationRule(token, req)
+                            }
+                            Toast.makeText(context, "规则创建成功", Toast.LENGTH_SHORT).show()
+                        } else {
+                            val req = UpdateAutomationRuleRequest(
+                                name = name,
+                                trigger = trigger,
+                                condition = condition,
+                                action = action,
+                                throttle = throttle,
+                                enabled = sheetRuleToEdit?.enabled ?: true
+                            )
+                            withContext(Dispatchers.IO) {
+                                container.getRepository().updateAutomationRule(token, sheetRuleToEdit!!.id, req)
+                            }
+                            Toast.makeText(context, "规则已更新", Toast.LENGTH_SHORT).show()
+                        }
+                        isSheetOpen = false
+                        loadRules()
+                    } catch (e: Exception) {
+                        Toast.makeText(context, "保存失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        )
+    }
+
+    // Test Result Dialog
+    if (testDialogRule != null && testResultText != null) {
+        AlertDialog(
+            onDismissRequest = {
+                testDialogRule = null
+                testResultText = null
+            },
+            title = { Text("测试触发成功", fontWeight = FontWeight.Bold) },
+            text = { Text(testResultText.orEmpty()) },
+            confirmButton = {
+                TextButton(onClick = {
+                    testDialogRule = null
+                    testResultText = null
+                }) {
+                    Text("完成")
+                }
+            }
+        )
+    }
+
+    // Delete Confirmation Dialog
+    if (deleteConfirmRule != null) {
+        AlertDialog(
+            onDismissRequest = { deleteConfirmRule = null },
+            title = { Text("确认删除规则") },
+            text = { Text("确定要删除自动化规则「${deleteConfirmRule?.name}」吗？此操作无法撤销。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val target = deleteConfirmRule
+                        deleteConfirmRule = null
+                        if (target != null) deleteRule(target)
+                    }
+                ) {
+                    Text("确认删除", color = Color(0xFFE53935))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteConfirmRule = null }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun AutomationsMetricsCard(
+    activeCount: Int,
+    totalCount: Int,
+    totalFires: Long,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            horizontalArrangement = Arrangement.SpaceAround,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    text = "$activeCount / $totalCount",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "活跃规则 / 总数",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .width(1.dp)
+                    .height(32.dp)
+                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f))
+            )
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    text = "$totalFires",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF4CAF50)
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "累计自动触发",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AutomationPipelineCard(
+    rule: AutomationRule,
+    onToggle: (Boolean) -> Unit,
+    onTest: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp)
+        ) {
+            // Header: Name + Heat Tag + Switch
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Text(
+                        text = rule.name.ifBlank { "未命名规则" },
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    HeatBadge(fireCount = rule.fireCount)
+                }
+
+                Switch(
+                    checked = rule.enabled,
+                    onCheckedChange = onToggle,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.White,
+                        checkedTrackColor = MaterialTheme.colorScheme.primary
+                    )
+                )
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Pipeline Visualizer: [触发源] ➔ [过滤规则] ➔ [联动动作]
+            Text(
+                text = "联动链路",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                // Node 1: Trigger
+                val triggerLabel = when (rule.trigger) {
+                    "detection" -> "🎯 目标检测"
+                    "camera.fall_detected" -> "🚨 摔倒识别"
+                    "camera.person_recognized" -> "👤 面部识别"
+                    "alert" -> "⚠️ 安全告警"
+                    "camera.offline" -> "📡 设备离线"
+                    "camera.online" -> "🟢 设备上线"
+                    else -> rule.trigger
+                }
+                PipelineNodeChip(text = triggerLabel, bgColor = Color(0xFFE3F2FD), textColor = Color(0xFF1565C0))
+
+                Text("➔", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f), fontSize = 12.sp, modifier = Modifier.align(Alignment.CenterVertically))
+
+                // Node 2: Filter / Condition
+                val filterLabel = buildString {
+                    val cond = rule.condition
+                    if (cond?.label != null) append(cond.label)
+                    if (cond?.confidence != null) {
+                        if (isNotEmpty()) append(" ")
+                        append("≥${(cond.confidence!! * 100).toInt()}%")
+                    }
+                    if (isEmpty()) append("全部通过")
+                }
+                PipelineNodeChip(text = "🔍 $filterLabel", bgColor = Color(0xFFFFF3E0), textColor = Color(0xFFE65100))
+
+                Text("➔", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f), fontSize = 12.sp, modifier = Modifier.align(Alignment.CenterVertically))
+
+                // Node 3: Action
+                val actionLabel = when (rule.action?.type) {
+                    "notify" -> "📢 富媒体推送"
+                    "mqtt" -> "📡 MQTT 联动"
+                    "webhook" -> "🌐 Webhook"
+                    else -> rule.action?.type ?: "notify"
+                }
+                PipelineNodeChip(text = actionLabel, bgColor = Color(0xFFE8F5E9), textColor = Color(0xFF2E7D32))
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Footer info & actions
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                val cooldown = rule.throttle?.cooldownSeconds ?: 0
+                Text(
+                    text = "触发 ${rule.fireCount} 次 · 冷却 ${cooldown}s",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+                )
+
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    OutlinedButton(
+                        onClick = onTest,
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        modifier = Modifier.height(32.dp)
+                    ) {
+                        Text("测试", fontSize = 12.sp)
+                    }
+                    OutlinedButton(
+                        onClick = onEdit,
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        modifier = Modifier.height(32.dp)
+                    ) {
+                        Text("编辑", fontSize = 12.sp)
+                    }
+                    TextButton(
+                        onClick = onDelete,
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                        modifier = Modifier.height(32.dp)
+                    ) {
+                        Text("删除", fontSize = 12.sp, color = Color(0xFFE53935))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PipelineNodeChip(text: String, bgColor: Color, textColor: Color) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(bgColor)
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+    ) {
+        Text(
+            text = text,
+            color = textColor,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium
+        )
+    }
+}
+
+@Composable
+private fun HeatBadge(fireCount: Long) {
+    val (text, color, bg) = when {
+        fireCount >= 20 -> Triple("🔥 高频", Color(0xFFD32F2F), Color(0xFFFFEBEE))
+        fireCount > 0 -> Triple("⚡ 正常", Color(0xFF1976D2), Color(0xFFE3F2FD))
+        else -> Triple("💤 未触发", Color(0xFF757575), Color(0xFFEEEEEE))
+    }
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(bg)
+            .padding(horizontal = 6.dp, vertical = 2.dp)
+    ) {
+        Text(text = text, color = color, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RuleEditSheet(
+    rule: AutomationRule?,
+    onDismiss: () -> Unit,
+    onSave: (
+        name: String,
+        trigger: String,
+        condition: RuleCondition?,
+        action: RuleAction,
+        throttle: RuleThrottle?
+    ) -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    var name by remember { mutableStateOf(rule?.name.orEmpty()) }
+    var trigger by remember { mutableStateOf(rule?.trigger ?: "detection") }
+    var labelFilter by remember { mutableStateOf(rule?.condition?.label.orEmpty()) }
+    var confidenceStr by remember {
+        mutableStateOf(rule?.condition?.confidence?.let { "${(it * 100).toInt()}" } ?: "70")
+    }
+
+    var actionType by remember { mutableStateOf(rule?.action?.type ?: "notify") }
+    var actionTitle by remember { mutableStateOf(rule?.action?.title.orEmpty()) }
+    var actionBody by remember { mutableStateOf(rule?.action?.body.orEmpty()) }
+    var cooldownSec by remember { mutableStateOf("${rule?.throttle?.cooldownSeconds ?: 30}") }
+
+    var triggerExpanded by remember { mutableStateOf(false) }
+    var actionExpanded by remember { mutableStateOf(false) }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 12.dp)
+        ) {
+            Text(
+                text = if (rule == null) "新建自动化规则" else "编辑自动化规则",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Name
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                label = { Text("规则名称") },
+                placeholder = { Text("如：客厅人形告警即时推送") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Trigger Dropdown
+            ExposedDropdownMenuBox(
+                expanded = triggerExpanded,
+                onExpandedChange = { triggerExpanded = it },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                OutlinedTextField(
+                    value = TRIGGER_OPTIONS.find { it.first == trigger }?.second ?: trigger,
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("触发事件 (Trigger)") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = triggerExpanded) },
+                    modifier = Modifier.fillMaxWidth().menuAnchor()
+                )
+                ExposedDropdownMenu(
+                    expanded = triggerExpanded,
+                    onDismissRequest = { triggerExpanded = false }
+                ) {
+                    TRIGGER_OPTIONS.forEach { (key, display) ->
+                        DropdownMenuItem(
+                            text = { Text(display) },
+                            onClick = {
+                                trigger = key
+                                triggerExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Condition Filters (for detection)
+            if (trigger == "detection") {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedTextField(
+                        value = labelFilter,
+                        onValueChange = { labelFilter = it },
+                        label = { Text("目标标签 (如 person/car)") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedTextField(
+                        value = confidenceStr,
+                        onValueChange = { confidenceStr = it },
+                        label = { Text("置信度 (%)") },
+                        singleLine = true,
+                        modifier = Modifier.weight(0.7f)
+                    )
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+            }
+
+            // Action Dropdown
+            ExposedDropdownMenuBox(
+                expanded = actionExpanded,
+                onExpandedChange = { actionExpanded = it },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                OutlinedTextField(
+                    value = ACTION_OPTIONS.find { it.first == actionType }?.second ?: actionType,
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("联动动作 (Action)") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = actionExpanded) },
+                    modifier = Modifier.fillMaxWidth().menuAnchor()
+                )
+                ExposedDropdownMenu(
+                    expanded = actionExpanded,
+                    onDismissRequest = { actionExpanded = false }
+                ) {
+                    ACTION_OPTIONS.forEach { (key, display) ->
+                        DropdownMenuItem(
+                            text = { Text(display) },
+                            onClick = {
+                                actionType = key
+                                actionExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Action Details
+            OutlinedTextField(
+                value = actionTitle,
+                onValueChange = { actionTitle = it },
+                label = { Text("动作标题") },
+                placeholder = { Text("如：客厅发现异常移动！") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            OutlinedTextField(
+                value = actionBody,
+                onValueChange = { actionBody = it },
+                label = { Text("通知内容 / 载荷") },
+                placeholder = { Text("如：检测到人员进入监控区域") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            OutlinedTextField(
+                value = cooldownSec,
+                onValueChange = { cooldownSec = it },
+                label = { Text("冷却防抖间隔 (秒)") },
+                placeholder = { Text("30") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            Button(
+                onClick = {
+                    if (name.isBlank()) {
+                        return@Button
+                    }
+                    val cond = if (trigger == "detection" && (labelFilter.isNotBlank() || confidenceStr.isNotBlank())) {
+                        val conf = confidenceStr.toDoubleOrNull()?.let { it / 100.0 } ?: 0.7
+                        RuleCondition(
+                            payloadEq = if (labelFilter.isNotBlank()) mapOf("label" to labelFilter.trim()) else null,
+                            threshold = mapOf("confidence" to NumberOp(">=", conf))
+                        )
+                    } else null
+
+                    val act = RuleAction(
+                        type = actionType,
+                        title = actionTitle.ifBlank { name },
+                        body = actionBody.ifBlank { "触发联动动作" }
+                    )
+
+                    val throttle = RuleThrottle(
+                        cooldownS = cooldownSec.toIntOrNull() ?: 30,
+                        dedup = true
+                    )
+
+                    onSave(name, trigger, cond, act, throttle)
+                },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+            ) {
+                Text("保存规则", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            }
+            Spacer(modifier = Modifier.height(24.dp))
+        }
     }
 }

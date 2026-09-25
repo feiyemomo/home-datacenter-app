@@ -136,6 +136,79 @@ class PrefsManager(context: Context) {
         }
     }
 
+    // v1.13.0: User notification preferences
+    var notificationsEnabled: Boolean
+        get() = prefs.getBoolean(KEY_NOTIFICATIONS_ENABLED, true)
+        set(value) = prefs.edit().putBoolean(KEY_NOTIFICATIONS_ENABLED, value).apply()
+
+    var notifyPerson: Boolean
+        get() = prefs.getBoolean(KEY_NOTIFY_PERSON, true)
+        set(value) = prefs.edit().putBoolean(KEY_NOTIFY_PERSON, value).apply()
+
+    var notifyVehicle: Boolean
+        get() = prefs.getBoolean(KEY_NOTIFY_VEHICLE, true)
+        set(value) = prefs.edit().putBoolean(KEY_NOTIFY_VEHICLE, value).apply()
+
+    var notifyPet: Boolean
+        get() = prefs.getBoolean(KEY_NOTIFY_PET, true)
+        set(value) = prefs.edit().putBoolean(KEY_NOTIFY_PET, value).apply()
+
+    var notifyMotion: Boolean
+        get() = prefs.getBoolean(KEY_NOTIFY_MOTION, true)
+        set(value) = prefs.edit().putBoolean(KEY_NOTIFY_MOTION, value).apply()
+
+    var notifySystem: Boolean
+        get() = prefs.getBoolean(KEY_NOTIFY_SYSTEM, true)
+        set(value) = prefs.edit().putBoolean(KEY_NOTIFY_SYSTEM, value).apply()
+
+    var notifyIncludeSnapshot: Boolean
+        get() = prefs.getBoolean(KEY_NOTIFY_INCLUDE_SNAPSHOT, true)
+        set(value) = prefs.edit().putBoolean(KEY_NOTIFY_INCLUDE_SNAPSHOT, value).apply()
+
+    var notifyDndEnabled: Boolean
+        get() = prefs.getBoolean(KEY_NOTIFY_DND_ENABLED, false)
+        set(value) = prefs.edit().putBoolean(KEY_NOTIFY_DND_ENABLED, value).apply()
+
+    var notifyDndStartHour: Int
+        get() = prefs.getInt(KEY_NOTIFY_DND_START_HOUR, 22)
+        set(value) = prefs.edit().putInt(KEY_NOTIFY_DND_START_HOUR, value).apply()
+
+    var notifyDndStartMinute: Int
+        get() = prefs.getInt(KEY_NOTIFY_DND_START_MINUTE, 0)
+        set(value) = prefs.edit().putInt(KEY_NOTIFY_DND_START_MINUTE, value).apply()
+
+    var notifyDndEndHour: Int
+        get() = prefs.getInt(KEY_NOTIFY_DND_END_HOUR, 7)
+        set(value) = prefs.edit().putInt(KEY_NOTIFY_DND_END_HOUR, value).apply()
+
+    var notifyDndEndMinute: Int
+        get() = prefs.getInt(KEY_NOTIFY_DND_END_MINUTE, 0)
+        set(value) = prefs.edit().putInt(KEY_NOTIFY_DND_END_MINUTE, value).apply()
+
+    fun isDndActive(): Boolean {
+        if (!notifyDndEnabled) return false
+        val now = java.util.Calendar.getInstance()
+        val currentMinutes = now.get(java.util.Calendar.HOUR_OF_DAY) * 60 + now.get(java.util.Calendar.MINUTE)
+        val startMinutes = notifyDndStartHour * 60 + notifyDndStartMinute
+        val endMinutes = notifyDndEndHour * 60 + notifyDndEndMinute
+        return if (startMinutes <= endMinutes) {
+            currentMinutes in startMinutes until endMinutes
+        } else {
+            currentMinutes >= startMinutes || currentMinutes < endMinutes
+        }
+    }
+
+    fun shouldNotifyAlert(label: String): Boolean {
+        if (!notificationsEnabled) return false
+        if (isDndActive()) return false
+        return when (label.lowercase()) {
+            "person" -> notifyPerson
+            "car", "truck", "bus", "bicycle", "motorcycle", "vehicle" -> notifyVehicle
+            "dog", "cat", "bird", "pet" -> notifyPet
+            else -> notifyMotion
+        }
+    }
+
     companion object {
         private const val PREFS_FILE = "home_datacenter_prefs"
         private const val KEY_TOKEN = "auth_token"
@@ -147,6 +220,18 @@ class PrefsManager(context: Context) {
         private const val KEY_IS_ADMIN = "is_admin"
         private const val KEY_THEME_MODE = "theme_mode"
         private const val KEY_DEVICE_SCOPE = "device_scope"
+        private const val KEY_NOTIFICATIONS_ENABLED = "notifications_enabled"
+        private const val KEY_NOTIFY_PERSON = "notify_person"
+        private const val KEY_NOTIFY_VEHICLE = "notify_vehicle"
+        private const val KEY_NOTIFY_PET = "notify_pet"
+        private const val KEY_NOTIFY_MOTION = "notify_motion"
+        private const val KEY_NOTIFY_SYSTEM = "notify_system"
+        private const val KEY_NOTIFY_INCLUDE_SNAPSHOT = "notify_include_snapshot"
+        private const val KEY_NOTIFY_DND_ENABLED = "notify_dnd_enabled"
+        private const val KEY_NOTIFY_DND_START_HOUR = "notify_dnd_start_hour"
+        private const val KEY_NOTIFY_DND_START_MINUTE = "notify_dnd_start_minute"
+        private const val KEY_NOTIFY_DND_END_HOUR = "notify_dnd_end_hour"
+        private const val KEY_NOTIFY_DND_END_MINUTE = "notify_dnd_end_minute"
         private const val KEY_CACHED_DEVICES = "cached_devices"
         private const val KEY_CACHED_CAMERAS = "cached_cameras"
         private const val KEY_CACHED_SYSTEM_STATUS = "cached_system_status"

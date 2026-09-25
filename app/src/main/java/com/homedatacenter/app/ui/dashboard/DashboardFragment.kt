@@ -154,23 +154,7 @@ class DashboardFragment : Fragment() {
         binding.btnGuardDisarmed.setOnClickListener { setGuardMode("disarmed") }
         binding.btnCleanCache.setOnClickListener { cleanTranscodeCache() }
 
-        // Non-admin users see a simplified dashboard: the 4 stat
-        // cards are hidden, but the network quality card with more
-        // details is shown. The recent logs section is hidden.
-        val isAdmin = (activity as? MainActivity)?.container?.prefsManager?.isAdmin == true
-        if (!isAdmin) {
-            binding.gridStats.visibility = View.GONE
-            binding.cardSystemMetrics.visibility = View.GONE
-            binding.cardAutomationLinkage.visibility = View.GONE
-            // v1.6.40: show the network quality card with more details
-            // for non-admin users (strategy label, path chip, IPv6/P2P/Relay dots).
-            // v1.6.40: hide the "最近日志" section for non-admin users
-            // (the logs tab is also hidden in the bottom nav).
-            binding.tvRecentLogsTitle.visibility = View.GONE
-            binding.btnViewAllLogs.visibility = View.GONE
-            binding.rvRecentLogs.visibility = View.GONE
-            binding.tvRecentLogsEmpty.visibility = View.GONE
-        }
+        updateAdminUiVisibility()
 
         loadUserName()
         setupDashboardWebSocket()
@@ -230,11 +214,25 @@ class DashboardFragment : Fragment() {
     override fun onResume() {
         super.onResume()
         if (isAdded && !isHidden) {
+            updateAdminUiVisibility()
             loadUserName()
             refreshAll()
             startStatusPolling()
             connectDashboardWebSocket()
         }
+    }
+
+    private fun updateAdminUiVisibility() {
+        if (_binding == null) return
+        val isAdmin = (activity as? MainActivity)?.container?.prefsManager?.isAdmin == true
+        binding.gridStats.visibility = if (isAdmin) View.VISIBLE else View.GONE
+        binding.cardSystemMetrics.visibility = if (isAdmin) View.VISIBLE else View.GONE
+        binding.cardAutomationLinkage.visibility = if (isAdmin) View.VISIBLE else View.GONE
+        binding.layoutGuardButtons.visibility = if (isAdmin) View.VISIBLE else View.GONE
+        binding.tvRecentLogsTitle.visibility = if (isAdmin) View.VISIBLE else View.GONE
+        binding.btnViewAllLogs.visibility = if (isAdmin) View.VISIBLE else View.GONE
+        binding.rvRecentLogs.visibility = if (isAdmin) View.VISIBLE else View.GONE
+        binding.tvRecentLogsEmpty.visibility = View.GONE
     }
 
     override fun onPause() {
@@ -1097,6 +1095,13 @@ class DashboardFragment : Fragment() {
 
     private fun setGuardMode(mode: String) {
         val mainActivity = activity as? MainActivity ?: return
+        val isAdmin = mainActivity.container.prefsManager.isAdmin
+        if (!isAdmin) {
+            if (isAdded) {
+                android.widget.Toast.makeText(requireContext(), "仅管理员可更改布防模式", android.widget.Toast.LENGTH_SHORT).show()
+            }
+            return
+        }
         val token = mainActivity.container.prefsManager.token ?: return
         viewModel.setSecurityGuard(
             token = token,

@@ -48,6 +48,7 @@ class RegisterCameraDialog(
     private lateinit var etRtspPort: EditText
     private lateinit var cbPtz: CheckBox
     private lateinit var cbAudio: CheckBox
+    private lateinit var cbTwoWayAudio: CheckBox
     private lateinit var cbMotion: CheckBox
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -75,6 +76,7 @@ class RegisterCameraDialog(
         etRtspPort = root.findViewById(R.id.etRtspPort)
         cbPtz = root.findViewById(R.id.cbPtz)
         cbAudio = root.findViewById(R.id.cbAudio)
+        cbTwoWayAudio = root.findViewById(R.id.cbTwoWayAudio)
         cbMotion = root.findViewById(R.id.cbMotion)
 
         // Defaults common to Hikvision cameras
@@ -85,6 +87,7 @@ class RegisterCameraDialog(
         etRtspPort.setText("554")
         cbPtz.isChecked = true
         cbAudio.isChecked = true
+        cbTwoWayAudio.isChecked = false
         cbMotion.isChecked = true
 
         val btnSubmit = root.findViewById<android.widget.Button>(R.id.btnSubmit)
@@ -113,6 +116,7 @@ class RegisterCameraDialog(
             password = password,
             ptz = cbPtz.isChecked,
             audio = cbAudio.isChecked,
+            twoWayAudio = cbTwoWayAudio.isChecked,
             motion = cbMotion.isChecked,
         )
         val token = container.prefsManager.token ?: return

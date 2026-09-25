@@ -100,7 +100,8 @@ class PlayerFullscreenHelper(
      */
     private val controllerSyncViews: List<View> = emptyList(),
 ) {
-    private var isFullscreen: Boolean = false
+    var isFullscreen: Boolean = false
+        private set
     private var player: ExoPlayer? = null
     // v1.6.4: latch for the playerView tap-to-toggle behavior. True
     // means the synced chrome (dayScrubBarContainer + chip scroller +
@@ -211,6 +212,15 @@ class PlayerFullscreenHelper(
     fun toggleFullscreen() {
         isFullscreen = !isFullscreen
         applyFullscreenState()
+    }
+
+    fun exitFullscreen(): Boolean {
+        if (isFullscreen) {
+            isFullscreen = false
+            applyFullscreenState()
+            return true
+        }
+        return false
     }
 
     /**

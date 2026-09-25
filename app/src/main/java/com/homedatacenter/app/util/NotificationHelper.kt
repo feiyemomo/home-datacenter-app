@@ -11,6 +11,7 @@ import androidx.core.app.NotificationManagerCompat
 import com.homedatacenter.app.R
 import com.homedatacenter.app.data.model.Alert
 import com.homedatacenter.app.ui.main.MainActivity
+import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 
 object NotificationHelper {
@@ -56,7 +57,14 @@ object NotificationHelper {
         }
     }
 
+    private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
+
     fun showSecurityAlertNotification(context: Context, alert: Alert) {
+        val prefs = PrefsManager(context)
+        if (!prefs.shouldNotifyAlert(alert.label)) {
+            return
+        }
+
         val key = alert.cameraId?.toString() ?: alert.cameraSlug.ifEmpty { alert.cameraName }
         val now = System.currentTimeMillis()
         val last = lastAlertTimeMap[key] ?: 0L
@@ -93,25 +101,80 @@ object NotificationHelper {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val notification = NotificationCompat.Builder(context, CHANNEL_SECURITY_ALERTS)
-            .setSmallIcon(R.drawable.ic_camera)
-            .setContentTitle(title)
-            .setContentText(contentText)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setCategory(NotificationCompat.CATEGORY_ALARM)
-            .setAutoCancel(true)
-            .setContentIntent(pendingIntent)
-            .build()
+        scope.launch {
+            val builder = NotificationCompat.Builder(context, CHANNEL_SECURITY_ALERTS)
+                .setSmallIcon(R.drawable.ic_camera)
+                .setContentTitle(title)
+                .setContentText(contentText)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setCategory(NotificationCompat.CATEGORY_ALARM)
+                .setAutoCancel(true)
+                .setContentIntent(pendingIntent)
+                .addAction(
+                    R.drawable.ic_video,
+                    "查看录像",
+                    pendingIntent
+                )
 
-        try {
-            val notificationId = 1000 + (alert.cameraId?.toInt() ?: (alert.id.hashCode() % 1000))
-            NotificationManagerCompat.from(context).notify(notificationId, notification)
-        } catch (_: SecurityException) {
-            // Android 13+ permission might not be granted yet
+            // v1.13.0: Attach snapshot picture if enabled
+            if (prefs.notifyIncludeSnapshot) {
+                var bitmap: android.graphics.Bitmap? = null
+                val baseUrl = prefs.baseUrl?.trimEnd('/')
+                val token = prefs.token
+                val snapshotUrl = if (alert.id.isNotEmpty() && !baseUrl.isNullOrEmpty()) {
+                    "$baseUrl/api/v1/alerts/${alert.id}/snapshot"
+                } else if (alert.cameraId != null && !baseUrl.isNullOrEmpty()) {
+                    "$baseUrl/api/v1/cameras/${alert.cameraId}/frame?quality=40"
+                } else null
+
+                if (!snapshotUrl.isNullOrEmpty()) {
+                    try {
+                        val req = okhttp3.Request.Builder()
+                            .url(snapshotUrl)
+                            .apply {
+                                if (!token.isNullOrEmpty()) {
+                                    header("Authorization", "Bearer $token")
+                                }
+                            }
+                            .build()
+                        val client = okhttp3.OkHttpClient.Builder()
+                            .connectTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
+                            .readTimeout(4, java.util.concurrent.TimeUnit.SECONDS)
+                            .build()
+                        client.newCall(req).execute().use { resp ->
+                            if (resp.isSuccessful) {
+                                resp.body?.byteStream()?.use { stream ->
+                                    bitmap = android.graphics.BitmapFactory.decodeStream(stream)
+                                }
+                            }
+                        }
+                    } catch (_: Exception) {}
+                }
+
+                if (bitmap != null) {
+                    builder.setStyle(
+                        NotificationCompat.BigPictureStyle()
+                            .bigPicture(bitmap)
+                            .setSummaryText(contentText)
+                    )
+                }
+            }
+
+            try {
+                val notificationId = 1000 + (alert.cameraId?.toInt() ?: (alert.id.hashCode() % 1000))
+                NotificationManagerCompat.from(context).notify(notificationId, builder.build())
+            } catch (_: SecurityException) {
+                // Android 13+ permission might not be granted yet
+            }
         }
     }
 
     fun showSystemAlertNotification(context: Context, title: String, message: String) {
+        val prefs = PrefsManager(context)
+        if (!prefs.notificationsEnabled || !prefs.notifySystem || prefs.isDndActive()) {
+            return
+        }
+
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             putExtra(EXTRA_NAVIGATE_TAB, R.id.nav_logs)
@@ -143,6 +206,9 @@ object NotificationHelper {
     }
 
     fun showFallAlertNotification(context: Context, cameraSlug: String, cameraName: String) {
+        val prefs = PrefsManager(context)
+        if (!prefs.notificationsEnabled) return
+
         val title = "🚨 紧急告警：检测到人员摔倒！"
         val message = "监控设备【${cameraName.ifBlank { cameraSlug.ifBlank { "室内摄像头" } }}】检测到人员异常跌倒，请立即确认！"
         val intent = Intent(context, MainActivity::class.java).apply {
@@ -174,6 +240,9 @@ object NotificationHelper {
     }
 
     fun showPersonRecognizedNotification(context: Context, name: String, cameraName: String) {
+        val prefs = PrefsManager(context)
+        if (!prefs.notificationsEnabled || !prefs.notifyPerson || prefs.isDndActive()) return
+
         val title = "👤 视觉识别通知"
         val message = "摄像头【${cameraName.ifBlank { "安防监控" }}】识别到家庭成员【$name】"
         val intent = Intent(context, MainActivity::class.java).apply {

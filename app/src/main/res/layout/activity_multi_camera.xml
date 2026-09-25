@@ -18,327 +18,790 @@
         app:title="@string/multi_camera_title"
         app:subtitle="@string/multi_camera_subtitle"
         app:titleTextColor="@color/text_primary"
-        app:subtitleTextColor="@color/text_secondary" />
+        app:subtitleTextColor="@color/text_secondary">
 
-    <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
-        android:id="@+id/swipeRefresh"
+        <!-- v1.13.0: Grid mode switcher (1-grid / 4-grid / 9-grid) -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnGridMode"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="wrap_content"
+            android:layout_height="36dp"
+            android:layout_gravity="end|center_vertical"
+            android:layout_marginEnd="8dp"
+            android:paddingStart="10dp"
+            android:paddingEnd="12dp"
+            android:text="4格"
+            android:textSize="12sp"
+            android:textColor="@color/text_primary"
+            app:cornerRadius="18dp"
+            app:strokeColor="@color/card_stroke"
+            app:strokeWidth="1.5dp"
+            app:backgroundTint="@color/card_bg"
+            app:icon="@drawable/ic_grid_view"
+            app:iconTint="@color/text_primary"
+            app:iconSize="16dp"
+            app:iconGravity="textStart"
+            app:iconPadding="4dp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnToggleLandscape"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="wrap_content"
+            android:layout_height="36dp"
+            android:layout_gravity="end|center_vertical"
+            android:layout_marginEnd="12dp"
+            android:paddingStart="10dp"
+            android:paddingEnd="12dp"
+            android:text="横屏全屏"
+            android:textSize="12sp"
+            android:textColor="@color/text_primary"
+            app:cornerRadius="18dp"
+            app:strokeColor="@color/card_stroke"
+            app:strokeWidth="1.5dp"
+            app:backgroundTint="@color/card_bg"
+            app:icon="@drawable/ic_fullscreen"
+            app:iconTint="@color/text_primary"
+            app:iconSize="16dp"
+            app:iconGravity="textStart"
+            app:iconPadding="4dp" />
+    </com.google.android.material.appbar.MaterialToolbar>
+
+    <FrameLayout
         android:layout_width="match_parent"
-        android:layout_height="match_parent">
+        android:layout_height="0dp"
+        android:layout_weight="1">
 
-        <LinearLayout
+        <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+            android:id="@+id/swipeRefresh"
             android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:orientation="vertical"
-            android:padding="8dp">
+            android:layout_height="match_parent">
 
-            <!-- Top Row: Slot 0 & Slot 1 -->
             <LinearLayout
+                android:id="@+id/slotsContainer"
                 android:layout_width="match_parent"
-                android:layout_height="0dp"
-                android:layout_weight="1"
-                android:orientation="horizontal">
+                android:layout_height="match_parent"
+                android:orientation="vertical"
+                android:padding="8dp">
 
-                <!-- Slot 0 -->
-                <com.google.android.material.card.MaterialCardView
-                    android:id="@+id/cardSlot0"
-                    android:layout_width="0dp"
-                    android:layout_height="match_parent"
+                <!-- Row 0: Slot 0, Slot 1, Slot 2 -->
+                <LinearLayout
+                    android:id="@+id/row0"
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
                     android:layout_weight="1"
-                    android:layout_margin="4dp"
-                    app:cardCornerRadius="16dp"
-                    app:cardElevation="1dp"
-                    app:strokeWidth="1dp"
-                    app:strokeColor="@color/card_stroke"
-                    app:cardBackgroundColor="@color/card_bg">
+                    android:orientation="horizontal">
 
-                    <FrameLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="match_parent">
+                    <!-- Slot 0 -->
+                    <com.google.android.material.card.MaterialCardView
+                        android:id="@+id/cardSlot0"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:layout_margin="4dp"
+                        app:cardCornerRadius="14dp"
+                        app:cardElevation="1dp"
+                        app:strokeWidth="1dp"
+                        app:strokeColor="@color/card_stroke"
+                        app:cardBackgroundColor="@color/card_bg">
 
-                        <ImageView
-                            android:id="@+id/ivPreview0"
+                        <FrameLayout
                             android:layout_width="match_parent"
-                            android:layout_height="match_parent"
-                            android:scaleType="centerCrop"
-                            tools:ignore="ContentDescription" />
+                            android:layout_height="match_parent">
 
-                        <ProgressBar
-                            android:id="@+id/progress0"
-                            android:layout_width="28dp"
-                            android:layout_height="28dp"
-                            android:layout_gravity="center"
-                            android:visibility="gone" />
+                            <ImageView
+                                android:id="@+id/ivPreview0"
+                                android:layout_width="match_parent"
+                                android:layout_height="match_parent"
+                                android:scaleType="fitCenter"
+                                android:background="#000000"
+                                tools:ignore="ContentDescription" />
 
-                        <TextView
-                            android:id="@+id/tvEmpty0"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_gravity="center"
-                            android:text="未接入"
-                            android:textColor="@color/text_secondary"
-                            android:textSize="12sp" />
-
-                        <!-- Top Title Bar Overlay -->
-                        <LinearLayout
-                            android:id="@+id/overlay0"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:background="#99000000"
-                            android:paddingHorizontal="10dp"
-                            android:paddingVertical="5dp"
-                            android:gravity="center_vertical"
-                            android:visibility="gone">
+                            <ProgressBar
+                                android:id="@+id/progress0"
+                                android:layout_width="28dp"
+                                android:layout_height="28dp"
+                                android:layout_gravity="center"
+                                android:visibility="gone" />
 
                             <TextView
-                                android:id="@+id/tvName0"
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_weight="1"
-                                android:textColor="@android:color/white"
-                                android:textSize="12sp"
-                                android:textStyle="bold"
-                                android:singleLine="true"
-                                android:ellipsize="end" />
-
-                            <TextView
-                                android:id="@+id/tvStatus0"
+                                android:id="@+id/tvEmpty0"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:text="实时"
-                                android:textColor="#5CB880"
-                                android:textSize="10sp"
-                                android:textStyle="bold" />
-                        </LinearLayout>
-                    </FrameLayout>
-                </com.google.android.material.card.MaterialCardView>
+                                android:layout_gravity="center"
+                                android:text="未接入"
+                                android:textColor="@color/text_secondary"
+                                android:textSize="12sp" />
 
-                <!-- Slot 1 -->
-                <com.google.android.material.card.MaterialCardView
-                    android:id="@+id/cardSlot1"
-                    android:layout_width="0dp"
-                    android:layout_height="match_parent"
-                    android:layout_weight="1"
-                    android:layout_margin="4dp"
-                    app:cardCornerRadius="16dp"
-                    app:cardElevation="1dp"
-                    app:strokeWidth="1dp"
-                    app:strokeColor="@color/card_stroke"
-                    app:cardBackgroundColor="@color/card_bg">
-
-                    <FrameLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="match_parent">
-
-                        <ImageView
-                            android:id="@+id/ivPreview1"
-                            android:layout_width="match_parent"
-                            android:layout_height="match_parent"
-                            android:scaleType="centerCrop"
-                            tools:ignore="ContentDescription" />
-
-                        <ProgressBar
-                            android:id="@+id/progress1"
-                            android:layout_width="28dp"
-                            android:layout_height="28dp"
-                            android:layout_gravity="center"
-                            android:visibility="gone" />
-
-                        <TextView
-                            android:id="@+id/tvEmpty1"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_gravity="center"
-                            android:text="未接入"
-                            android:textColor="@color/text_secondary"
-                            android:textSize="12sp" />
-
-                        <LinearLayout
-                            android:id="@+id/overlay1"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:background="#99000000"
-                            android:paddingHorizontal="10dp"
-                            android:paddingVertical="5dp"
-                            android:gravity="center_vertical"
-                            android:visibility="gone">
-
-                            <TextView
-                                android:id="@+id/tvName1"
-                                android:layout_width="0dp"
+                            <LinearLayout
+                                android:id="@+id/overlay0"
+                                android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
-                                android:layout_weight="1"
-                                android:textColor="@android:color/white"
-                                android:textSize="12sp"
-                                android:textStyle="bold"
-                                android:singleLine="true"
-                                android:ellipsize="end" />
+                                android:background="#99000000"
+                                android:paddingHorizontal="10dp"
+                                android:paddingVertical="5dp"
+                                android:gravity="center_vertical"
+                                android:visibility="gone">
+
+                                <TextView
+                                    android:id="@+id/tvName0"
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:textColor="@android:color/white"
+                                    android:textSize="12sp"
+                                    android:textStyle="bold"
+                                    android:singleLine="true"
+                                    android:ellipsize="end" />
+
+                                <TextView
+                                    android:id="@+id/tvStatus0"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="实时"
+                                    android:textColor="#5CB880"
+                                    android:textSize="10sp"
+                                    android:textStyle="bold" />
+                            </LinearLayout>
+                        </FrameLayout>
+                    </com.google.android.material.card.MaterialCardView>
+
+                    <!-- Slot 1 -->
+                    <com.google.android.material.card.MaterialCardView
+                        android:id="@+id/cardSlot1"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:layout_margin="4dp"
+                        app:cardCornerRadius="14dp"
+                        app:cardElevation="1dp"
+                        app:strokeWidth="1dp"
+                        app:strokeColor="@color/card_stroke"
+                        app:cardBackgroundColor="@color/card_bg">
+
+                        <FrameLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent">
+
+                            <ImageView
+                                android:id="@+id/ivPreview1"
+                                android:layout_width="match_parent"
+                                android:layout_height="match_parent"
+                                android:scaleType="fitCenter"
+                                android:background="#000000"
+                                tools:ignore="ContentDescription" />
+
+                            <ProgressBar
+                                android:id="@+id/progress1"
+                                android:layout_width="28dp"
+                                android:layout_height="28dp"
+                                android:layout_gravity="center"
+                                android:visibility="gone" />
 
                             <TextView
-                                android:id="@+id/tvStatus1"
+                                android:id="@+id/tvEmpty1"
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:text="实时"
-                                android:textColor="#5CB880"
-                                android:textSize="10sp"
-                                android:textStyle="bold" />
-                        </LinearLayout>
-                    </FrameLayout>
-                </com.google.android.material.card.MaterialCardView>
+                                android:layout_gravity="center"
+                                android:text="未接入"
+                                android:textColor="@color/text_secondary"
+                                android:textSize="12sp" />
+
+                            <LinearLayout
+                                android:id="@+id/overlay1"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:background="#99000000"
+                                android:paddingHorizontal="10dp"
+                                android:paddingVertical="5dp"
+                                android:gravity="center_vertical"
+                                android:visibility="gone">
+
+                                <TextView
+                                    android:id="@+id/tvName1"
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:textColor="@android:color/white"
+                                    android:textSize="12sp"
+                                    android:textStyle="bold"
+                                    android:singleLine="true"
+                                    android:ellipsize="end" />
+
+                                <TextView
+                                    android:id="@+id/tvStatus1"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="实时"
+                                    android:textColor="#5CB880"
+                                    android:textSize="10sp"
+                                    android:textStyle="bold" />
+                            </LinearLayout>
+                        </FrameLayout>
+                    </com.google.android.material.card.MaterialCardView>
+
+                    <!-- Slot 2 -->
+                    <com.google.android.material.card.MaterialCardView
+                        android:id="@+id/cardSlot2"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:layout_margin="4dp"
+                        app:cardCornerRadius="14dp"
+                        app:cardElevation="1dp"
+                        app:strokeWidth="1dp"
+                        app:strokeColor="@color/card_stroke"
+                        app:cardBackgroundColor="@color/card_bg">
+
+                        <FrameLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent">
+
+                            <ImageView
+                                android:id="@+id/ivPreview2"
+                                android:layout_width="match_parent"
+                                android:layout_height="match_parent"
+                                android:scaleType="fitCenter"
+                                android:background="#000000"
+                                tools:ignore="ContentDescription" />
+
+                            <ProgressBar
+                                android:id="@+id/progress2"
+                                android:layout_width="28dp"
+                                android:layout_height="28dp"
+                                android:layout_gravity="center"
+                                android:visibility="gone" />
+
+                            <TextView
+                                android:id="@+id/tvEmpty2"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_gravity="center"
+                                android:text="未接入"
+                                android:textColor="@color/text_secondary"
+                                android:textSize="12sp" />
+
+                            <LinearLayout
+                                android:id="@+id/overlay2"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:background="#99000000"
+                                android:paddingHorizontal="10dp"
+                                android:paddingVertical="5dp"
+                                android:gravity="center_vertical"
+                                android:visibility="gone">
+
+                                <TextView
+                                    android:id="@+id/tvName2"
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:textColor="@android:color/white"
+                                    android:textSize="12sp"
+                                    android:textStyle="bold"
+                                    android:singleLine="true"
+                                    android:ellipsize="end" />
+
+                                <TextView
+                                    android:id="@+id/tvStatus2"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="实时"
+                                    android:textColor="#5CB880"
+                                    android:textSize="10sp"
+                                    android:textStyle="bold" />
+                            </LinearLayout>
+                        </FrameLayout>
+                    </com.google.android.material.card.MaterialCardView>
+                </LinearLayout>
+
+                <!-- Row 1: Slot 3, Slot 4, Slot 5 -->
+                <LinearLayout
+                    android:id="@+id/row1"
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"
+                    android:orientation="horizontal">
+
+                    <!-- Slot 3 -->
+                    <com.google.android.material.card.MaterialCardView
+                        android:id="@+id/cardSlot3"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:layout_margin="4dp"
+                        app:cardCornerRadius="14dp"
+                        app:cardElevation="1dp"
+                        app:strokeWidth="1dp"
+                        app:strokeColor="@color/card_stroke"
+                        app:cardBackgroundColor="@color/card_bg">
+
+                        <FrameLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent">
+
+                            <ImageView
+                                android:id="@+id/ivPreview3"
+                                android:layout_width="match_parent"
+                                android:layout_height="match_parent"
+                                android:scaleType="fitCenter"
+                                android:background="#000000"
+                                tools:ignore="ContentDescription" />
+
+                            <ProgressBar
+                                android:id="@+id/progress3"
+                                android:layout_width="28dp"
+                                android:layout_height="28dp"
+                                android:layout_gravity="center"
+                                android:visibility="gone" />
+
+                            <TextView
+                                android:id="@+id/tvEmpty3"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_gravity="center"
+                                android:text="未接入"
+                                android:textColor="@color/text_secondary"
+                                android:textSize="12sp" />
+
+                            <LinearLayout
+                                android:id="@+id/overlay3"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:background="#99000000"
+                                android:paddingHorizontal="10dp"
+                                android:paddingVertical="5dp"
+                                android:gravity="center_vertical"
+                                android:visibility="gone">
+
+                                <TextView
+                                    android:id="@+id/tvName3"
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:textColor="@android:color/white"
+                                    android:textSize="12sp"
+                                    android:textStyle="bold"
+                                    android:singleLine="true"
+                                    android:ellipsize="end" />
+
+                                <TextView
+                                    android:id="@+id/tvStatus3"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="实时"
+                                    android:textColor="#5CB880"
+                                    android:textSize="10sp"
+                                    android:textStyle="bold" />
+                            </LinearLayout>
+                        </FrameLayout>
+                    </com.google.android.material.card.MaterialCardView>
+
+                    <!-- Slot 4 -->
+                    <com.google.android.material.card.MaterialCardView
+                        android:id="@+id/cardSlot4"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:layout_margin="4dp"
+                        app:cardCornerRadius="14dp"
+                        app:cardElevation="1dp"
+                        app:strokeWidth="1dp"
+                        app:strokeColor="@color/card_stroke"
+                        app:cardBackgroundColor="@color/card_bg">
+
+                        <FrameLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent">
+
+                            <ImageView
+                                android:id="@+id/ivPreview4"
+                                android:layout_width="match_parent"
+                                android:layout_height="match_parent"
+                                android:scaleType="fitCenter"
+                                android:background="#000000"
+                                tools:ignore="ContentDescription" />
+
+                            <ProgressBar
+                                android:id="@+id/progress4"
+                                android:layout_width="28dp"
+                                android:layout_height="28dp"
+                                android:layout_gravity="center"
+                                android:visibility="gone" />
+
+                            <TextView
+                                android:id="@+id/tvEmpty4"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_gravity="center"
+                                android:text="未接入"
+                                android:textColor="@color/text_secondary"
+                                android:textSize="12sp" />
+
+                            <LinearLayout
+                                android:id="@+id/overlay4"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:background="#99000000"
+                                android:paddingHorizontal="10dp"
+                                android:paddingVertical="5dp"
+                                android:gravity="center_vertical"
+                                android:visibility="gone">
+
+                                <TextView
+                                    android:id="@+id/tvName4"
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:textColor="@android:color/white"
+                                    android:textSize="12sp"
+                                    android:textStyle="bold"
+                                    android:singleLine="true"
+                                    android:ellipsize="end" />
+
+                                <TextView
+                                    android:id="@+id/tvStatus4"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="实时"
+                                    android:textColor="#5CB880"
+                                    android:textSize="10sp"
+                                    android:textStyle="bold" />
+                            </LinearLayout>
+                        </FrameLayout>
+                    </com.google.android.material.card.MaterialCardView>
+
+                    <!-- Slot 5 -->
+                    <com.google.android.material.card.MaterialCardView
+                        android:id="@+id/cardSlot5"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:layout_margin="4dp"
+                        app:cardCornerRadius="14dp"
+                        app:cardElevation="1dp"
+                        app:strokeWidth="1dp"
+                        app:strokeColor="@color/card_stroke"
+                        app:cardBackgroundColor="@color/card_bg">
+
+                        <FrameLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent">
+
+                            <ImageView
+                                android:id="@+id/ivPreview5"
+                                android:layout_width="match_parent"
+                                android:layout_height="match_parent"
+                                android:scaleType="fitCenter"
+                                android:background="#000000"
+                                tools:ignore="ContentDescription" />
+
+                            <ProgressBar
+                                android:id="@+id/progress5"
+                                android:layout_width="28dp"
+                                android:layout_height="28dp"
+                                android:layout_gravity="center"
+                                android:visibility="gone" />
+
+                            <TextView
+                                android:id="@+id/tvEmpty5"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_gravity="center"
+                                android:text="未接入"
+                                android:textColor="@color/text_secondary"
+                                android:textSize="12sp" />
+
+                            <LinearLayout
+                                android:id="@+id/overlay5"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:background="#99000000"
+                                android:paddingHorizontal="10dp"
+                                android:paddingVertical="5dp"
+                                android:gravity="center_vertical"
+                                android:visibility="gone">
+
+                                <TextView
+                                    android:id="@+id/tvName5"
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:textColor="@android:color/white"
+                                    android:textSize="12sp"
+                                    android:textStyle="bold"
+                                    android:singleLine="true"
+                                    android:ellipsize="end" />
+
+                                <TextView
+                                    android:id="@+id/tvStatus5"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="实时"
+                                    android:textColor="#5CB880"
+                                    android:textSize="10sp"
+                                    android:textStyle="bold" />
+                            </LinearLayout>
+                        </FrameLayout>
+                    </com.google.android.material.card.MaterialCardView>
+                </LinearLayout>
+
+                <!-- Row 2: Slot 6, Slot 7, Slot 8 -->
+                <LinearLayout
+                    android:id="@+id/row2"
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"
+                    android:orientation="horizontal">
+
+                    <!-- Slot 6 -->
+                    <com.google.android.material.card.MaterialCardView
+                        android:id="@+id/cardSlot6"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:layout_margin="4dp"
+                        app:cardCornerRadius="14dp"
+                        app:cardElevation="1dp"
+                        app:strokeWidth="1dp"
+                        app:strokeColor="@color/card_stroke"
+                        app:cardBackgroundColor="@color/card_bg">
+
+                        <FrameLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent">
+
+                            <ImageView
+                                android:id="@+id/ivPreview6"
+                                android:layout_width="match_parent"
+                                android:layout_height="match_parent"
+                                android:scaleType="fitCenter"
+                                android:background="#000000"
+                                tools:ignore="ContentDescription" />
+
+                            <ProgressBar
+                                android:id="@+id/progress6"
+                                android:layout_width="28dp"
+                                android:layout_height="28dp"
+                                android:layout_gravity="center"
+                                android:visibility="gone" />
+
+                            <TextView
+                                android:id="@+id/tvEmpty6"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_gravity="center"
+                                android:text="未接入"
+                                android:textColor="@color/text_secondary"
+                                android:textSize="12sp" />
+
+                            <LinearLayout
+                                android:id="@+id/overlay6"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:background="#99000000"
+                                android:paddingHorizontal="10dp"
+                                android:paddingVertical="5dp"
+                                android:gravity="center_vertical"
+                                android:visibility="gone">
+
+                                <TextView
+                                    android:id="@+id/tvName6"
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:textColor="@android:color/white"
+                                    android:textSize="12sp"
+                                    android:textStyle="bold"
+                                    android:singleLine="true"
+                                    android:ellipsize="end" />
+
+                                <TextView
+                                    android:id="@+id/tvStatus6"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="实时"
+                                    android:textColor="#5CB880"
+                                    android:textSize="10sp"
+                                    android:textStyle="bold" />
+                            </LinearLayout>
+                        </FrameLayout>
+                    </com.google.android.material.card.MaterialCardView>
+
+                    <!-- Slot 7 -->
+                    <com.google.android.material.card.MaterialCardView
+                        android:id="@+id/cardSlot7"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:layout_margin="4dp"
+                        app:cardCornerRadius="14dp"
+                        app:cardElevation="1dp"
+                        app:strokeWidth="1dp"
+                        app:strokeColor="@color/card_stroke"
+                        app:cardBackgroundColor="@color/card_bg">
+
+                        <FrameLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent">
+
+                            <ImageView
+                                android:id="@+id/ivPreview7"
+                                android:layout_width="match_parent"
+                                android:layout_height="match_parent"
+                                android:scaleType="fitCenter"
+                                android:background="#000000"
+                                tools:ignore="ContentDescription" />
+
+                            <ProgressBar
+                                android:id="@+id/progress7"
+                                android:layout_width="28dp"
+                                android:layout_height="28dp"
+                                android:layout_gravity="center"
+                                android:visibility="gone" />
+
+                            <TextView
+                                android:id="@+id/tvEmpty7"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_gravity="center"
+                                android:text="未接入"
+                                android:textColor="@color/text_secondary"
+                                android:textSize="12sp" />
+
+                            <LinearLayout
+                                android:id="@+id/overlay7"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:background="#99000000"
+                                android:paddingHorizontal="10dp"
+                                android:paddingVertical="5dp"
+                                android:gravity="center_vertical"
+                                android:visibility="gone">
+
+                                <TextView
+                                    android:id="@+id/tvName7"
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:textColor="@android:color/white"
+                                    android:textSize="12sp"
+                                    android:textStyle="bold"
+                                    android:singleLine="true"
+                                    android:ellipsize="end" />
+
+                                <TextView
+                                    android:id="@+id/tvStatus7"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="实时"
+                                    android:textColor="#5CB880"
+                                    android:textSize="10sp"
+                                    android:textStyle="bold" />
+                            </LinearLayout>
+                        </FrameLayout>
+                    </com.google.android.material.card.MaterialCardView>
+
+                    <!-- Slot 8 -->
+                    <com.google.android.material.card.MaterialCardView
+                        android:id="@+id/cardSlot8"
+                        android:layout_width="0dp"
+                        android:layout_height="match_parent"
+                        android:layout_weight="1"
+                        android:layout_margin="4dp"
+                        app:cardCornerRadius="14dp"
+                        app:cardElevation="1dp"
+                        app:strokeWidth="1dp"
+                        app:strokeColor="@color/card_stroke"
+                        app:cardBackgroundColor="@color/card_bg">
+
+                        <FrameLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent">
+
+                            <ImageView
+                                android:id="@+id/ivPreview8"
+                                android:layout_width="match_parent"
+                                android:layout_height="match_parent"
+                                android:scaleType="fitCenter"
+                                android:background="#000000"
+                                tools:ignore="ContentDescription" />
+
+                            <ProgressBar
+                                android:id="@+id/progress8"
+                                android:layout_width="28dp"
+                                android:layout_height="28dp"
+                                android:layout_gravity="center"
+                                android:visibility="gone" />
+
+                            <TextView
+                                android:id="@+id/tvEmpty8"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_gravity="center"
+                                android:text="未接入"
+                                android:textColor="@color/text_secondary"
+                                android:textSize="12sp" />
+
+                            <LinearLayout
+                                android:id="@+id/overlay8"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:background="#99000000"
+                                android:paddingHorizontal="10dp"
+                                android:paddingVertical="5dp"
+                                android:gravity="center_vertical"
+                                android:visibility="gone">
+
+                                <TextView
+                                    android:id="@+id/tvName8"
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:textColor="@android:color/white"
+                                    android:textSize="12sp"
+                                    android:textStyle="bold"
+                                    android:singleLine="true"
+                                    android:ellipsize="end" />
+
+                                <TextView
+                                    android:id="@+id/tvStatus8"
+                                    android:layout_width="wrap_content"
+                                    android:layout_height="wrap_content"
+                                    android:text="实时"
+                                    android:textColor="#5CB880"
+                                    android:textSize="10sp"
+                                    android:textStyle="bold" />
+                            </LinearLayout>
+                        </FrameLayout>
+                    </com.google.android.material.card.MaterialCardView>
+                </LinearLayout>
+
             </LinearLayout>
+        </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
 
-            <!-- Bottom Row: Slot 2 & Slot 3 -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="0dp"
-                android:layout_weight="1"
-                android:orientation="horizontal">
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnFloatingExitLandscape"
+            android:layout_width="wrap_content"
+            android:layout_height="40dp"
+            android:layout_gravity="top|end"
+            android:layout_margin="12dp"
+            android:paddingStart="12dp"
+            android:paddingEnd="14dp"
+            android:visibility="gone"
+            android:text="退出全屏"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:textColor="@color/text_primary"
+            app:cornerRadius="20dp"
+            app:backgroundTint="@color/card_bg"
+            app:strokeColor="@color/card_stroke"
+            app:strokeWidth="1.5dp"
+            app:elevation="6dp"
+            app:icon="@drawable/ic_fullscreen_exit"
+            app:iconTint="@color/text_primary"
+            app:iconSize="18dp"
+            app:iconGravity="textStart"
+            app:iconPadding="6dp" />
 
-                <!-- Slot 2 -->
-                <com.google.android.material.card.MaterialCardView
-                    android:id="@+id/cardSlot2"
-                    android:layout_width="0dp"
-                    android:layout_height="match_parent"
-                    android:layout_weight="1"
-                    android:layout_margin="4dp"
-                    app:cardCornerRadius="16dp"
-                    app:cardElevation="1dp"
-                    app:strokeWidth="1dp"
-                    app:strokeColor="@color/card_stroke"
-                    app:cardBackgroundColor="@color/card_bg">
-
-                    <FrameLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="match_parent">
-
-                        <ImageView
-                            android:id="@+id/ivPreview2"
-                            android:layout_width="match_parent"
-                            android:layout_height="match_parent"
-                            android:scaleType="centerCrop"
-                            tools:ignore="ContentDescription" />
-
-                        <ProgressBar
-                            android:id="@+id/progress2"
-                            android:layout_width="28dp"
-                            android:layout_height="28dp"
-                            android:layout_gravity="center"
-                            android:visibility="gone" />
-
-                        <TextView
-                            android:id="@+id/tvEmpty2"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_gravity="center"
-                            android:text="未接入"
-                            android:textColor="@color/text_secondary"
-                            android:textSize="12sp" />
-
-                        <LinearLayout
-                            android:id="@+id/overlay2"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:background="#99000000"
-                            android:paddingHorizontal="10dp"
-                            android:paddingVertical="5dp"
-                            android:gravity="center_vertical"
-                            android:visibility="gone">
-
-                            <TextView
-                                android:id="@+id/tvName2"
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_weight="1"
-                                android:textColor="@android:color/white"
-                                android:textSize="12sp"
-                                android:textStyle="bold"
-                                android:singleLine="true"
-                                android:ellipsize="end" />
-
-                            <TextView
-                                android:id="@+id/tvStatus2"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="实时"
-                                android:textColor="#5CB880"
-                                android:textSize="10sp"
-                                android:textStyle="bold" />
-                        </LinearLayout>
-                    </FrameLayout>
-                </com.google.android.material.card.MaterialCardView>
-
-                <!-- Slot 3 -->
-                <com.google.android.material.card.MaterialCardView
-                    android:id="@+id/cardSlot3"
-                    android:layout_width="0dp"
-                    android:layout_height="match_parent"
-                    android:layout_weight="1"
-                    android:layout_margin="4dp"
-                    app:cardCornerRadius="16dp"
-                    app:cardElevation="1dp"
-                    app:strokeWidth="1dp"
-                    app:strokeColor="@color/card_stroke"
-                    app:cardBackgroundColor="@color/card_bg">
-
-                    <FrameLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="match_parent">
-
-                        <ImageView
-                            android:id="@+id/ivPreview3"
-                            android:layout_width="match_parent"
-                            android:layout_height="match_parent"
-                            android:scaleType="centerCrop"
-                            tools:ignore="ContentDescription" />
-
-                        <ProgressBar
-                            android:id="@+id/progress3"
-                            android:layout_width="28dp"
-                            android:layout_height="28dp"
-                            android:layout_gravity="center"
-                            android:visibility="gone" />
-
-                        <TextView
-                            android:id="@+id/tvEmpty3"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:layout_gravity="center"
-                            android:text="未接入"
-                            android:textColor="@color/text_secondary"
-                            android:textSize="12sp" />
-
-                        <LinearLayout
-                            android:id="@+id/overlay3"
-                            android:layout_width="match_parent"
-                            android:layout_height="wrap_content"
-                            android:background="#99000000"
-                            android:paddingHorizontal="10dp"
-                            android:paddingVertical="5dp"
-                            android:gravity="center_vertical"
-                            android:visibility="gone">
-
-                            <TextView
-                                android:id="@+id/tvName3"
-                                android:layout_width="0dp"
-                                android:layout_height="wrap_content"
-                                android:layout_weight="1"
-                                android:textColor="@android:color/white"
-                                android:textSize="12sp"
-                                android:textStyle="bold"
-                                android:singleLine="true"
-                                android:ellipsize="end" />
-
-                            <TextView
-                                android:id="@+id/tvStatus3"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="实时"
-                                android:textColor="#5CB880"
-                                android:textSize="10sp"
-                                android:textStyle="bold" />
-                        </LinearLayout>
-                    </FrameLayout>
-                </com.google.android.material.card.MaterialCardView>
-            </LinearLayout>
-        </LinearLayout>
-    </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+    </FrameLayout>
 </LinearLayout>

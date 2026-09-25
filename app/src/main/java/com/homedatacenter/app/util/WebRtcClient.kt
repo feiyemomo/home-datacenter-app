@@ -98,6 +98,12 @@ class WebRtcClient(
     private var peerConnection: PeerConnection? = null
     private var videoTrack: VideoTrack? = null
     private var audioTrack: AudioTrack? = null
+    private var audioTransceiver: RtpTransceiver? = null
+    private var localAudioSource: org.webrtc.AudioSource? = null
+    private var localAudioTrack: AudioTrack? = null
+    @Volatile
+    private var isTalkingBack: Boolean = false
+    private var audioDeviceModule: JavaAudioDeviceModule? = null
     // v1.7.2: latch the user's mute preference so that audio tracks
     // arriving AFTER a reconnect / renegotiation honour it. Without
     // this, onTrack forces setEnabled(true) + setVolume(1.0) on every
@@ -170,6 +176,46 @@ class WebRtcClient(
         }
     }
 
+    @Volatile
+    private var audioTrackField: java.lang.reflect.Field? = null
+
+    private fun getAudioTrackFromAdm(): android.media.AudioTrack? {
+        val audioOutput = audioDeviceModule?.audioOutput ?: return null
+        return try {
+            var field = audioTrackField
+            if (field == null) {
+                field = audioOutput.javaClass.getDeclaredField("audioTrack").apply {
+                    isAccessible = true
+                }
+                audioTrackField = field
+            }
+            field.get(audioOutput) as? android.media.AudioTrack
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /**
+     * v1.12.13: Immediately pauses and flushes the underlying AudioTrack hardware buffer
+     * to eliminate any audio residue when stopping or muting playback.
+     */
+    fun stopPlayoutImmediately() {
+        try {
+            audioTrack?.setEnabled(false)
+            audioTrack?.setVolume(0.0)
+        } catch (_: Exception) {}
+        try {
+            audioDeviceModule?.setSpeakerMute(true)
+        } catch (_: Exception) {}
+        try {
+            val at = getAudioTrackFromAdm()
+            at?.pause()
+            at?.flush()
+        } catch (e: Exception) {
+            Log.w(TAG, "stopPlayoutImmediately: ${e.message}")
+        }
+    }
+
     /**
      * v1.5.8: Toggle audio track enabled state. Mute is a local
      * operation — the backend keeps sending RTP audio, we just
@@ -179,11 +225,104 @@ class WebRtcClient(
      * v1.7.2: also latch the preference in [audioEnabledByUser] so
      * that a late-arriving audio track (after ICE reconnect) does
      * not un-mute the stream via onTrack's default setEnabled(true).
+     *
+     * v1.12.13: flush AudioTrack hardware buffer immediately when disabled
+     * to eliminate any audio residue.
      */
     fun setAudioEnabled(enabled: Boolean) {
         audioEnabledByUser = enabled
         audioTrack?.setEnabled(enabled)
+        try {
+            audioTrack?.setVolume(if (enabled) 1.0 else 0.0)
+        } catch (_: Exception) {}
+        try {
+            audioDeviceModule?.setSpeakerMute(!enabled)
+        } catch (_: Exception) {}
+        if (!enabled) {
+            try {
+                val at = getAudioTrackFromAdm()
+                at?.pause()
+                at?.flush()
+            } catch (_: Exception) {}
+        } else {
+            try {
+                val at = getAudioTrackFromAdm()
+                if (at != null && at.playState != android.media.AudioTrack.PLAYSTATE_PLAYING) {
+                    at.play()
+                }
+            } catch (_: Exception) {}
+        }
     }
+
+    /**
+     * v1.13.0: Starts two-way talkback over WebRTC.
+     * Captures audio from the device microphone and sends it to the camera backchannel.
+     */
+    fun startTalkback(): Boolean {
+        val pc = peerConnection ?: run {
+            Log.w(TAG, "startTalkback: peerConnection is null")
+            return false
+        }
+        val transceiver = audioTransceiver
+            ?: pc.transceivers.find { it.mediaType == MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO }
+            ?: run {
+                Log.w(TAG, "startTalkback: audioTransceiver not found")
+                return false
+            }
+        audioTransceiver = transceiver
+
+        val pcFactory = factory ?: run {
+            Log.w(TAG, "startTalkback: factory is null")
+            return false
+        }
+
+        return try {
+            if (localAudioTrack == null) {
+                val constraints = MediaConstraints().apply {
+                    mandatory.add(MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
+                    mandatory.add(MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
+                    mandatory.add(MediaConstraints.KeyValuePair("googHighpassFilter", "true"))
+                    mandatory.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
+                }
+                val src = pcFactory.createAudioSource(constraints)
+                localAudioSource = src
+                val track = pcFactory.createAudioTrack("ARDAMSa0_mic", src)
+                localAudioTrack = track
+                transceiver.sender.setTrack(track, true)
+            }
+            localAudioTrack?.setEnabled(true)
+            isTalkingBack = true
+            Log.i(TAG, "Talkback started (mic unmuted)")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "startTalkback failed: ${e.message}", e)
+            false
+        }
+    }
+
+    /**
+     * v1.13.0: Stops two-way talkback by muting the microphone track.
+     */
+    fun stopTalkback() {
+        isTalkingBack = false
+        try {
+            localAudioTrack?.setEnabled(false)
+            Log.i(TAG, "Talkback stopped (mic muted)")
+        } catch (e: Exception) {
+            Log.w(TAG, "stopTalkback failed: ${e.message}")
+        }
+    }
+
+    fun isTalkingBack(): Boolean = isTalkingBack
+
+    fun isConnected(): Boolean {
+        val pc = peerConnection ?: return false
+        val state = pc.iceConnectionState()
+        return (state == PeerConnection.IceConnectionState.CONNECTED ||
+                state == PeerConnection.IceConnectionState.COMPLETED)
+    }
+
+    fun hasActiveStream(): Boolean = peerConnection != null && videoTrack != null
 
     interface Listener {
         /** WebRTC connection established; video is rendering. */
@@ -210,6 +349,7 @@ class WebRtcClient(
             .setUseHardwareAcousticEchoCanceler(true)
             .setUseHardwareNoiseSuppressor(true)
             .createAudioDeviceModule()
+        audioDeviceModule = audioDevice
         // Hardware-accelerated encoder/decoder where available.
         // The second boolean (enableH264HighProfile) is true so we
         // can decode H264 streams from Hikvision cameras without
@@ -250,10 +390,21 @@ class WebRtcClient(
         isLan: Boolean,
         listener: Listener,
     ) {
+        startStream(cameraId, surfaceRenderer, iceServers, isLan, false, listener)
+    }
+
+    fun startStream(
+        cameraId: Long,
+        surfaceRenderer: SurfaceViewRenderer,
+        iceServers: List<PeerConnection.IceServer>,
+        isLan: Boolean,
+        enableTwoWayAudio: Boolean,
+        listener: Listener,
+    ) {
         signalingJob?.cancel()
         signalingJob = scope.launch {
             try {
-                startStreamInternal(cameraId, surfaceRenderer, iceServers, isLan, listener)
+                startStreamInternal(cameraId, surfaceRenderer, iceServers, isLan, enableTwoWayAudio, listener)
             } catch (e: Exception) {
                 Log.e(TAG, "WebRTC signaling failed: ${e.message}", e)
                 listener.onError(e.message ?: "unknown")
@@ -263,48 +414,30 @@ class WebRtcClient(
 
     /**
      * v1.6.35: Pre-negotiate the SDP offer before the user taps Play.
-     *
-     * Creates a PeerConnection, adds the recvonly video transceiver,
-     * creates the SDP offer, sets the local description, and waits for
-     * ICE gathering to complete — all without POSTing to the backend.
-     * The prepared PC + local SDP are stored in [preparedPc] /
-     * [preparedSdp] and consumed by the next [startStream] call for
-     * the same cameraId, saving 800ms on LAN / up to 5s on remote
-     * (the ICE gathering phase).
-     *
-     * Best-effort: if the user taps Play before this finishes,
-     * [startStream] cancels this job and runs the full flow. If the
-     * factory isn't initialized or PC creation fails, the method
-     * silently returns and [startStream] does the full flow.
-     *
-     * @param cameraId Backend camera id (must match the id passed to
-     *     the subsequent [startStream] call for the prepared PC to
-     *     be consumed).
-     * @param iceServers ICE server config (same value that would be
-     *     passed to [startStream]).
-     * @param isLan Network path hint (controls TCP candidate policy
-     *     and ICE gathering timeout, same as [startStream]).
      */
     fun prepareOffer(
         cameraId: Long,
         iceServers: List<PeerConnection.IceServer>,
         isLan: Boolean,
     ) {
+        prepareOffer(cameraId, iceServers, isLan, false)
+    }
+
+    fun prepareOffer(
+        cameraId: Long,
+        iceServers: List<PeerConnection.IceServer>,
+        isLan: Boolean,
+        enableTwoWayAudio: Boolean,
+    ) {
         prepareJob?.cancel()
         prepareJob = scope.launch {
             try {
-                prepareOfferInternal(cameraId, iceServers, isLan)
+                prepareOfferInternal(cameraId, iceServers, isLan, enableTwoWayAudio)
             } catch (e: Exception) {
                 Log.w(TAG, "prepareOffer failed: ${e.message}")
                 preparedPc?.let { try { it.dispose() } catch (_: Exception) {} }
                 preparedPc = null
                 preparedSdp = null
-                // v1.6.41: clear preparedCameraId too so the triple
-                // stays consistent. Previously this was missed, which
-                // could leave a stale cameraId alongside null pc/sdp.
-                // The usePrepared null checks in startStreamInternal
-                // already guard against this, but clearing it removes
-                // any ambiguity for future readers.
                 preparedCameraId = -1L
             }
         }
@@ -314,6 +447,7 @@ class WebRtcClient(
         cameraId: Long,
         iceServers: List<PeerConnection.IceServer>,
         isLan: Boolean,
+        enableTwoWayAudio: Boolean,
     ) {
         val pcFactory = factory ?: run {
             Log.w(TAG, "prepareOffer: factory not initialized")
@@ -334,16 +468,26 @@ class WebRtcClient(
             }
 
         try {
-            // Add recvonly video transceiver (same as startStreamInternal).
+            // Add video transceiver (recvonly) and audio transceiver (sendrecv if twoWayAudio).
+            val audioDirection = if (enableTwoWayAudio) {
+                RtpTransceiver.RtpTransceiverDirection.SEND_RECV
+            } else {
+                RtpTransceiver.RtpTransceiverDirection.RECV_ONLY
+            }
             pc.addTransceiver(
                 MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO,
                 RtpTransceiver.RtpTransceiverInit(
                     RtpTransceiver.RtpTransceiverDirection.RECV_ONLY
                 )
             )
+            audioTransceiver = pc.addTransceiver(
+                MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO,
+                RtpTransceiver.RtpTransceiverInit(audioDirection)
+            )
 
             val constraints = MediaConstraints().apply {
                 mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
+                mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
             }
 
             val offer = withContext(Dispatchers.IO) {
@@ -477,6 +621,16 @@ class WebRtcClient(
                         runCatching {
                             at.setVolume(if (audioEnabledByUser) 1.0 else 0.0)
                         }
+                        try {
+                            audioDeviceModule?.setSpeakerMute(!audioEnabledByUser)
+                        } catch (_: Exception) {}
+                        if (!audioEnabledByUser) {
+                            try {
+                                val atNative = getAudioTrackFromAdm()
+                                atNative?.pause()
+                                atNative?.flush()
+                            } catch (_: Exception) {}
+                        }
                         android.util.Log.d(TAG, "onTrack: audio track received, " +
                             "userEnabled=$audioEnabledByUser enabled=${at.enabled()}")
                     }
@@ -507,6 +661,7 @@ class WebRtcClient(
         surfaceRenderer: SurfaceViewRenderer,
         iceServers: List<PeerConnection.IceServer>,
         isLan: Boolean,
+        enableTwoWayAudio: Boolean = false,
         listener: Listener,
     ) {
         val pcFactory = factory ?: run {
@@ -517,11 +672,10 @@ class WebRtcClient(
         // attempt. The app-level connection timeout checks this
         // flag to know whether to fire onError("connection timeout").
         connectedOrFailed = false
-        // v1.7.2: reset the user's audio preference for the new
-        // stream. A fresh camera open should start unmuted; the
-        // latch only needs to survive ICE reconnects, not full
-        // stream restarts.
-        audioEnabledByUser = true
+        // v1.12.12: sync speaker mute with audioEnabledByUser instead of unconditionally forcing it on
+        try {
+            audioDeviceModule?.setSpeakerMute(!audioEnabledByUser)
+        } catch (_: Exception) {}
 
         // v1.6.35: set the active listener + surface so the shared
         // observer (createPeerConnectionObserver) can dispatch
@@ -601,6 +755,7 @@ class WebRtcClient(
             preparedSdp = null
             preparedCameraId = -1L
             peerConnection = pc
+            audioTransceiver = pc.transceivers.find { it.mediaType == MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO }
             // v1.6.41: upgraded Log.d -> Log.i so the preload fast-path
             // hit is visible in logcat without a debug filter — this is
             // the key signal that precomputeSdpOffer actually paid off.
@@ -616,21 +771,28 @@ class WebRtcClient(
             pc = newPc
             peerConnection = pc
 
-            // v1.6.18: VIDEO-ONLY transceiver, matching the dashboard's
-            // useWebRTCStream.ts. The backend's go2rtc source URL
-            // includes `#audio=0` which strips the audio track at the
-            // source. An audio m-line in the offer with no audio source
-            // breaks SDP negotiation. Camera audio is still available
-            // via the MP4/HLS fallback paths (which use AAC, not Opus).
+            // v1.12.5: Add video and audio transceivers so live streams
+            // negotiate Opus/PCMA audio with go2rtc.
+            // v1.13.0: support SEND_RECV direction when enableTwoWayAudio is true.
+            val audioDirection = if (enableTwoWayAudio) {
+                RtpTransceiver.RtpTransceiverDirection.SEND_RECV
+            } else {
+                RtpTransceiver.RtpTransceiverDirection.RECV_ONLY
+            }
             pc.addTransceiver(
                 MediaStreamTrack.MediaType.MEDIA_TYPE_VIDEO,
                 RtpTransceiver.RtpTransceiverInit(
                     RtpTransceiver.RtpTransceiverDirection.RECV_ONLY
                 )
             )
+            audioTransceiver = pc.addTransceiver(
+                MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO,
+                RtpTransceiver.RtpTransceiverInit(audioDirection)
+            )
 
             val constraints = MediaConstraints().apply {
                 mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
+                mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
             }
 
             val offer = withContext(Dispatchers.IO) {
@@ -843,22 +1005,60 @@ class WebRtcClient(
 
     /** Detaches video sinks and disposes the PeerConnection. */
     fun release() {
+        stopPlayoutImmediately()
         signalingJob?.cancel()
         // v1.6.35: cancel any pending pre-negotiation and dispose
         // the prepared PC so it doesn't leak when the activity is
         // destroyed before the user taps Play.
         prepareJob?.cancel()
         prepareJob = null
-        preparedPc?.let { try { it.dispose() } catch (_: Exception) {} }
+        preparedPc?.let {
+            try {
+                it.close()
+                it.dispose()
+            } catch (_: Exception) {}
+        }
         preparedPc = null
         preparedSdp = null
         preparedCameraId = -1L
         activeListener = null
+        stopTalkback()
+        try {
+            localAudioTrack?.let {
+                audioTransceiver?.sender?.setTrack(null, true)
+                it.dispose()
+            }
+        } catch (_: Exception) {}
+        localAudioTrack = null
+        try {
+            localAudioSource?.dispose()
+        } catch (_: Exception) {}
+        localAudioSource = null
+        audioTransceiver = null
+
+        try {
+            audioTrack?.setEnabled(false)
+            audioTrack?.setVolume(0.0)
+            // DO NOT call audioTrack?.dispose() here. Remote tracks received via
+            // onTrack are owned by native PeerConnection/RtpReceiver; disposing them
+            // manually triggers a native C++ SIGABRT double-free when peerConnection.dispose() runs!
+        } catch (_: Exception) {}
+        try {
+            audioDeviceModule?.setSpeakerMute(true)
+        } catch (_: Exception) {}
+        audioTrack = null
+        try {
+            activeSurfaceRenderer?.let { videoTrack?.removeSink(it) }
+            videoTrack?.setEnabled(false)
+            // DO NOT call videoTrack?.dispose() here for the same reason.
+        } catch (_: Exception) {}
         activeSurfaceRenderer = null
         videoTrack = null
-        audioTrack = null
         peerConnection?.let {
-            try { it.dispose() } catch (_: Exception) {}
+            try {
+                it.close()
+                it.dispose()
+            } catch (_: Exception) {}
         }
         peerConnection = null
     }
@@ -882,7 +1082,9 @@ class WebRtcClient(
             return false
         }
         return try {
+            try { vt.removeSink(surfaceRenderer) } catch (_: Exception) {}
             vt.addSink(surfaceRenderer)
+            activeSurfaceRenderer = surfaceRenderer
             Log.d(TAG, "Video track re-attached on resume (PC state=$state)")
             true
         } catch (e: Exception) {
@@ -898,6 +1100,8 @@ class WebRtcClient(
             try { it.dispose() } catch (_: Exception) {}
         }
         factory = null
+        try { audioDeviceModule?.release() } catch (_: Exception) {}
+        audioDeviceModule = null
         try { eglBase.release() } catch (_: Exception) {}
     }
 

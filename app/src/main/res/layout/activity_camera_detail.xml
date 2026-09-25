@@ -44,29 +44,70 @@
             android:layout_height="wrap_content"
             android:background="@color/card_bg">
 
-            <com.google.android.exoplayer2.ui.StyledPlayerView
-                android:id="@+id/playerView"
+            <!-- v1.13.0: Digital Pinch-to-Zoom container -->
+            <com.homedatacenter.app.ui.cameras.PinchToZoomFrameLayout
+                android:id="@+id/pinchZoomContainer"
                 android:layout_width="match_parent"
-                android:layout_height="200dp"
-                app:resize_mode="fixed_width"
-                app:use_controller="true"
-                app:show_buffering="when_playing"
-                app:show_timeout="3000" />
+                android:layout_height="wrap_content">
 
-            <!-- v1.6.16: JPEG preview frame shown immediately while
-                 WebRTC/MP4 is connecting. Mirrors the web dashboard's
-                 strategy of showing a cheap JPEG frame (/api/v1/cameras/:id/frame)
-                 before the expensive video stream cold-starts, so the
-                 user sees content within ~1.5s instead of staring at a
-                 black screen + spinner for 5-15s on remote networks.
-                 Hidden once any video surface becomes visible. -->
-            <ImageView
-                android:id="@+id/ivPreviewFrame"
-                android:layout_width="match_parent"
-                android:layout_height="200dp"
-                android:scaleType="centerCrop"
-                android:background="@android:color/black"
-                android:visibility="gone" />
+                <FrameLayout
+                    android:id="@+id/zoomContentContainer"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content">
+
+                    <com.google.android.exoplayer2.ui.StyledPlayerView
+                        android:id="@+id/playerView"
+                        android:layout_width="match_parent"
+                        android:layout_height="200dp"
+                        app:surface_type="texture_view"
+                        app:resize_mode="fixed_width"
+                        app:use_controller="true"
+                        app:show_buffering="when_playing"
+                        app:show_timeout="3000" />
+
+                    <!-- v1.6.16: JPEG preview frame shown immediately while
+                         WebRTC/MP4 is connecting. Mirrors the web dashboard's
+                         strategy of showing a cheap JPEG frame (/api/v1/cameras/:id/frame)
+                         before the expensive video stream cold-starts, so the
+                         user sees content within ~1.5s instead of staring at a
+                         black screen + spinner for 5-15s on remote networks.
+                         Hidden once any video surface becomes visible. -->
+                    <ImageView
+                        android:id="@+id/ivPreviewFrame"
+                        android:layout_width="match_parent"
+                        android:layout_height="200dp"
+                        android:scaleType="centerCrop"
+                        android:background="@android:color/black"
+                        android:visibility="gone" />
+
+                    <!-- WebRTC surface: shown when the live stream is delivered
+                         via WebRtcClient (v1.5.3 primary path). Hidden when the
+                         ExoPlayer MP4/HLS fallback is active. -->
+                    <com.homedatacenter.app.ui.cameras.SafeSurfaceViewRenderer
+                        android:id="@+id/surfaceRenderer"
+                        android:layout_width="match_parent"
+                        android:layout_height="200dp"
+                        android:visibility="gone" />
+                </FrameLayout>
+            </com.homedatacenter.app.ui.cameras.PinchToZoomFrameLayout>
+
+            <!-- v1.13.0: Zoom factor indicator badge -->
+            <TextView
+                android:id="@+id/tvZoomBadge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="top|center_horizontal"
+                android:layout_margin="6dp"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                android:paddingTop="3dp"
+                android:paddingBottom="3dp"
+                android:background="#99000000"
+                android:textColor="@android:color/white"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                android:visibility="gone"
+                tools:ignore="HardcodedText" />
 
             <!-- v1.5.9: Stream strategy badge (top-left). Shows
                  the active live transport so the user knows whether
@@ -114,15 +155,6 @@
                 android:textStyle="bold"
                 android:visibility="gone"
                 tools:ignore="HardcodedText" />
-
-            <!-- WebRTC surface: shown when the live stream is delivered
-                 via WebRtcClient (v1.5.3 primary path). Hidden when the
-                 ExoPlayer MP4/HLS fallback is active. -->
-            <org.webrtc.SurfaceViewRenderer
-                android:id="@+id/surfaceRenderer"
-                android:layout_width="match_parent"
-                android:layout_height="200dp"
-                android:visibility="gone" />
 
             <!-- v1.5.8: WebRTC control overlay. When WebRTC is the
                  active renderer, the ExoPlayer controller (pause /
@@ -255,6 +287,50 @@
                     android:layout_marginStart="6dp"
                     android:text="@string/camera_action_alerts"
                     app:icon="@drawable/ic_alerts" />
+            </LinearLayout>
+
+            <!-- v1.13.0: Two-way audio talkback card -->
+            <LinearLayout
+                android:id="@+id/cardTalkback"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_glass_card"
+                android:orientation="vertical"
+                android:padding="16dp"
+                android:layout_marginBottom="16dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/tvTalkbackTitle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="双向语音对讲"
+                    android:textSize="14sp"
+                    android:textColor="@color/text_secondary"
+                    android:layout_marginBottom="10dp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnTalkback"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:text="按住 对讲"
+                    android:textSize="15sp"
+                    android:textStyle="bold"
+                    app:icon="@drawable/ic_mic"
+                    app:iconSize="22dp"
+                    app:iconGravity="textStart"
+                    app:cornerRadius="26dp" />
+
+                <TextView
+                    android:id="@+id/tvTalkbackHint"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_horizontal"
+                    android:layout_marginTop="6dp"
+                    android:text="按住说话，松开发送到摄像机"
+                    android:textSize="12sp"
+                    android:textColor="@color/text_hint" />
             </LinearLayout>
 
             <!-- PTZ section -->

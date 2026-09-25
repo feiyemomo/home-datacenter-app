@@ -71,7 +71,11 @@ class AlertsDialog(
         setupRecyclerView()
         setupFilters()
         loadAlerts()
-        binding.toolbar.setNavigationOnClickListener { dismiss() }
+        binding.toolbar.setNavigationOnClickListener {
+            if (!onBackPressedCustom()) {
+                dismiss()
+            }
+        }
         binding.toolbar.title = "${camera.name} - 报警"
     }
 
@@ -271,13 +275,20 @@ class AlertsDialog(
             // dialog doesn't stack on top (otherwise the user has
             // to close TWO dialogs to get back to the camera detail
             // page). The recordings dialog has its own back button.
-            dismiss()
-            RecordingsDialog(
-                context = context,
-                camera = camera,
-                container = container,
-                initialTimestamp = ts,
-            ).show()
+            if (context is CameraDetailActivity) {
+                val act = context as CameraDetailActivity
+                act.pauseLivePlayback()
+                dismiss()
+                act.showRecordings(ts)
+            } else {
+                dismiss()
+                RecordingsDialog(
+                    context = context,
+                    camera = camera,
+                    container = container,
+                    initialTimestamp = ts,
+                ).show()
+            }
         } catch (e: Exception) {
             android.util.Log.e("AlertsDialog",
                 "RecordingsDialog launch failed: ${e.message}", e)
@@ -344,14 +355,9 @@ class AlertsDialog(
         }
         binding.playerView.player = player
         binding.btnBack.setOnClickListener {
-            player?.release()
-            player = null
-            fullscreenHelper?.release()
-            fullscreenHelper = null
-            binding.btnPlaybackSpeed.visibility = View.GONE
-            binding.btnFullscreen.visibility = View.GONE
-            binding.videoContainer.visibility = View.GONE
-            binding.recyclerView.visibility = View.VISIBLE
+            if (!onBackPressedCustom()) {
+                dismiss()
+            }
         }
 
         // Attach fullscreen + speed button handlers. Same pattern as
@@ -378,6 +384,32 @@ class AlertsDialog(
         if (baseUrl.isNullOrBlank()) return ""
         val base = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
         return "${base}api/v1/cameras/${camera.id}/recordings/$recId/file"
+    }
+
+    fun onBackPressedCustom(): Boolean {
+        if (fullscreenHelper?.isFullscreen == true) {
+            fullscreenHelper?.exitFullscreen()
+            return true
+        }
+        if (binding.videoContainer.visibility == View.VISIBLE) {
+            player?.stop()
+            player?.release()
+            player = null
+            fullscreenHelper?.release()
+            fullscreenHelper = null
+            binding.btnPlaybackSpeed.visibility = View.GONE
+            binding.btnFullscreen.visibility = View.GONE
+            binding.videoContainer.visibility = View.GONE
+            binding.recyclerView.visibility = View.VISIBLE
+            return true
+        }
+        return false
+    }
+
+    override fun onBackPressed() {
+        if (!onBackPressedCustom()) {
+            super.onBackPressed()
+        }
     }
 
     override fun dismiss() {

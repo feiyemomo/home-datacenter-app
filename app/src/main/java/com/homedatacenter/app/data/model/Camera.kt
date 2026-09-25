@@ -53,6 +53,15 @@ data class Camera(
         get() = capabilities["audio"] == true
 
     /**
+     * True when the camera supports two-way talkback (speaker/backchannel).
+     * Controls whether the "按住对讲" button is shown.
+     */
+    val hasTwoWayAudio: Boolean
+        get() = capabilities["two_way_audio"] == true ||
+                capabilities["talkback"] == true ||
+                capabilities["audio_back"] == true
+
+    /**
      * True when the camera supports ONVIF PTZ commands. Controls
      * whether the PTZ directional pad is shown on the camera card.
      */

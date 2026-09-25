@@ -684,7 +684,12 @@ class BaseUrlResolver(
                                 "preference=$preference (resolved=$resolved)",
                         )
                         lastRttMs = remoteResult.rttMs
-                        applyResolved(REMOTE_URL)
+                        if (remoteResult.alive) {
+                            applyResolved(REMOTE_URL)
+                        } else {
+                            val fallback = if (resolved == effectiveLanUrl || lanResult.rttMs >= 0) effectiveLanUrl else REMOTE_URL
+                            applyResolved(fallback)
+                        }
                     }
                 }
             }
@@ -968,7 +973,7 @@ class BaseUrlResolver(
         // overall probe cycle — the slowest probe (Remote) dominates
         // the wall time anyway, but tightening LAN helps when the HTTP
         // probe fails and we need the TCP fallback quickly.
-        private const val LAN_TIMEOUT_MS = 1_000
+        private const val LAN_TIMEOUT_MS = 2_500
 
         // v1.6.23: IPv6 direct probe timeout. OkHttp fails immediately
         // (NoRouteToHostException) if the phone has no IPv6 route, so

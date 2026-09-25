@@ -78,13 +78,10 @@ class RecordingsDialog(
     // interaction contract.
     private var gestureHelper: PlayerGestureHelper? = null
 
-    // v1.8.48: recording streaming source flag. The /stream endpoint
-    // transcodes the HEVC clip to fMP4 on the fly (first frame ~1-2s),
-    // far faster than the legacy /file full-clip transcode. A user
-    // picking a day starts on /stream; if it fails we fall back to
-    // /file for the rest of this dialog session. Reopening the dialog
-    // starts fresh on /stream again.
-    private var useStreamSource = true
+    // v1.12.10: recording streaming source flag. Default to /file because
+    // /file provides Content-Length and full HTTP Range support, enabling
+    // precise seeking across and within clips for alert jumps and scrubbing.
+    private var useStreamSource = false
     // Guards the /stream -> /file fallback so it fires only ONCE per
     // dialog session (a session that fell back to /file stays on /file).
     private var streamFallbackTriggered = false
@@ -145,6 +142,8 @@ class RecordingsDialog(
     // opens the dialog with initialTimestamp; cleared after the first
     // STATE_READY so subsequent state changes don't re-seek.
     private var pendingAlertSeekMs: Long = 0L
+    private var pendingAlertSeekWindow: Int = 0
+    private var pendingAlertSeekPos: Long = 0L
     // v1.6.1: deferred initial action for alert-click jump. When the
     // dialog is opened with initialTimestamp > 0 (alert click), we
     // can't call openDayForTimestamp directly from [init] because
@@ -182,6 +181,11 @@ class RecordingsDialog(
     private val daySeekUpdateRunnable = object : Runnable {
         override fun run() {
             val p = player ?: return
+            if (pendingAlertSeekPos > 0L) {
+                // Alert seek is in flight — do not overwrite target progress with 0 while buffering
+                daySeekHandler.postDelayed(this, 300)
+                return
+            }
             if (!daySeekUserDragging) {
                 // v1.5.16: SeekBar progress = absolute LOCAL time-of-day
                 // (ms from LOCAL 00:00), not playlist-internal position.
@@ -207,16 +211,7 @@ class RecordingsDialog(
         setupRecyclerView()
         loadRecordings()
         binding.toolbar.setNavigationOnClickListener {
-            if (binding.videoContainer.visibility == View.VISIBLE) {
-                player?.stop()
-                player?.release()
-                player = null
-                daySeekHandler.removeCallbacks(daySeekUpdateRunnable)
-                binding.videoContainer.visibility = View.GONE
-                binding.recyclerView.visibility = View.VISIBLE
-                binding.btnDownloadClip.visibility = View.GONE
-                binding.toolbar.title = "${camera.name} - 录像"
-            } else {
+            if (!onBackPressedCustom()) {
                 dismiss()
             }
         }
@@ -599,12 +594,8 @@ class RecordingsDialog(
         // v1.5.11: stop any pending scrub updates from a previous
         // playlist session before we (re)build the player.
         daySeekHandler.removeCallbacks(daySeekUpdateRunnable)
-        // v1.8.48: a user-initiated day selection starts on the fast /stream
-        // source. If a /stream -> /file fallback already fired for the
-        // current rebuild, keep /file (don't flip back to /stream).
-        if (!streamFallbackTriggered) {
-            useStreamSource = true
-        }
+        // v1.12.10: use /file endpoint by default so ExoPlayer can seek with HTTP Range requests
+        useStreamSource = false
         val renderersFactory = ExoPlayerRendererFactory.create(context)
         // v1.6.39: increased buffer for smoother recording playback.
         // The previous low-latency config (minBuffer=2s, maxBuffer=10s)
@@ -625,6 +616,7 @@ class RecordingsDialog(
             .build()
         player = ExoPlayer.Builder(context, renderersFactory)
             .setLoadControl(loadControl)
+            .setSeekParameters(com.google.android.exoplayer2.SeekParameters.EXACT)
             .build().apply {
             setAudioAttributes(
                 com.google.android.exoplayer2.audio.AudioAttributes.Builder()
@@ -662,41 +654,48 @@ class RecordingsDialog(
                     )
                     .build()
             }
+            val adjustedSeekMs = if (seekToMs > 0L) {
+                // v1.12.12: Pre-roll by 1.0s so the user lands at the alert event precisely
+                maxOf(dayStartLocalMillis, seekToMs - 1000L)
+            } else 0L
+
+            var startWindow = 0
+            var startPos = 0L
+            if (adjustedSeekMs > 0L) {
+                val progress = (adjustedSeekMs - dayStartLocalMillis).coerceIn(0L, dayTotalMs)
+                val raw = clipStartOffsets.binarySearch(progress)
+                val idx = if (raw >= 0) raw else (-raw - 2).coerceAtLeast(0)
+                startWindow = idx.coerceIn(0, clipStartOffsets.size - 1).coerceAtMost(items.size - 1)
+                startPos = (progress - clipStartOffsets[startWindow]).coerceIn(0L, dayClipDurationMs)
+                android.util.Log.d("RecordingsDialog",
+                    "Alert-seek direct: seekToMs=$seekToMs adjusted=$adjustedSeekMs -> window=$startWindow pos=$startPos")
+            }
+
+            this@RecordingsDialog.pendingAlertSeekWindow = startWindow
+            this@RecordingsDialog.pendingAlertSeekPos = startPos
+
             // setMediaSources is more efficient than setMediaItems
             // when each item shares the same MediaSource factory.
             val mediaSources = items.map { mediaSourceFactory.createMediaSource(it) }
-            setMediaSources(mediaSources, /* startWindowIndex = */ 0, /* startPositionMs = */ 0L)
+            setMediaSources(mediaSources, /* startWindowIndex = */ startWindow, /* startPositionMs = */ startPos)
             playWhenReady = true
             addListener(object : Player.Listener {
                 override fun onPlaybackStateChanged(state: Int) {
                     binding.progressPlayer.visibility = if (state == Player.STATE_BUFFERING) View.VISIBLE else View.GONE
                     if (state == Player.STATE_READY) {
                         recordingRetryCount = 0
-                    }
-                    // v1.6.0: one-shot seek-to when the user opened
-                    // the dialog via an alert click. We wait for
-                    // STATE_READY (the first clip has loaded) then
-                    // compute the matching window+position from the
-                    // alert's unix-ms timestamp and seek there.
-                    if (state == Player.STATE_READY && pendingAlertSeekMs > 0L) {
-                        val seekMs = pendingAlertSeekMs
-                        pendingAlertSeekMs = 0L // clear before seeking
-                        val progress = (seekMs - dayStartLocalMillis)
-                            .coerceIn(0L, dayTotalMs)
-                        val raw = clipStartOffsets.binarySearch(progress)
-                        val idx = if (raw >= 0) raw
-                                  else (-raw - 2).coerceAtLeast(0)
-                        val targetWindow = idx.coerceIn(0, clipStartOffsets.size - 1)
-                            .coerceAtMost(mediaItemCount - 1)
-                        val targetPosition = (progress - clipStartOffsets[targetWindow])
-                            .coerceIn(0L, dayClipDurationMs)
-                        android.util.Log.d("RecordingsDialog",
-                            "Alert-seek: ts=$seekMs progress=$progress " +
-                            "-> window=$targetWindow pos=$targetPosition")
-                        seekTo(targetWindow, targetPosition)
-                        // Update the SeekBar to match.
-                        binding.daySeekBar.progress = progress.toInt()
-                        binding.tvDayPosition.text = formatDayTime(progress)
+                        if (pendingAlertSeekPos > 0L) {
+                            val win = pendingAlertSeekWindow
+                            val pos = pendingAlertSeekPos
+                            pendingAlertSeekPos = 0L
+                            pendingAlertSeekWindow = 0
+                            val targetProgress = (if (win in clipStartOffsets.indices) clipStartOffsets[win] else 0L) + pos
+                            binding.daySeekBar.progress = targetProgress.toInt()
+                            binding.tvDayPosition.text = formatDayTime(targetProgress)
+                            android.util.Log.d("RecordingsDialog",
+                                "Executing deferred alert seek on STATE_READY: window=$win pos=$pos targetProgress=$targetProgress")
+                            seekTo(win, pos)
+                        }
                     }
                 }
                 override fun onPlayerError(error: PlaybackException) {
@@ -738,11 +737,6 @@ class RecordingsDialog(
             prepare()
         }
         binding.playerView.player = player
-        // v1.6.0: arm the one-shot alert-seek flag so the listener
-        // above can fire on the first STATE_READY.
-        if (seekToMs > 0L) {
-            pendingAlertSeekMs = seekToMs
-        }
 
         // v1.5.11: hide ExoPlayer's built-in controller scrubber in
         // playlist mode so the user doesn't see two competing
@@ -752,12 +746,13 @@ class RecordingsDialog(
         binding.playerView.useController = false
         binding.dayScrubBarContainer.visibility = View.VISIBLE
         binding.daySeekBar.max = dayTotalMs.toInt()
-        binding.daySeekBar.progress = 0
-        // v1.5.22: position label = LOCAL wall-clock time at SeekBar
-        // 0% (= first recording's start time, e.g. "08:00:00").
-        // Duration label = wall-clock time at SeekBar 100% (= first
-        // recording + 24h, may wrap past 24:00 to next-day hours).
-        binding.tvDayPosition.text = formatDayTime(0L)
+        val initialProgress = if (seekToMs > 0L) {
+            val adjusted = maxOf(dayStartLocalMillis, seekToMs - 1000L)
+            (adjusted - dayStartLocalMillis).coerceIn(0L, dayTotalMs)
+        } else 0L
+        binding.daySeekBar.progress = initialProgress.toInt()
+        binding.tvDayPosition.text = formatDayTime(initialProgress)
+        // v1.5.22: duration label = wall-clock time at SeekBar 100%
         binding.tvDayDuration.text = formatDayTime(dayTotalMs)
         // Start the periodic update — it re-posts itself every 500ms
         // until [stopDaySeekUpdates] is called (in dismiss / back).
@@ -838,28 +833,9 @@ class RecordingsDialog(
         })
 
         binding.btnBack.setOnClickListener {
-            player?.release()
-            player = null
-            fullscreenHelper?.release()
-            fullscreenHelper = null
-            // v1.6.4 rev6: release gesture helper + hide the centered
-            // pause button so it doesn't linger if the user re-opens
-            // playback for another day.
-            gestureHelper?.release()
-            gestureHelper = null
-            binding.btnCenterPause.visibility = View.GONE
-            binding.btnPlaybackSpeed.visibility = View.GONE
-            // v1.6.5 rev7: hide the new slider bar + seek-hint overlays
-            // so they don't linger between day-playback sessions.
-            binding.speedBarContainer.visibility = View.GONE
-            binding.tvSeekRewindHint.visibility = View.GONE
-            binding.tvSeekForwardHint.visibility = View.GONE
-            binding.btnFullscreen.visibility = View.GONE
-            binding.dayScrubBarContainer.visibility = View.GONE
-            binding.playerView.useController = true
-            daySeekHandler.removeCallbacks(daySeekUpdateRunnable)
-            binding.videoContainer.visibility = View.GONE
-            binding.recyclerView.visibility = View.VISIBLE
+            if (!onBackPressedCustom()) {
+                dismiss()
+            }
         }
 
         if (fullscreenHelper == null) {
@@ -1459,6 +1435,43 @@ class RecordingsDialog(
         // transcode) once per playback session if it fails.
         val path = if (useStreamSource) "stream" else "file"
         return "${base}api/v1/cameras/${camera.id}/recordings/$recId/$path"
+    }
+
+    fun onBackPressedCustom(): Boolean {
+        if (fullscreenHelper?.isFullscreen == true) {
+            fullscreenHelper?.exitFullscreen()
+            return true
+        }
+        if (binding.videoContainer.visibility == View.VISIBLE) {
+            player?.stop()
+            player?.release()
+            player = null
+            fullscreenHelper?.release()
+            fullscreenHelper = null
+            gestureHelper?.release()
+            gestureHelper = null
+            binding.btnCenterPause.visibility = View.GONE
+            binding.btnPlaybackSpeed.visibility = View.GONE
+            binding.speedBarContainer.visibility = View.GONE
+            binding.tvSeekRewindHint.visibility = View.GONE
+            binding.tvSeekForwardHint.visibility = View.GONE
+            binding.btnFullscreen.visibility = View.GONE
+            binding.dayScrubBarContainer.visibility = View.GONE
+            binding.playerView.useController = true
+            daySeekHandler.removeCallbacks(daySeekUpdateRunnable)
+            binding.videoContainer.visibility = View.GONE
+            binding.recyclerView.visibility = View.VISIBLE
+            binding.btnDownloadClip.visibility = View.GONE
+            binding.toolbar.title = "${camera.name} - 录像"
+            return true
+        }
+        return false
+    }
+
+    override fun onBackPressed() {
+        if (!onBackPressedCustom()) {
+            super.onBackPressed()
+        }
     }
 
     override fun dismiss() {

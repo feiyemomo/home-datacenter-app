@@ -70,6 +70,7 @@ class SettingsFragment : Fragment() {
         val prefs = mainActivity.container.prefsManager
 
         setupThemeSelector(prefs)
+        setupNotificationSettings(prefs)
         setupProfileCard(prefs)
         setupJwtInfo(prefs)
         setupLanConfig()
@@ -119,6 +120,86 @@ class SettingsFragment : Fragment() {
             // setDefaultNightMode and the explicit recreate overlap,
             // leaving the fragment in an inconsistent state).
         }
+    }
+
+    private fun setupNotificationSettings(prefs: PrefsManager) {
+        binding.switchNotificationsMaster.isChecked = prefs.notificationsEnabled
+        binding.layoutNotificationDetails.visibility = if (prefs.notificationsEnabled) View.VISIBLE else View.GONE
+
+        binding.switchNotificationsMaster.setOnCheckedChangeListener { _, isChecked ->
+            prefs.notificationsEnabled = isChecked
+            binding.layoutNotificationDetails.visibility = if (isChecked) View.VISIBLE else View.GONE
+        }
+
+        binding.switchNotifyPerson.isChecked = prefs.notifyPerson
+        binding.switchNotifyPerson.setOnCheckedChangeListener { _, isChecked ->
+            prefs.notifyPerson = isChecked
+        }
+
+        binding.switchNotifyVehicle.isChecked = prefs.notifyVehicle
+        binding.switchNotifyVehicle.setOnCheckedChangeListener { _, isChecked ->
+            prefs.notifyVehicle = isChecked
+        }
+
+        binding.switchNotifyPet.isChecked = prefs.notifyPet
+        binding.switchNotifyPet.setOnCheckedChangeListener { _, isChecked ->
+            prefs.notifyPet = isChecked
+        }
+
+        binding.switchNotifyMotion.isChecked = prefs.notifyMotion
+        binding.switchNotifyMotion.setOnCheckedChangeListener { _, isChecked ->
+            prefs.notifyMotion = isChecked
+        }
+
+        binding.switchNotifySystem.isChecked = prefs.notifySystem
+        binding.switchNotifySystem.setOnCheckedChangeListener { _, isChecked ->
+            prefs.notifySystem = isChecked
+        }
+
+        binding.switchNotifySnapshot.isChecked = prefs.notifyIncludeSnapshot
+        binding.switchNotifySnapshot.setOnCheckedChangeListener { _, isChecked ->
+            prefs.notifyIncludeSnapshot = isChecked
+        }
+
+        binding.switchNotifyDnd.isChecked = prefs.notifyDndEnabled
+        binding.switchNotifyDnd.setOnCheckedChangeListener { _, isChecked ->
+            prefs.notifyDndEnabled = isChecked
+            updateDndSummaryText(prefs)
+        }
+
+        updateDndSummaryText(prefs)
+        binding.tvDndTimeSummary.setOnClickListener {
+            showDndTimePickerDialog(prefs)
+        }
+    }
+
+    private fun updateDndSummaryText(prefs: PrefsManager) {
+        val startStr = String.format(java.util.Locale.US, "%02d:%02d", prefs.notifyDndStartHour, prefs.notifyDndStartMinute)
+        val endStr = String.format(java.util.Locale.US, "%02d:%02d", prefs.notifyDndEndHour, prefs.notifyDndEndMinute)
+        binding.tvDndTimeSummary.text = "时段: $startStr ~ $endStr (点击修改)"
+    }
+
+    private fun showDndTimePickerDialog(prefs: PrefsManager) {
+        val context = requireContext()
+        val hours = (0..23).map { String.format(java.util.Locale.US, "%02d:00", it) }.toTypedArray()
+
+        android.app.AlertDialog.Builder(context)
+            .setTitle("选择免打扰起始时间")
+            .setItems(hours) { _, whichStart ->
+                prefs.notifyDndStartHour = whichStart
+                prefs.notifyDndStartMinute = 0
+
+                android.app.AlertDialog.Builder(context)
+                    .setTitle("选择免打扰结束时间")
+                    .setItems(hours) { _, whichEnd ->
+                        prefs.notifyDndEndHour = whichEnd
+                        prefs.notifyDndEndMinute = 0
+                        updateDndSummaryText(prefs)
+                        android.widget.Toast.makeText(context, "免打扰时段已更新", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                    .show()
+            }
+            .show()
     }
 
     private fun setupProfileCard(prefs: PrefsManager) {

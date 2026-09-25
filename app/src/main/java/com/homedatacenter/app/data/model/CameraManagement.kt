@@ -19,6 +19,7 @@ data class RegisterCameraRequest(
     @SerialName("profile_token") val profileToken: String = "",
     val transcode: Boolean = false,
     val codec: String = "",
+    @SerialName("two_way_audio") val twoWayAudio: Boolean = false,
 )
 
 @Serializable

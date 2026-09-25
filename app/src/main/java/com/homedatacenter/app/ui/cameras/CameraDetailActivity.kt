@@ -2,12 +2,16 @@ package com.homedatacenter.app.ui.cameras
 
 import android.app.AlertDialog
 import android.app.PictureInPictureParams
+import android.content.Intent
 import android.content.res.Configuration
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Rational
 import android.view.LayoutInflater
+import android.view.SurfaceHolder
 import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
@@ -16,6 +20,8 @@ import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.WindowCompat
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -103,6 +109,16 @@ class CameraDetailActivity : AppCompatActivity() {
     private var alertsDialog: AlertsDialog? = null
     private var fullscreenHelper: PlayerFullscreenHelper? = null
 
+    private val recordAudioLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            android.widget.Toast.makeText(this, "麦克风权限已获取，请长按开始对讲", android.widget.Toast.LENGTH_SHORT).show()
+        } else {
+            android.widget.Toast.makeText(this, "需开启麦克风权限以使用语音对讲功能", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
     // WebRTC live stream client (v1.5.3 primary path). Lazily
     // initialized in onCreate after the camera is known; shutdown
     // in onDestroy releases the PeerConnectionFactory + EGL context.
@@ -124,6 +140,61 @@ class CameraDetailActivity : AppCompatActivity() {
     private var streamRetryCount = 0
     private var streamRetryJob: kotlinx.coroutines.Job? = null
     private val maxStreamRetries = 3
+    private var isBackNavigating = false
+    private var wasInPipMode = false
+    internal var isLivePausedForDialog = false
+
+    private data class PipInsetState(
+        val view: View,
+        val fitsSystemWindows: Boolean,
+        val paddingLeft: Int,
+        val paddingTop: Int,
+        val paddingRight: Int,
+        val paddingBottom: Int,
+    )
+    private val savedAncestorPipStates = mutableListOf<PipInsetState>()
+
+    private fun handleBackPress() {
+        if (isBackNavigating) return
+
+        // 1. If RecordingsDialog is showing, delegate back press to it
+        val recDialog = recordingsDialog
+        if (recDialog != null && recDialog.isShowing) {
+            if (recDialog.onBackPressedCustom()) {
+                return
+            }
+            recDialog.dismiss()
+            recordingsDialog = null
+            return
+        }
+
+        // 2. If AlertsDialog is showing, delegate back press to it
+        val altDialog = alertsDialog
+        if (altDialog != null && altDialog.isShowing) {
+            if (altDialog.onBackPressedCustom()) {
+                return
+            }
+            altDialog.dismiss()
+            alertsDialog = null
+            return
+        }
+
+        // 3. If in fullscreen mode, exit fullscreen first
+        if (fullscreenHelper?.isFullscreen == true) {
+            fullscreenHelper?.exitFullscreen()
+            return
+        }
+
+        // 4. Truly exiting CameraDetailActivity
+        isBackNavigating = true
+        if (isTaskRoot) {
+            val intent = Intent(this, com.homedatacenter.app.ui.main.MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            }
+            startActivity(intent)
+        }
+        finish()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -133,7 +204,12 @@ class CameraDetailActivity : AppCompatActivity() {
         container = (application as HomeCenterApp).container
         isAdmin = container.prefsManager.isAdmin
 
-        binding.toolbar.setNavigationOnClickListener { finish() }
+        binding.toolbar.setNavigationOnClickListener { handleBackPress() }
+        onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                handleBackPress()
+            }
+        })
         binding.toolbar.inflateMenu(R.menu.menu_camera_detail)
         binding.toolbar.setOnMenuItemClickListener { item ->
             when (item.itemId) {
@@ -164,6 +240,8 @@ class CameraDetailActivity : AppCompatActivity() {
         setupHeader()
         setupVideo()
         setupActions()
+        setupTalkback()
+        setupPinchZoom()
         setupPtz()
         setupPresets()
         setupSettings()
@@ -173,37 +251,18 @@ class CameraDetailActivity : AppCompatActivity() {
         // v1.5.13: revert the v1.5.12 RECORD_AUDIO permission
         // request. WebRTC recvonly doesn't call AudioRecord.startRecording()
         // so RECORD_AUDIO isn't required; only MODIFY_AUDIO_SETTINGS
-        // (a normal permission declared in AndroidManifest.xml) is
-        // needed for AudioTrack playout. The "no sound" issue is a
-        // backend issue (default rtspURL strips audio via #audio=0),
-        // not a permission issue.
-        startPlayback()
-
-        // v1.6.16: load a JPEG preview frame in the background while
-        // WebRTC/MP4 is connecting. This mirrors the web dashboard's
-        // strategy: show a cheap JPEG frame (/api/v1/cameras/:id/frame)
-        // immediately so the user sees content within ~1.5s on remote
-        // networks, instead of staring at a black screen + spinner for
-        // 5-15s while WebRTC ICE gathering + DTLS handshake completes.
-        // The preview is hidden once any video surface becomes visible.
-        loadPreviewFrame()
-
-        // preheatCamera is already fired by CamerasFragment.openCameraDetail
-        // when the user taps the camera card (< 100ms before this activity
-        // starts). No need to call it again here — the backend preheat is
-        // idempotent and the first call is already in flight.
-
-        // v1.6.0: if launched with an initial timestamp (alert click
-        // "查看录像"), auto-open the RecordingsDialog at that moment
-        // so the user lands at the alert's exact time without manual
-        // scrubbing. We post to the main looper so onCreate finishes
-        // first — otherwise showRecordings can race with the live
-        // stream's startPlayback() and trigger overlapping surfaces.
+        // v1.12.12: If launched with an initial timestamp (e.g. alert click "查看录像"),
+        // do NOT start live stream or load preview frame in background!
+        // Immediately pause live playback and show the recordings dialog to prevent background audio leaks.
         val initialTs = intent.getLongExtra(EXTRA_INITIAL_TIMESTAMP, 0L)
         if (initialTs > 0L) {
+            isLivePausedForDialog = true
             binding.root.post {
                 if (!isFinishing) showRecordings(initialTs)
             }
+        } else {
+            startPlayback()
+            loadPreviewFrame()
         }
     }
 
@@ -212,6 +271,22 @@ class CameraDetailActivity : AppCompatActivity() {
             val aspectRatio = Rational(16, 9)
             val builder = PictureInPictureParams.Builder()
                 .setAspectRatio(aspectRatio)
+            val rect = android.graphics.Rect()
+            binding.videoContainer.getGlobalVisibleRect(rect)
+            if (!rect.isEmpty) {
+                val targetRatio = 16f / 9f
+                val currentRatio = rect.width().toFloat() / rect.height().toFloat()
+                val hintRect = if (currentRatio > targetRatio) {
+                    val newWidth = (rect.height() * targetRatio).toInt()
+                    val offset = (rect.width() - newWidth) / 2
+                    android.graphics.Rect(rect.left + offset, rect.top, rect.left + offset + newWidth, rect.bottom)
+                } else {
+                    val newHeight = (rect.width() / targetRatio).toInt()
+                    val offset = (rect.height() - newHeight) / 2
+                    android.graphics.Rect(rect.left, rect.top + offset, rect.right, rect.top + offset + newHeight)
+                }
+                builder.setSourceRectHint(hintRect)
+            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 builder.setAutoEnterEnabled(true)
             }
@@ -226,8 +301,24 @@ class CameraDetailActivity : AppCompatActivity() {
                 val aspectRatio = Rational(16, 9)
                 val builder = PictureInPictureParams.Builder()
                     .setAspectRatio(aspectRatio)
+                val rect = android.graphics.Rect()
+                binding.videoContainer.getGlobalVisibleRect(rect)
+                if (!rect.isEmpty) {
+                    val targetRatio = 16f / 9f
+                    val currentRatio = rect.width().toFloat() / rect.height().toFloat()
+                    val hintRect = if (currentRatio > targetRatio) {
+                        val newWidth = (rect.height() * targetRatio).toInt()
+                        val offset = (rect.width() - newWidth) / 2
+                        android.graphics.Rect(rect.left + offset, rect.top, rect.left + offset + newWidth, rect.bottom)
+                    } else {
+                        val newHeight = (rect.width() / targetRatio).toInt()
+                        val offset = (rect.height() - newHeight) / 2
+                        android.graphics.Rect(rect.left, rect.top + offset, rect.right, rect.top + offset + newHeight)
+                    }
+                    builder.setSourceRectHint(hintRect)
+                }
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    builder.setAutoEnterEnabled(true)
+                    builder.setAutoEnterEnabled(isPlaybackActive())
                 }
                 setPictureInPictureParams(builder.build())
             } catch (e: Exception) {
@@ -238,13 +329,16 @@ class CameraDetailActivity : AppCompatActivity() {
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
+        if (isBackNavigating || isFinishing) {
+            return
+        }
         if (isPlaybackActive()) {
             enterPipMode()
         }
     }
 
     private fun isPlaybackActive(): Boolean {
-        return (webRtcClient != null && (webRtcInProgress || binding.surfaceRenderer.visibility == View.VISIBLE)) ||
+        return (webRtcClient != null && (webRtcClient?.hasActiveStream() == true || webRtcInProgress || binding.surfaceRenderer.visibility == View.VISIBLE)) ||
                 (player != null && (player?.isPlaying == true || player?.playbackState == Player.STATE_READY || player?.playbackState == Player.STATE_BUFFERING))
     }
 
@@ -253,27 +347,143 @@ class CameraDetailActivity : AppCompatActivity() {
         newConfig: Configuration
     ) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        val parent = binding.videoContainer.parent as? ViewGroup
+        if (parent != null) {
+            for (i in 0 until parent.childCount) {
+                val child = parent.getChildAt(i)
+                if (child.id != binding.videoContainer.id) {
+                    child.visibility = if (isInPictureInPictureMode) View.GONE else View.VISIBLE
+                }
+            }
+        }
         if (isInPictureInPictureMode) {
+            wasInPipMode = true
+            window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
+            window.decorView.background = null
+            WindowCompat.setDecorFitsSystemWindows(window, false)
+            savedAncestorPipStates.clear()
+            var node: View? = binding.videoContainer
+            val rootView = binding.root.rootView
+            while (node != null && node !== rootView) {
+                savedAncestorPipStates.add(
+                    PipInsetState(
+                        view = node,
+                        fitsSystemWindows = node.fitsSystemWindows,
+                        paddingLeft = node.paddingLeft,
+                        paddingTop = node.paddingTop,
+                        paddingRight = node.paddingRight,
+                        paddingBottom = node.paddingBottom,
+                    )
+                )
+                node.fitsSystemWindows = false
+                node.setPadding(0, 0, 0, 0)
+                node = node.parent as? View
+            }
+            rootView.fitsSystemWindows = false
+            rootView.setPadding(0, 0, 0, 0)
+
+            binding.root.scrollTo(0, 0)
+            binding.root.background = null
+            (binding.videoContainer.parent as? ViewGroup)?.let { p ->
+                p.background = null
+                val plp = p.layoutParams
+                plp.width = ViewGroup.LayoutParams.MATCH_PARENT
+                plp.height = ViewGroup.LayoutParams.MATCH_PARENT
+                p.layoutParams = plp
+            }
+            binding.videoContainer.background = null
             binding.toolbar.visibility = View.GONE
-            binding.actionButtonsRow.visibility = View.GONE
-            binding.cardPtz.visibility = View.GONE
-            (binding.rvPresets.parent.parent as? View)?.visibility = View.GONE
             binding.webRtcControls.visibility = View.GONE
             binding.tvStreamStrategy.visibility = View.GONE
             binding.tvHlsNotice.visibility = View.GONE
             binding.tvVideoError.visibility = View.GONE
+            binding.ivPreviewFrame.visibility = View.GONE
             binding.playerView.useController = false
 
             val lp = binding.videoContainer.layoutParams
+            lp.width = ViewGroup.LayoutParams.MATCH_PARENT
             lp.height = ViewGroup.LayoutParams.MATCH_PARENT
             binding.videoContainer.layoutParams = lp
-            binding.playerView.layoutParams.height = ViewGroup.LayoutParams.MATCH_PARENT
-            binding.surfaceRenderer.layoutParams.height = ViewGroup.LayoutParams.MATCH_PARENT
+
+            val playerLp = binding.playerView.layoutParams
+            playerLp.width = ViewGroup.LayoutParams.MATCH_PARENT
+            playerLp.height = ViewGroup.LayoutParams.MATCH_PARENT
+            binding.playerView.layoutParams = playerLp
+
+            val rendererLp = binding.surfaceRenderer.layoutParams
+            rendererLp.width = ViewGroup.LayoutParams.MATCH_PARENT
+            rendererLp.height = ViewGroup.LayoutParams.MATCH_PARENT
+            binding.surfaceRenderer.layoutParams = rendererLp
+
+            binding.videoContainer.requestLayout()
+            binding.surfaceRenderer.requestLayout()
+
+            binding.surfaceRenderer.post {
+                val client = webRtcClient
+                if (client != null && (client.hasActiveStream() || binding.surfaceRenderer.visibility == View.VISIBLE)) {
+                    client.reattachVideoTrack(binding.surfaceRenderer)
+                }
+            }
         } else {
+            window.setBackgroundDrawableResource(R.color.bg_primary)
+            // Immediately stop audio when leaving PiP to eliminate any audio residue
+            webRtcClient?.stopPlayoutImmediately()
+            webRtcClient?.setAudioEnabled(false)
+            player?.pause()
+            player?.volume = 0f
+            player?.playWhenReady = false
+            fallbackPlayer?.stop()
+            fallbackPlayer?.release()
+            fallbackPlayer = null
+
+            if (isFinishing || isDestroyed) {
+                try { binding.surfaceRenderer.release() } catch (_: Exception) {}
+                try { webRtcClient?.release() } catch (_: Exception) {}
+                releaseExoPlayerOnly()
+                return
+            }
+
+            if (wasInPipMode) {
+                // If leaving PiP, check whether the user dismissed the PiP window or expanded it.
+                // When dismissed by user, Android stops foregrounding the activity and transitions to STOPPED.
+                // Use Handler(Looper.getMainLooper()) instead of View.post because if the window was dismissed,
+                // binding.root is detached from WindowManager and View.post will never execute!
+                val mainHandler = Handler(Looper.getMainLooper())
+                val finishCheck = Runnable {
+                    if (!isFinishing && !isDestroyed && !lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+                        android.util.Log.d(TAG, "PiP dismissed by user (activity not resumed): finishing")
+                        webRtcClient?.stopPlayoutImmediately()
+                        try { binding.surfaceRenderer.release() } catch (_: Exception) {}
+                        try { webRtcClient?.release() } catch (_: Exception) {}
+                        releaseExoPlayerOnly()
+                        finish()
+                    }
+                }
+                mainHandler.post(finishCheck)
+                mainHandler.postDelayed(finishCheck, 250)
+            }
+
+            WindowCompat.setDecorFitsSystemWindows(window, true)
+            savedAncestorPipStates.asReversed().forEach { state ->
+                state.view.fitsSystemWindows = state.fitsSystemWindows
+                state.view.setPadding(
+                    state.paddingLeft,
+                    state.paddingTop,
+                    state.paddingRight,
+                    state.paddingBottom,
+                )
+            }
+            savedAncestorPipStates.clear()
+
+            binding.root.setBackgroundResource(R.color.bg_primary)
+            (binding.videoContainer.parent as? ViewGroup)?.let { p ->
+                val plp = p.layoutParams
+                plp.width = ViewGroup.LayoutParams.MATCH_PARENT
+                plp.height = ViewGroup.LayoutParams.WRAP_CONTENT
+                p.layoutParams = plp
+            }
+            binding.videoContainer.setBackgroundResource(R.color.card_bg)
             binding.toolbar.visibility = View.VISIBLE
-            binding.actionButtonsRow.visibility = View.VISIBLE
-            binding.cardPtz.visibility = if (camera?.hasPtz == true) View.VISIBLE else View.GONE
-            (binding.rvPresets.parent.parent as? View)?.visibility = View.VISIBLE
             binding.tvStreamStrategy.visibility =
                 if (binding.tvStreamStrategy.text.isNotEmpty()) View.VISIBLE else View.GONE
             binding.playerView.useController = true
@@ -281,69 +491,101 @@ class CameraDetailActivity : AppCompatActivity() {
             val density = resources.displayMetrics.density
             val defaultHeight = (200 * density).toInt()
             val lp = binding.videoContainer.layoutParams
+            lp.width = ViewGroup.LayoutParams.MATCH_PARENT
             lp.height = ViewGroup.LayoutParams.WRAP_CONTENT
             binding.videoContainer.layoutParams = lp
-            binding.playerView.layoutParams.height = defaultHeight
-            binding.surfaceRenderer.layoutParams.height = defaultHeight
+
+            val playerLp = binding.playerView.layoutParams
+            playerLp.width = ViewGroup.LayoutParams.MATCH_PARENT
+            playerLp.height = defaultHeight
+            binding.playerView.layoutParams = playerLp
+
+            val rendererLp = binding.surfaceRenderer.layoutParams
+            rendererLp.width = ViewGroup.LayoutParams.MATCH_PARENT
+            rendererLp.height = defaultHeight
+            binding.surfaceRenderer.layoutParams = rendererLp
+
             if (binding.surfaceRenderer.visibility == View.VISIBLE) {
                 binding.webRtcControls.visibility = View.VISIBLE
             }
+
+            binding.videoContainer.requestLayout()
+            binding.surfaceRenderer.requestLayout()
         }
     }
 
     override fun onPause() {
         super.onPause()
         // If in PiP mode, the floating window is still actively playing and visible
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInPictureInPictureMode) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInPictureInPictureMode && !isFinishing) {
             return
         }
-        // v1.6.10: only release ExoPlayer here — NOT the WebRTC
-        // PeerConnection. Previously onPause released both, which
-        // meant every time the user pulled down the notification
-        // shade or switched to another app and came back, the
-        // PeerConnection was torn down and had to be rebuilt from
-        // scratch (HTTP signaling + ICE gathering = 1-3s on LAN,
-        // 3-5s on remote). Now we keep the PeerConnection alive
-        // across onPause so resume is instant — the video track
-        // is still attached to the SurfaceViewRenderer and will
-        // render the next keyframe as soon as the activity resumes.
-        // ExoPlayer is still released because MediaCodec is a
-        // scarce system resource that other apps may need.
         streamRetryJob?.cancel()
+        webRtcClient?.stopPlayoutImmediately()
+        webRtcClient?.setAudioEnabled(false)
+        player?.pause()
+        player?.volume = 0f
+        player?.playWhenReady = false
+        fallbackPlayer?.stop()
         releaseExoPlayerOnly()
+        if (wasInPipMode || isFinishing) {
+            try { binding.surfaceRenderer.release() } catch (_: Exception) {}
+            try { webRtcClient?.release() } catch (_: Exception) {}
+            if (!isFinishing) {
+                finish()
+            }
+        }
     }
 
     override fun onStop() {
         super.onStop()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInPictureInPictureMode) {
-            streamRetryJob?.cancel()
-            releaseExoPlayerOnly()
+        // No longer in foreground and invisible on screen: stop playback and release WebRTC to prevent audio leaks
+        val shouldFinish = wasInPipMode || isFinishing
+        streamRetryJob?.cancel()
+        webRtcClient?.stopPlayoutImmediately()
+        webRtcClient?.setAudioEnabled(false)
+        player?.pause()
+        player?.volume = 0f
+        player?.playWhenReady = false
+        fallbackPlayer?.stop()
+        try { binding.surfaceRenderer.release() } catch (_: Exception) {}
+        try { webRtcClient?.release() } catch (_: Exception) {}
+        releaseExoPlayerOnly()
+        if (shouldFinish && !isFinishing) {
+            finish()
         }
     }
 
     override fun onResume() {
         super.onResume()
-        // v1.6.10: if a WebRTC stream was active before onPause, the
-        // PeerConnection is still alive (we only released ExoPlayer).
-        // The SurfaceViewRenderer was released in onPause (EGL surface
-        // tied to window) so we need to re-init it and re-attach the
-        // existing video track. This is ~50ms vs ~1-3s for a full
-        // signaling round-trip.
+        if (isFinishing || isDestroyed) return
+        wasInPipMode = false
+        // If live stream is paused because a dialog (recordings/alerts) is open, do not resume yet
+        if (recordingsDialog?.isShowing == true || alertsDialog?.isShowing == true) {
+            return
+        }
         try { binding.surfaceRenderer.release() } catch (_: Exception) {}
         val client = webRtcClient
-        if (client != null && webRtcInProgress) {
+        if (client != null && (client.hasActiveStream() || binding.surfaceRenderer.visibility == View.VISIBLE)) {
             try {
                 binding.surfaceRenderer.init(client.eglBase.eglBaseContext, null)
                 binding.surfaceRenderer.setMirror(false)
                 binding.surfaceRenderer.setScalingType(
                     RendererCommon.ScalingType.SCALE_ASPECT_FILL
                 )
-                // Re-attach the existing video track if still available.
-                // The track lives on the WebRtcClient; if the connection
-                // died while paused, the user taps reload to rebuild.
                 client.reattachVideoTrack(binding.surfaceRenderer)
             } catch (e: Exception) {
                 android.util.Log.w(TAG, "WebRTC resume re-attach failed: ${e.message}")
+            }
+            if (audioEnabled && !webRtcMuted) {
+                client.setAudioEnabled(true)
+            }
+        } else if (!isPlaybackActive() && !isLivePausedForDialog) {
+            startPlayback()
+        } else {
+            player?.let { p ->
+                p.volume = if (audioEnabled) 1.0f else 0.0f
+                p.playWhenReady = true
             }
         }
     }
@@ -352,25 +594,16 @@ class CameraDetailActivity : AppCompatActivity() {
         super.onDestroy()
         streamRetryJob?.cancel()
         streamRetryJob = null
+        webRtcClient?.stopPlayoutImmediately()
+        webRtcClient?.setAudioEnabled(false)
         releaseExoPlayerOnly()
         fullscreenHelper?.release()
         recordingsDialog?.dismiss()
         alertsDialog?.dismiss()
         recordingsDialog = null
         alertsDialog = null
-        // Release order matters: SurfaceViewRenderer's EGL surfaces
-        // must be torn down BEFORE the PeerConnectionFactory's
-        // EglBase context is released, otherwise eglReleaseSurface
-        // can throw. The try/catch guards against double-release.
         try { binding.surfaceRenderer.release() } catch (_: Exception) {}
-        // v1.6.10: only release THIS activity's PeerConnection —
-        // NOT the shared PeerConnectionFactory / EGL context (those
-        // live in AppContainer.sharedWebRtcClient and serve the
-        // whole app). shutdown() would tear down the factory and
-        // break the next camera open. release() only disposes the
-        // PeerConnection.
         try { webRtcClient?.release() } catch (_: Exception) {}
-        webRtcClient = null
     }
 
     /**
@@ -822,9 +1055,92 @@ class CameraDetailActivity : AppCompatActivity() {
         setupWebRtcControls()
     }
 
-    private fun showRecordings(initialTimestamp: Long = 0L) {
+    private fun setupPinchZoom() {
+        binding.pinchZoomContainer.onZoomChanged = { scale ->
+            if (scale > 1.05f) {
+                binding.tvZoomBadge.visibility = View.VISIBLE
+                binding.tvZoomBadge.text = String.format(java.util.Locale.US, "%.1fx 双击复位", scale)
+            } else {
+                binding.tvZoomBadge.visibility = View.GONE
+            }
+        }
+    }
+
+    @android.annotation.SuppressLint("ClickableViewAccessibility")
+    private fun setupTalkback() {
+        val cam = camera ?: return
+        if (!cam.hasTwoWayAudio) {
+            binding.cardTalkback.visibility = View.GONE
+            return
+        }
+        binding.cardTalkback.visibility = View.VISIBLE
+
+        binding.btnTalkback.setOnTouchListener { v, event ->
+            when (event.action) {
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    if (androidx.core.content.ContextCompat.checkSelfPermission(
+                            this,
+                            android.Manifest.permission.RECORD_AUDIO
+                        ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+                    ) {
+                        recordAudioLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+                        return@setOnTouchListener true
+                    }
+                    v.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                    binding.btnTalkback.text = "松开 结束"
+                    binding.btnTalkback.setIconResource(R.drawable.ic_mic)
+                    binding.tvTalkbackHint.text = "正在向摄像机讲话..."
+                    binding.tvTalkbackHint.setTextColor(resources.getColor(R.color.online, theme))
+                    val success = webRtcClient?.startTalkback() ?: false
+                    if (!success) {
+                        android.widget.Toast.makeText(this, "对讲启动失败，请检查摄像头网络连接", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                    true
+                }
+                android.view.MotionEvent.ACTION_UP,
+                android.view.MotionEvent.ACTION_CANCEL -> {
+                    binding.btnTalkback.text = "按住 对讲"
+                    binding.tvTalkbackHint.text = "按住说话，松开发送到摄像机"
+                    binding.tvTalkbackHint.setTextColor(resources.getColor(R.color.text_hint, theme))
+                    webRtcClient?.stopTalkback()
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
+    fun pauseLivePlayback() {
+        isLivePausedForDialog = true
+        streamRetryJob?.cancel()
+        webRtcClient?.setAudioEnabled(false)
+        webRtcClient?.setVideoEnabled(false)
+        player?.playWhenReady = false
+    }
+
+    fun resumeLivePlayback() {
+        if (recordingsDialog?.isShowing == true || alertsDialog?.isShowing == true) {
+            return
+        }
+        if (!isLivePausedForDialog) return
+        isLivePausedForDialog = false
+        val client = webRtcClient
+        if (client != null && client.hasActiveStream()) {
+            client.setVideoEnabled(true)
+            if (audioEnabled && !webRtcMuted) {
+                client.setAudioEnabled(true)
+            }
+        } else if (player != null) {
+            player?.playWhenReady = true
+        } else {
+            startPlayback()
+        }
+    }
+
+    fun showRecordings(initialTimestamp: Long = 0L) {
         val cam = camera ?: return
         recordingsDialog?.dismiss()
+        pauseLivePlayback()
         // v1.6.0: pass [initialTimestamp] (unix seconds) so the
         // RecordingsDialog can auto-open the right day and seek to
         // the alert's exact moment. Zero (default) means "open the
@@ -834,13 +1150,30 @@ class CameraDetailActivity : AppCompatActivity() {
             camera = cam,
             container = container,
             initialTimestamp = initialTimestamp,
-        ).apply { show() }
+        ).apply {
+            setOnDismissListener {
+                recordingsDialog = null
+                if (alertsDialog == null && !isFinishing && !isDestroyed) {
+                    resumeLivePlayback()
+                }
+            }
+            show()
+        }
     }
 
     private fun showAlerts() {
         val cam = camera ?: return
         alertsDialog?.dismiss()
-        alertsDialog = AlertsDialog(this, cam, container).apply { show() }
+        pauseLivePlayback()
+        alertsDialog = AlertsDialog(this, cam, container).apply {
+            setOnDismissListener {
+                alertsDialog = null
+                if (recordingsDialog == null && !isLivePausedForDialog && !isFinishing && !isDestroyed) {
+                    resumeLivePlayback()
+                }
+            }
+            show()
+        }
     }
 
     /**
@@ -1171,8 +1504,8 @@ class CameraDetailActivity : AppCompatActivity() {
                     } ?: emptyList()
                 }
 
-                client.prepareOffer(cam.id, iceServers, isDirectPath)
-                android.util.Log.i(TAG, "precomputeSdpOffer: started for cameraId=${cam.id} (directPath=$isDirectPath)")
+                client.prepareOffer(cam.id, iceServers, isDirectPath, cam.hasTwoWayAudio)
+                android.util.Log.i(TAG, "precomputeSdpOffer: started for cameraId=${cam.id} (directPath=$isDirectPath, twoWayAudio=${cam.hasTwoWayAudio})")
             } catch (e: Exception) {
                 android.util.Log.w(TAG, "precomputeSdpOffer failed: ${e.message}")
             }
@@ -1278,11 +1611,18 @@ class CameraDetailActivity : AppCompatActivity() {
                 surfaceRenderer = binding.surfaceRenderer,
                 iceServers = iceServers,
                 isLan = isDirectPath,
+                enableTwoWayAudio = cam.hasTwoWayAudio,
                 listener = object : WebRtcClient.Listener {
                     override fun onConnected() {
                         webRtcInProgress = false
                         streamRetryCount = 0
                         streamRetryJob?.cancel()
+                        if (isLivePausedForDialog) {
+                            android.util.Log.d(TAG, "WebRTC connected while dialog open: staying muted & paused")
+                            client.setAudioEnabled(false)
+                            client.setVideoEnabled(false)
+                            return
+                        }
                         binding.tvVideoError.text = getString(R.string.camera_video_failed)
                         binding.progressVideo.visibility = View.GONE
                         binding.tvVideoError.visibility = View.GONE
@@ -1305,6 +1645,10 @@ class CameraDetailActivity : AppCompatActivity() {
 
                     override fun onError(reason: String) {
                         webRtcInProgress = false
+                        if (isLivePausedForDialog) {
+                            android.util.Log.d(TAG, "WebRTC error while dialog open: ignoring fallback")
+                            return
+                        }
                         android.util.Log.w(TAG, "WebRTC failed: $reason — falling back to MP4")
                         // Hide WebRTC surface, show ExoPlayer surface.
                         binding.surfaceRenderer.visibility = View.GONE

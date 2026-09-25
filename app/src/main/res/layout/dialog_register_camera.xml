@@ -172,6 +172,13 @@
                 android:text="音频" />
 
             <CheckBox
+                android:id="@+id/cbTwoWayAudio"
+                android:layout_width="0dp"
+                android:layout_weight="1.2"
+                android:layout_height="wrap_content"
+                android:text="双向对讲" />
+
+            <CheckBox
                 android:id="@+id/cbMotion"
                 android:layout_width="0dp"
                 android:layout_weight="1"
