@@ -13,6 +13,8 @@
 param(
     [ValidateSet("debug", "release")]
     [string]$Flavor = "release",
+    [string]$Password = $env:NAS_PASSWORD,
+    [string]$Host = $env:NAS_HOST,
     [switch]$WhatIf
 )
 
@@ -39,9 +41,9 @@ function Write-Warn([string]$Msg) { Write-Host "[警告]  $Msg" -ForegroundColor
 function Write-Err([string]$Msg)  { Write-Host "[错误]  $Msg" -ForegroundColor Red }
 
 # NAS connection constants (must match push-apk.ps1) --------------------
-$nasHost   = "fnos-momo@<NAS_IP>"
+$nasHost   = if ($Host) { $Host } else { "fnos-momo@<NAS_IP>" }
 $nasPort   = 22
-$nasPass   = "<NAS_PASSWORD>"
+$nasPass   = if ($Password) { $Password } else { "" }
 $releasesDir = "/vol1/docker/home-datacenter/data/releases"
 
 # ---------- Step 1: read versionName from build.gradle.kts -------------
@@ -111,7 +113,9 @@ if ($WhatIf) {
     # with `exit <code>`, which would otherwise terminate this script too
     # if invoked in-process. A child process isolates the exit and lets
     # us capture $LASTEXITCODE here.
-    & powershell -ExecutionPolicy Bypass -File $pushScript -Flavor $Flavor 2>&1 | Out-Host
+    $pushArgs = @("-Flavor", $Flavor)
+    if ($nasPass) { $pushArgs += @("-Password", $nasPass) }
+    & powershell -ExecutionPolicy Bypass -File $pushScript @pushArgs 2>&1 | Out-Host
     $pushExit = $LASTEXITCODE
     if ($null -eq $pushExit) { $pushExit = 0 }
     if ($pushExit -ne 0) {
@@ -132,12 +136,15 @@ if ($WhatIf) {
     Write-Host "        将检查：$remoteFile"
 } else {
     # SSH_ASKPASS mechanism (same pattern as push-apk.ps1) so ssh can
-    # fetch the password non-interactively.
-    $askpass = [System.IO.Path]::GetTempFileName() + "-release-askpass.bat"
-    "@echo $nasPass" | Set-Content $askpass -Encoding ASCII
-    $env:SSH_ASKPASS = $askpass
-    $env:SSH_ASKPASS_REQUIRE = "force"
-    $env:DISPLAY = "1"
+    # fetch the password non-interactively if password is provided.
+    $askpass = $null
+    if ($nasPass) {
+        $askpass = [System.IO.Path]::GetTempFileName() + "-release-askpass.bat"
+        "@echo $nasPass" | Set-Content $askpass -Encoding ASCII
+        $env:SSH_ASKPASS = $askpass
+        $env:SSH_ASKPASS_REQUIRE = "force"
+        $env:DISPLAY = "1"
+    }
 
     Write-Host "正在通过 SSH 检查：$remoteFile"
     # ssh propagates the remote command's exit status, so $LASTEXITCODE
