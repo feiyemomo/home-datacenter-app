@@ -45,9 +45,9 @@ import okhttp3.Request
 class MultiCameraActivity : AppCompatActivity() {
 
     enum class GridMode(val slots: Int, val label: String, val width: Int, val quality: Int, val intervalMs: Long) {
-        ONE(1, "1格", 720, 35, 300L),
-        FOUR(4, "4格", 360, 25, 400L),
-        NINE(9, "9格", 240, 18, 700L)
+        ONE(1, "1格", 720, 35, 100L),
+        FOUR(4, "4格", 360, 25, 200L),
+        NINE(9, "9格", 240, 18, 400L)
     }
 
     private lateinit var binding: ActivityMultiCameraBinding

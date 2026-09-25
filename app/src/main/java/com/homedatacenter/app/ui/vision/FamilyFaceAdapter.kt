@@ -27,7 +27,7 @@ class FamilyFaceAdapter(
         val item = getItem(position)
         with(holder.binding) {
             tvPersonName.text = item.name
-            tvAvatarChar.text = item.name.firstOrNull()?.uppercaseChar()?.toString() ?: "👤"
+            tvAvatarChar.text = item.name.firstOrNull()?.uppercaseChar()?.toString() ?: "U"
             btnDeleteFace.setOnClickListener {
                 onDeleteClick(item)
             }

@@ -297,7 +297,7 @@
     <string name="device_register_invalid">设备名称长度需为 1–64 个字符</string>
     <string name="device_register_success">设备创建成功</string>
     <string name="device_register_access_key_label">Access Key（仅显示一次）</string>
-    <string name="device_register_warning">⚠️ 此密钥仅显示一次，请立即复制保存</string>
+    <string name="device_register_warning">此密钥仅显示一次，请立即复制保存</string>
     <string name="device_register_copied">已复制</string>
     <string name="device_register_failed">创建失败: %1$s</string>
     <string name="action_done">完成</string>

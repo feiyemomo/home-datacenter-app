@@ -75,6 +75,7 @@ class ShareCameraDialog(
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window?.setBackgroundDrawableResource(android.R.color.transparent)
         setContentView(R.layout.dialog_share_camera)
         setTitle(R.string.camera_share_title)
 

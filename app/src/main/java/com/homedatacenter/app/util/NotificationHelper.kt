@@ -209,7 +209,7 @@ object NotificationHelper {
         val prefs = PrefsManager(context)
         if (!prefs.notificationsEnabled) return
 
-        val title = "🚨 紧急告警：检测到人员摔倒！"
+        val title = "紧急告警：检测到人员摔倒！"
         val message = "监控设备【${cameraName.ifBlank { cameraSlug.ifBlank { "室内摄像头" } }}】检测到人员异常跌倒，请立即确认！"
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -243,7 +243,7 @@ object NotificationHelper {
         val prefs = PrefsManager(context)
         if (!prefs.notificationsEnabled || !prefs.notifyPerson || prefs.isDndActive()) return
 
-        val title = "👤 视觉识别通知"
+        val title = "视觉识别通知"
         val message = "摄像头【${cameraName.ifBlank { "安防监控" }}】识别到家庭成员【$name】"
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP

@@ -30,7 +30,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="👤 用户与账户"
+            android:text="用户与账户"
             android:textSize="13sp"
             android:textStyle="bold"
             android:textColor="@color/text_secondary"
@@ -246,7 +246,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="🔔 消息与告警通知"
+            android:text="消息与告警通知"
             android:textSize="13sp"
             android:textStyle="bold"
             android:textColor="@color/text_secondary"
@@ -330,7 +330,7 @@
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="👤 人员与访客侦测 (Person)"
+                        android:text="人员与访客侦测 (Person)"
                         android:textSize="14sp"
                         android:textColor="@color/text_primary" />
 
@@ -352,7 +352,7 @@
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="⚡ 画面移动与动态事件 (Motion)"
+                        android:text="画面移动与动态事件 (Motion)"
                         android:textSize="14sp"
                         android:textColor="@color/text_primary" />
 
@@ -375,7 +375,7 @@
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="🛠️ 系统维护与服务状态 (System)"
+                        android:text="系统维护与服务状态 (System)"
                         android:textSize="14sp"
                         android:textColor="@color/text_primary" />
 
@@ -408,7 +408,7 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="🖼️ 推送附带抓拍大图"
+                            android:text="推送附带抓拍大图"
                             android:textSize="14sp"
                             android:textColor="@color/text_primary" />
 
@@ -449,7 +449,7 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="🌙 夜间免打扰模式"
+                            android:text="夜间免打扰模式"
                             android:textSize="14sp"
                             android:textColor="@color/text_primary" />
 
@@ -479,7 +479,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="🎨 外观与网络连接"
+            android:text="外观与网络连接"
             android:textSize="13sp"
             android:textStyle="bold"
             android:textColor="@color/text_secondary"
@@ -622,7 +622,7 @@
             android:id="@+id/tvAdminSectionHeader"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="⚡ 系统运维与管理"
+            android:text="系统运维与管理"
             android:textSize="13sp"
             android:textStyle="bold"
             android:textColor="@color/text_secondary"
@@ -804,7 +804,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="ℹ️ 系统与更新"
+            android:text="系统与更新"
             android:textSize="13sp"
             android:textStyle="bold"
             android:textColor="@color/text_secondary"
@@ -878,7 +878,7 @@
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="📋 版本更新说明"
+                        android:text="版本更新说明"
                         android:textSize="13sp"
                         android:textStyle="bold"
                         android:textColor="@color/text_primary" />
@@ -911,22 +911,6 @@
             android:textSize="12sp"
             android:textColor="@color/text_hint"
             android:layout_gravity="center" />
-
-        <!-- Discreet bottom logout link -->
-        <TextView
-            android:id="@+id/tvBottomLogout"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center"
-            android:layout_marginTop="20dp"
-            android:paddingHorizontal="16dp"
-            android:paddingVertical="8dp"
-            android:text="退出当前登录"
-            android:textSize="12sp"
-            android:textColor="@color/text_hint"
-            android:clickable="true"
-            android:focusable="true"
-            android:background="?attr/selectableItemBackground" />
 
     </LinearLayout>
 </ScrollView>

@@ -4,11 +4,13 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:fitsSystemWindows="true"
     android:background="@color/bg_primary">
 
     <com.google.android.material.appbar.AppBarLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:fitsSystemWindows="true"
         android:background="@color/card_bg">
 
         <com.google.android.material.appbar.MaterialToolbar
@@ -210,7 +212,7 @@
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="👨‍👩‍👧‍👦 已登记家庭成员"
+                        android:text="已登记家庭成员"
                         android:textSize="14sp"
                         android:textStyle="bold"
                         android:textColor="@color/text_secondary" />

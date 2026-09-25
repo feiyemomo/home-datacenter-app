@@ -126,17 +126,17 @@ class AutomationsActivity : ComponentActivity() {
 
 private val TRIGGER_OPTIONS = listOf(
     "detection" to "目标检测 (detection)",
-    "camera.fall_detected" to "🚨 摔倒高危告警 (fall_detected)",
-    "camera.person_recognized" to "👤 家人面部识别 (person_recognized)",
+    "camera.fall_detected" to "摔倒高危告警 (fall_detected)",
+    "camera.person_recognized" to "家人面部识别 (person_recognized)",
     "alert" to "安全告警 (alert)",
     "camera.offline" to "摄像头离线 (camera.offline)",
     "camera.online" to "摄像头上线 (camera.online)",
 )
 
 private val ACTION_OPTIONS = listOf(
-    "notify" to "📢 移动端富媒体推送 (notify)",
-    "mqtt" to "📡 MQTT 智能家居联动 (mqtt)",
-    "webhook" to "🌐 Webhook 自定义接口 (webhook)",
+    "notify" to "移动端富媒体推送 (notify)",
+    "mqtt" to "MQTT 智能家居联动 (mqtt)",
+    "webhook" to "Webhook 自定义接口 (webhook)",
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -609,12 +609,12 @@ private fun AutomationPipelineCard(
             ) {
                 // Node 1: Trigger
                 val triggerLabel = when (rule.trigger) {
-                    "detection" -> "🎯 目标检测"
-                    "camera.fall_detected" -> "🚨 摔倒识别"
-                    "camera.person_recognized" -> "👤 面部识别"
-                    "alert" -> "⚠️ 安全告警"
-                    "camera.offline" -> "📡 设备离线"
-                    "camera.online" -> "🟢 设备上线"
+                    "detection" -> "目标检测"
+                    "camera.fall_detected" -> "摔倒识别"
+                    "camera.person_recognized" -> "面部识别"
+                    "alert" -> "安全告警"
+                    "camera.offline" -> "设备离线"
+                    "camera.online" -> "设备上线"
                     else -> rule.trigger
                 }
                 PipelineNodeChip(text = triggerLabel, bgColor = Color(0xFFE3F2FD), textColor = Color(0xFF1565C0))
@@ -631,15 +631,15 @@ private fun AutomationPipelineCard(
                     }
                     if (isEmpty()) append("全部通过")
                 }
-                PipelineNodeChip(text = "🔍 $filterLabel", bgColor = Color(0xFFFFF3E0), textColor = Color(0xFFE65100))
+                PipelineNodeChip(text = filterLabel, bgColor = Color(0xFFFFF3E0), textColor = Color(0xFFE65100))
 
                 Text("➔", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f), fontSize = 12.sp, modifier = Modifier.align(Alignment.CenterVertically))
 
                 // Node 3: Action
                 val actionLabel = when (rule.action?.type) {
-                    "notify" -> "📢 富媒体推送"
-                    "mqtt" -> "📡 MQTT 联动"
-                    "webhook" -> "🌐 Webhook"
+                    "notify" -> "富媒体推送"
+                    "mqtt" -> "MQTT 联动"
+                    "webhook" -> "Webhook"
                     else -> rule.action?.type ?: "notify"
                 }
                 PipelineNodeChip(text = actionLabel, bgColor = Color(0xFFE8F5E9), textColor = Color(0xFF2E7D32))
@@ -708,9 +708,9 @@ private fun PipelineNodeChip(text: String, bgColor: Color, textColor: Color) {
 @Composable
 private fun HeatBadge(fireCount: Long) {
     val (text, color, bg) = when {
-        fireCount >= 20 -> Triple("🔥 高频", Color(0xFFD32F2F), Color(0xFFFFEBEE))
-        fireCount > 0 -> Triple("⚡ 正常", Color(0xFF1976D2), Color(0xFFE3F2FD))
-        else -> Triple("💤 未触发", Color(0xFF757575), Color(0xFFEEEEEE))
+        fireCount >= 20 -> Triple("高频", Color(0xFFD32F2F), Color(0xFFFFEBEE))
+        fireCount > 0 -> Triple("正常", Color(0xFF1976D2), Color(0xFFE3F2FD))
+        else -> Triple("未触发", Color(0xFF757575), Color(0xFFEEEEEE))
     }
     Box(
         modifier = Modifier

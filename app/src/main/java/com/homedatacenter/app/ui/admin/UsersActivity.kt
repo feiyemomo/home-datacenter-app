@@ -1,17 +1,11 @@
-﻿package com.homedatacenter.app.ui.admin
+package com.homedatacenter.app.ui.admin
 
 import android.app.AlertDialog
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.os.Bundle
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
-import android.widget.CheckBox
-import android.widget.EditText
-import android.widget.LinearLayout
-import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
@@ -20,6 +14,8 @@ import com.homedatacenter.app.HomeCenterApp
 import com.homedatacenter.app.R
 import com.homedatacenter.app.data.model.User
 import com.homedatacenter.app.databinding.ActivityUsersBinding
+import com.homedatacenter.app.databinding.DialogCreateUserBinding
+import com.homedatacenter.app.databinding.DialogEditUserBinding
 import com.homedatacenter.app.di.AppContainer
 import kotlinx.coroutines.launch
 
@@ -90,155 +86,112 @@ class UsersActivity : AppCompatActivity() {
 
     private fun showCreateUserDialog() {
         val token = container.prefsManager.token ?: return
+        val dialogBinding = DialogCreateUserBinding.inflate(layoutInflater)
 
-        val dialogContainer = LinearLayout(this).apply {
-            orientation = android.widget.LinearLayout.VERTICAL
-            setPadding(50, 30, 50, 10)
-        }
-        val etName = EditText(this).apply { hint = getString(R.string.user_name_label) }
-        val etPassword = EditText(this).apply {
-            hint = "密码（仅限字母和数字）"
-            inputType = android.text.InputType.TYPE_CLASS_TEXT
-        }
-        val cbAdmin = CheckBox(this).apply { text = getString(R.string.user_admin_label) }
-        dialogContainer.apply {
-            addView(etName)
-            addView(etPassword)
-            addView(cbAdmin)
+        val dialog = AlertDialog.Builder(this)
+            .setView(dialogBinding.root)
+            .create()
+
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+
+        dialogBinding.btnCancel.setOnClickListener {
+            dialog.dismiss()
         }
 
-        AlertDialog.Builder(this)
-            .setTitle(R.string.users_create)
-            .setView(dialogContainer)
-            .setPositiveButton(R.string.action_create) { _, _ ->
-                val name = etName.text.toString().trim()
-                if (name.isEmpty()) {
-                    toast("请填写用户名")
-                    return@setPositiveButton
-                }
-        val password = etPassword.text.toString()
-        if (password.isEmpty()) {
-            toast("请设置密码")
-            return@setPositiveButton
-        }
-        if (!Regex("^[A-Za-z0-9]+$").matches(password)) {
-            toast("密码仅限字母和数字")
-            return@setPositiveButton
-        }
-                lifecycleScope.launch {
-                    try {
-                        val accessKey = container.getRepository().createUser(
-                            token,
-                            name = name,
-                            isAdmin = cbAdmin.isChecked,
-                password = password,
-                        )
-                        loadUsers()
-                toast("用户已创建（登录凭据为所设密码）")
-                    } catch (e: Exception) {
-                        toast("创建失败: ${e.message}")
-                    }
+        dialogBinding.btnConfirm.setOnClickListener {
+            val name = dialogBinding.etUserName.text?.toString()?.trim().orEmpty()
+            if (name.isEmpty()) {
+                toast("请填写用户名")
+                return@setOnClickListener
+            }
+            val password = dialogBinding.etPassword.text?.toString().orEmpty()
+            if (password.isEmpty()) {
+                toast("请设置密码")
+                return@setOnClickListener
+            }
+            if (!Regex("^[A-Za-z0-9]+$").matches(password)) {
+                toast("密码仅限字母和数字")
+                return@setOnClickListener
+            }
+
+            dialog.dismiss()
+            lifecycleScope.launch {
+                try {
+                    container.getRepository().createUser(
+                        token,
+                        name = name,
+                        isAdmin = dialogBinding.switchIsAdmin.isChecked,
+                        password = password,
+                    )
+                    loadUsers()
+                    toast("用户已创建（登录凭据为所设密码）")
+                } catch (e: Exception) {
+                    toast("创建失败: ${e.message}")
                 }
             }
-            .setNegativeButton(R.string.btn_cancel, null)
-            .show()
-    }
+        }
 
-//     private fun showAccessKeyDialog(accessKey: String) {
-//         val container = LinearLayout(this).apply {
-//             orientation = LinearLayout.VERTICAL
-//             setPadding(50, 30, 50, 10)
-//         }
-//         val tvLabel = TextView(this).apply {
-//             text = getString(R.string.device_register_access_key_label)
-//             textSize = 14f
-//         }
-//         val tvKey = TextView(this).apply {
-//             text = accessKey
-//             textSize = 16f
-//             setTextColor(
-//                 resources.getColor(android.R.color.holo_red_dark, theme)
-//             )
-//             setPadding(0, 16, 0, 16)
-//             typeface = android.graphics.Typeface.MONOSPACE
-//         }
-//         container.apply {
-//             addView(tvLabel)
-//             addView(tvKey)
-//         }
-// 
-//         AlertDialog.Builder(this)
-//             .setTitle(R.string.users_create)
-//             .setView(container)
-//             .setPositiveButton(R.string.device_register_copied) { _, _ ->
-//                 copyToClipboard(accessKey)
-//                 toast("已复制")
-//             }
-//             .setNeutralButton(R.string.btn_confirm) { _, _ -> }
-//             .show()
-//     }
-
-    private fun copyToClipboard(text: String) {
-        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText("access_key", text))
+        dialog.show()
     }
 
     private fun showEditUserDialog(user: User) {
         val token = container.prefsManager.token ?: return
         val currentUserId = container.prefsManager.userId
+        val dialogBinding = DialogEditUserBinding.inflate(layoutInflater)
 
-        val dialogContainer = LinearLayout(this).apply {
-            orientation = android.widget.LinearLayout.VERTICAL
-            setPadding(50, 30, 50, 10)
-        }
-        val etName = EditText(this).apply {
-            setText(user.name)
-            hint = getString(R.string.user_name_label)
-        }
-        val cbAdmin = CheckBox(this).apply {
-            text = getString(R.string.user_admin_label)
-            isChecked = user.isAdmin
-            // Disable if editing self — backend rejects self-demote.
-            if (user.id == currentUserId) {
-                isEnabled = false
-                text = getString(R.string.user_admin_label) + " (当前用户)"
-            }
-        }
-        dialogContainer.apply {
-            addView(etName)
-            addView(cbAdmin)
+        dialogBinding.etUserName.setText(user.name)
+        dialogBinding.switchIsAdmin.isChecked = user.isAdmin
+
+        val isSelf = user.id == currentUserId
+        if (isSelf) {
+            dialogBinding.switchIsAdmin.isEnabled = false
+            dialogBinding.tvAdminTitle.text = "${getString(R.string.user_admin_label)} (当前用户)"
+            dialogBinding.tvAdminDesc.text = "不可降级当前登录的管理员账号"
+            dialogBinding.btnDelete.isEnabled = false
+            dialogBinding.btnDelete.alpha = 0.4f
         }
 
-        AlertDialog.Builder(this)
-            .setTitle(R.string.user_action_edit)
-            .setView(dialogContainer)
-            .setPositiveButton(R.string.action_save) { _, _ ->
-                val newName = etName.text.toString().trim()
-                if (newName.isEmpty()) {
-                    toast("用户名不能为空")
-                    return@setPositiveButton
-                }
-                val isAdminChanged = cbAdmin.isChecked != user.isAdmin
-                lifecycleScope.launch {
-                    try {
-                        container.getRepository().updateUser(
-                            token,
-                            userId = user.id,
-                            name = if (newName != user.name) newName else null,
-                            isAdmin = if (isAdminChanged) cbAdmin.isChecked else null,
-                        )
-                        toast("已更新")
-                        loadUsers()
-                    } catch (e: Exception) {
-                        toast("更新失败: ${e.message}")
-                    }
+        val dialog = AlertDialog.Builder(this)
+            .setView(dialogBinding.root)
+            .create()
+
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+
+        dialogBinding.btnCancel.setOnClickListener {
+            dialog.dismiss()
+        }
+
+        dialogBinding.btnDelete.setOnClickListener {
+            dialog.dismiss()
+            confirmDeleteUser(user)
+        }
+
+        dialogBinding.btnSave.setOnClickListener {
+            val newName = dialogBinding.etUserName.text?.toString()?.trim().orEmpty()
+            if (newName.isEmpty()) {
+                toast("用户名不能为空")
+                return@setOnClickListener
+            }
+            val isAdminChanged = dialogBinding.switchIsAdmin.isChecked != user.isAdmin
+
+            dialog.dismiss()
+            lifecycleScope.launch {
+                try {
+                    container.getRepository().updateUser(
+                        token,
+                        userId = user.id,
+                        name = if (newName != user.name) newName else null,
+                        isAdmin = if (isAdminChanged) dialogBinding.switchIsAdmin.isChecked else null,
+                    )
+                    toast("已更新")
+                    loadUsers()
+                } catch (e: Exception) {
+                    toast("更新失败: ${e.message}")
                 }
             }
-            .setNeutralButton(R.string.user_action_delete) { _, _ ->
-                confirmDeleteUser(user)
-            }
-            .setNegativeButton(R.string.btn_cancel, null)
-            .show()
+        }
+
+        dialog.show()
     }
 
     private fun confirmDeleteUser(user: User) {

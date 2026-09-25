@@ -81,7 +81,6 @@ class SettingsFragment : Fragment() {
         setupUpdateSection()
 
         binding.tvAccountAction.setOnClickListener { showLogoutDialog() }
-        binding.tvBottomLogout.setOnClickListener { showLogoutDialog() }
 
         loadUserInfo()
         setupVersion()
@@ -518,7 +517,7 @@ class SettingsFragment : Fragment() {
         } else ""
 
         AlertDialog.Builder(context)
-            .setTitle("🎉 发现新版本 v${info.version_name}")
+            .setTitle("发现新版本 v${info.version_name}")
             .setMessage("最新版本: v${info.version_name}${notesText}")
             .setPositiveButton(posButtonText) { _, _ ->
                 if (apkFile != null && apkFile.exists()) {
@@ -556,7 +555,7 @@ class SettingsFragment : Fragment() {
         if (info != null && info.release_notes.isNotBlank()) {
             // New version update detected: expand and show release notes
             binding.layoutReleaseNotes.visibility = View.VISIBLE
-            binding.tvReleaseNotesTitle.text = "📋 新版本特性 (v${info.version_name})"
+            binding.tvReleaseNotesTitle.text = "新版本特性 (v${info.version_name})"
             binding.tvReleaseNotesBadge.text = "待更新"
             binding.tvReleaseNotesBadge.setTextColor(requireContext().getColor(R.color.primary))
             binding.tvReleaseNotes.text = info.release_notes
@@ -564,7 +563,7 @@ class SettingsFragment : Fragment() {
         } else if (latestInfo != null && latestInfo.release_notes.isNotBlank()) {
             // Already latest version: show toggle button to view current release notes
             binding.tvToggleReleaseNotes.visibility = View.VISIBLE
-            binding.tvReleaseNotesTitle.text = "📋 当前版本特性 (v${latestInfo.version_name})"
+            binding.tvReleaseNotesTitle.text = "当前版本特性 (v${latestInfo.version_name})"
             binding.tvReleaseNotesBadge.text = "已安装"
             binding.tvReleaseNotesBadge.setTextColor(requireContext().getColor(R.color.online))
             binding.tvReleaseNotes.text = latestInfo.release_notes
