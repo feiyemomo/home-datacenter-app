@@ -10,4 +10,6 @@
          storage (no external storage permission needed) and are
          auto-cleaned on uninstall. -->
     <files-path name="downloads" path="downloads/" />
+    <!-- Camera capture temporary photo cache -->
+    <cache-path name="camera_photos" path="camera/" />
 </paths>

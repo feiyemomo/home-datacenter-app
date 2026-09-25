@@ -1,6 +1,8 @@
 package com.homedatacenter.app.ui.vision
 
+import android.Manifest
 import android.app.AlertDialog
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -13,6 +15,7 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.homedatacenter.app.HomeCenterApp
@@ -26,6 +29,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.io.InputStream
 import java.util.Locale
 
@@ -45,11 +49,13 @@ class FamilyFacesActivity : AppCompatActivity() {
     private lateinit var adapter: FamilyFaceAdapter
 
     private var selectedBitmap: Bitmap? = null
+    private var currentPhotoUri: Uri? = null
     private var activeAddDialog: AlertDialog? = null
     private var activeDialogBinding: DialogAddFamilyFaceBinding? = null
 
     companion object {
         private const val MENU_ADD = 1
+        private const val KEY_PHOTO_URI = "key_current_photo_uri"
     }
 
     private val pickImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
@@ -59,14 +65,34 @@ class FamilyFacesActivity : AppCompatActivity() {
         }
     }
 
-    private val takePhotoLauncher = registerForActivityResult(ActivityResultContracts.TakePicturePreview()) { bmp: Bitmap? ->
-        if (bmp != null) {
-            onImagePicked(bmp)
+    private val requestCameraPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
+        if (isGranted) {
+            launchCameraInternal()
+        } else {
+            Toast.makeText(this, "需要相机权限以拍摄人脸照片", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private val takePhotoLauncher = registerForActivityResult(ActivityResultContracts.TakePicture()) { success: Boolean ->
+        if (success) {
+            val uri = currentPhotoUri
+            if (uri != null) {
+                val bmp = decodeSampledBitmap(uri, 1024, 1024)
+                if (bmp != null) {
+                    onImagePicked(bmp)
+                } else {
+                    Toast.makeText(this, "解析拍摄照片失败", Toast.LENGTH_SHORT).show()
+                }
+            }
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (savedInstanceState != null) {
+            @Suppress("DEPRECATION")
+            currentPhotoUri = savedInstanceState.getParcelable(KEY_PHOTO_URI)
+        }
         binding = ActivityFamilyFacesBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
@@ -222,7 +248,7 @@ class FamilyFacesActivity : AppCompatActivity() {
         }
 
         dialogBinding.btnPickCamera.setOnClickListener {
-            takePhotoLauncher.launch(null)
+            launchCamera()
         }
 
         dialogBinding.btnCancel.setOnClickListener {
@@ -375,6 +401,40 @@ class FamilyFacesActivity : AppCompatActivity() {
         bitmap.compress(Bitmap.CompressFormat.JPEG, 85, outputStream)
         val bytes = outputStream.toByteArray()
         return Base64.encodeToString(bytes, Base64.NO_WRAP)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        currentPhotoUri?.let { outState.putParcelable(KEY_PHOTO_URI, it) }
+    }
+
+    private fun launchCamera() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            launchCameraInternal()
+        } else {
+            requestCameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+        }
+    }
+
+    private fun launchCameraInternal() {
+        try {
+            val cameraDir = File(cacheDir, "camera").apply { if (!exists()) mkdirs() }
+            cameraDir.listFiles()?.forEach { file ->
+                if (file.isFile && System.currentTimeMillis() - file.lastModified() > 24 * 60 * 60 * 1000) {
+                    file.delete()
+                }
+            }
+            val photoFile = File(cameraDir, "face_capture_${System.currentTimeMillis()}.jpg")
+            val uri = FileProvider.getUriForFile(
+                this,
+                "${packageName}.fileprovider",
+                photoFile
+            )
+            currentPhotoUri = uri
+            takePhotoLauncher.launch(uri)
+        } catch (e: Exception) {
+            Toast.makeText(this, "启动相机失败: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
     }
 
     override fun onDestroy() {
