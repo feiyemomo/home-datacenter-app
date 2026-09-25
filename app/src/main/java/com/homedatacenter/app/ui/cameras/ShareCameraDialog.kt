@@ -64,6 +64,7 @@ class ShareCameraDialog(
 
     private val shareAdapter = ShareListAdapter(
         onUnshare = { share -> confirmUnshare(share) },
+        onTogglePtz = { share, canPtz -> updateSharePtz(share, canPtz) },
         userNameFor = { userId -> userNameFor(userId) },
     )
 
@@ -200,7 +201,33 @@ class ShareCameraDialog(
             .setTitle(R.string.camera_share_add)
             .setItems(labels) { _, which ->
                 val picked = candidates[which]
-                addShare(picked.id)
+                showConfirmAddShareDialog(picked)
+            }
+            .setNegativeButton(R.string.btn_cancel, null)
+            .show()
+    }
+
+    private fun showConfirmAddShareDialog(user: User) {
+        val cbPtz = android.widget.CheckBox(context).apply {
+            text = "同时允许控制云台 (PTZ)"
+            isChecked = false
+            setPadding(8, 8, 8, 8)
+        }
+        val layout = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(50, 20, 50, 10)
+            addView(TextView(context).apply {
+                text = "确定将摄像头分享给「${user.name}」？"
+                textSize = 15f
+                setTextColor(context.getColor(R.color.text_primary))
+            })
+            addView(cbPtz)
+        }
+        AlertDialog.Builder(context)
+            .setTitle(R.string.camera_share_add)
+            .setView(layout)
+            .setPositiveButton(R.string.btn_confirm) { _, _ ->
+                addShare(user.id, cbPtz.isChecked)
             }
             .setNegativeButton(R.string.btn_cancel, null)
             .show()
@@ -208,18 +235,22 @@ class ShareCameraDialog(
 
     /**
      * Fallback picker for non-admin camera owners: prompts for a
-     * numeric user id and shares with that user. The backend will
-     * 404/400 if the user doesn't exist, surfaced as a toast.
+     * numeric user id and shares with that user.
      */
     private fun showManualUserIdInput() {
         val input = EditText(context).apply {
             inputType = android.text.InputType.TYPE_CLASS_NUMBER
             hint = "用户 ID"
         }
+        val cbPtz = android.widget.CheckBox(context).apply {
+            text = "同时允许控制云台 (PTZ)"
+            isChecked = false
+        }
         val container2 = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(50, 30, 50, 10)
             addView(input)
+            addView(cbPtz)
         }
         AlertDialog.Builder(context)
             .setTitle(R.string.camera_share_add)
@@ -230,21 +261,35 @@ class ShareCameraDialog(
                     toast("请输入有效的用户 ID")
                     return@setPositiveButton
                 }
-                addShare(uid)
+                addShare(uid, cbPtz.isChecked)
             }
             .setNegativeButton(R.string.btn_cancel, null)
             .show()
     }
 
-    private fun addShare(userId: Long) {
+    private fun addShare(userId: Long, canPtz: Boolean = false) {
         val token = container.prefsManager.token ?: return
         scope.launch {
             try {
-                container.getRepository().shareCamera(token, cameraId, userId)
+                container.getRepository().shareCamera(token, cameraId, userId, canPtz)
                 toast("已共享")
                 loadShares()
             } catch (e: Exception) {
                 toast("共享失败: ${e.message}")
+            }
+        }
+    }
+
+    private fun updateSharePtz(share: CameraShare, canPtz: Boolean) {
+        val token = container.prefsManager.token ?: return
+        scope.launch {
+            try {
+                container.getRepository().shareCamera(token, cameraId, share.userId, canPtz)
+                toast(if (canPtz) "已开启云台控制权限" else "已关闭云台控制权限")
+                loadShares()
+            } catch (e: Exception) {
+                toast("更新权限失败: ${e.message}")
+                loadShares()
             }
         }
     }
@@ -282,6 +327,7 @@ class ShareCameraDialog(
 
     private class ShareListAdapter(
         private val onUnshare: (CameraShare) -> Unit,
+        private val onTogglePtz: (CameraShare, Boolean) -> Unit,
         private val userNameFor: (Long) -> String?,
     ) : RecyclerView.Adapter<ShareListAdapter.ShareVH>() {
 
@@ -302,7 +348,13 @@ class ShareCameraDialog(
         }
 
         override fun onBindViewHolder(holder: ShareVH, position: Int) {
-            holder.bind(items[position], userNameFor) { onUnshare(items[position]) }
+            val item = items[position]
+            holder.bind(
+                share = item,
+                userNameFor = userNameFor,
+                onTogglePtz = { canPtz -> onTogglePtz(item, canPtz) },
+                onUnshare = { onUnshare(item) },
+            )
         }
 
         override fun getItemCount(): Int = items.size
@@ -310,16 +362,23 @@ class ShareCameraDialog(
         private class ShareVH(itemView: View) : RecyclerView.ViewHolder(itemView) {
             private val tvName: TextView = itemView.findViewById(R.id.tvUserName)
             private val tvMeta: TextView = itemView.findViewById(R.id.tvUserMeta)
+            private val switchPtz: com.google.android.material.switchmaterial.SwitchMaterial = itemView.findViewById(R.id.switchPtz)
             private val btnUnshare: View = itemView.findViewById(R.id.btnUnshare)
 
             fun bind(
                 share: CameraShare,
                 userNameFor: (Long) -> String?,
+                onTogglePtz: (Boolean) -> Unit,
                 onUnshare: () -> Unit,
             ) {
                 val name = userNameFor(share.userId) ?: "用户 #${share.userId}"
                 tvName.text = name
-                tvMeta.text = "ID: ${share.userId}"
+                tvMeta.text = "ID: ${share.userId} • 云台: ${if (share.canPtz) "已开启" else "未授权"}"
+                switchPtz.setOnCheckedChangeListener(null)
+                switchPtz.isChecked = share.canPtz
+                switchPtz.setOnCheckedChangeListener { _, isChecked ->
+                    onTogglePtz(isChecked)
+                }
                 btnUnshare.setOnClickListener { onUnshare() }
             }
         }

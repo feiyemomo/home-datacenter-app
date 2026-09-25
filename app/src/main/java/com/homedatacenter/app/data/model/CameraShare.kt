@@ -11,6 +11,7 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class ShareCameraRequest(
     @SerialName("user_id") val userId: Long,
+    @SerialName("can_ptz") val canPtz: Boolean = false,
 )
 
 /**
@@ -25,5 +26,6 @@ data class CameraShare(
     val id: Long,
     @SerialName("camera_id") val cameraId: Long,
     @SerialName("user_id") val userId: Long,
+    @SerialName("can_ptz") val canPtz: Boolean = false,
     @SerialName("created_at") val createdAt: String = "",
 )

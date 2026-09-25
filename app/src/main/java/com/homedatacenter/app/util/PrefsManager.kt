@@ -203,8 +203,7 @@ class PrefsManager(context: Context) {
         if (isDndActive()) return false
         return when (label.lowercase()) {
             "person" -> notifyPerson
-            "car", "truck", "bus", "bicycle", "motorcycle", "vehicle" -> notifyVehicle
-            "dog", "cat", "bird", "pet" -> notifyPet
+            "system" -> notifySystem
             else -> notifyMotion
         }
     }

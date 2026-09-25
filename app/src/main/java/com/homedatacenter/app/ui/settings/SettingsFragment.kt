@@ -18,6 +18,8 @@ import com.homedatacenter.app.databinding.FragmentSettingsBinding
 import com.homedatacenter.app.ui.admin.UsersActivity
 import com.homedatacenter.app.ui.automations.AutomationsActivity
 import com.homedatacenter.app.ui.main.MainActivity
+import com.google.android.material.timepicker.MaterialTimePicker
+import com.google.android.material.timepicker.TimeFormat
 import com.homedatacenter.app.util.ApkInstaller
 import com.homedatacenter.app.util.BaseUrlResolver
 import com.homedatacenter.app.util.JwtUtil
@@ -77,13 +79,7 @@ class SettingsFragment : Fragment() {
         setupAdminSection(prefs)
         setupUpdateSection()
 
-        binding.btnAccountManagement.setOnClickListener {
-            if (binding.tvAccountAction.visibility == View.VISIBLE) {
-                binding.tvAccountAction.visibility = View.GONE
-            } else {
-                binding.tvAccountAction.visibility = View.VISIBLE
-            }
-        }
+        binding.btnAccountManagement.setOnClickListener { showLogoutDialog() }
         binding.tvAccountAction.setOnClickListener { showLogoutDialog() }
 
         loadUserInfo()
@@ -136,16 +132,6 @@ class SettingsFragment : Fragment() {
             prefs.notifyPerson = isChecked
         }
 
-        binding.switchNotifyVehicle.isChecked = prefs.notifyVehicle
-        binding.switchNotifyVehicle.setOnCheckedChangeListener { _, isChecked ->
-            prefs.notifyVehicle = isChecked
-        }
-
-        binding.switchNotifyPet.isChecked = prefs.notifyPet
-        binding.switchNotifyPet.setOnCheckedChangeListener { _, isChecked ->
-            prefs.notifyPet = isChecked
-        }
-
         binding.switchNotifyMotion.isChecked = prefs.notifyMotion
         binding.switchNotifyMotion.setOnCheckedChangeListener { _, isChecked ->
             prefs.notifyMotion = isChecked
@@ -180,36 +166,58 @@ class SettingsFragment : Fragment() {
     }
 
     private fun showDndTimePickerDialog(prefs: PrefsManager) {
-        val context = requireContext()
-        val hours = (0..23).map { String.format(java.util.Locale.US, "%02d:00", it) }.toTypedArray()
+        val startPicker = MaterialTimePicker.Builder()
+            .setTimeFormat(TimeFormat.CLOCK_24H)
+            .setHour(prefs.notifyDndStartHour)
+            .setMinute(prefs.notifyDndStartMinute)
+            .setTitleText("选择免打扰起始时间")
+            .build()
 
-        android.app.AlertDialog.Builder(context)
-            .setTitle("选择免打扰起始时间")
-            .setItems(hours) { _, whichStart ->
-                prefs.notifyDndStartHour = whichStart
-                prefs.notifyDndStartMinute = 0
+        startPicker.addOnPositiveButtonClickListener {
+            prefs.notifyDndStartHour = startPicker.hour
+            prefs.notifyDndStartMinute = startPicker.minute
 
-                android.app.AlertDialog.Builder(context)
-                    .setTitle("选择免打扰结束时间")
-                    .setItems(hours) { _, whichEnd ->
-                        prefs.notifyDndEndHour = whichEnd
-                        prefs.notifyDndEndMinute = 0
-                        updateDndSummaryText(prefs)
-                        android.widget.Toast.makeText(context, "免打扰时段已更新", android.widget.Toast.LENGTH_SHORT).show()
-                    }
-                    .show()
+            val endPicker = MaterialTimePicker.Builder()
+                .setTimeFormat(TimeFormat.CLOCK_24H)
+                .setHour(prefs.notifyDndEndHour)
+                .setMinute(prefs.notifyDndEndMinute)
+                .setTitleText("选择免打扰结束时间")
+                .build()
+
+            endPicker.addOnPositiveButtonClickListener {
+                prefs.notifyDndEndHour = endPicker.hour
+                prefs.notifyDndEndMinute = endPicker.minute
+                updateDndSummaryText(prefs)
+                Toast.makeText(requireContext(), "免打扰时段已更新", Toast.LENGTH_SHORT).show()
             }
-            .show()
+            endPicker.show(parentFragmentManager, "dnd_end_picker")
+        }
+        startPicker.show(parentFragmentManager, "dnd_start_picker")
     }
 
     private fun setupProfileCard(prefs: PrefsManager) {
         // Initial render from cached prefs so the card is populated
         // before the /me call resolves.
-        if (!prefs.userName.isNullOrEmpty()) {
-            val adminLabel = if (prefs.isAdmin) {
-                " (${getString(R.string.setting_admin_label)})"
-            } else ""
-            binding.tvUserName.text = prefs.userName + adminLabel
+        val name = prefs.userName?.ifEmpty { "User" } ?: "User"
+        binding.tvUserName.text = name
+        binding.tvUserAvatar.text = name.firstOrNull()?.uppercaseChar()?.toString() ?: "U"
+
+        if (prefs.isAdmin) {
+            binding.tvUserRoleBadge.text = getString(R.string.setting_admin_label)
+            binding.tvUserRoleBadge.setBackgroundResource(R.drawable.bg_badge_admin)
+        } else {
+            binding.tvUserRoleBadge.text = "普通成员"
+            binding.tvUserRoleBadge.setBackgroundResource(R.drawable.bg_badge_user)
+        }
+
+        binding.btnToggleSessionDetails.setOnClickListener {
+            val isGone = binding.layoutSessionDetails.visibility == View.GONE
+            binding.layoutSessionDetails.visibility = if (isGone) View.VISIBLE else View.GONE
+            binding.tvSessionToggleArrow.text = if (isGone) "收起 ▴" else "展开 ▾"
+        }
+
+        binding.btnRefreshToken.setOnClickListener {
+            refreshJwtToken(prefs)
         }
     }
 
@@ -256,21 +264,25 @@ class SettingsFragment : Fragment() {
         }
 
         binding.tvTokenIssued.setOnClickListener {
-            val mainActivity = activity as? MainActivity ?: return@setOnClickListener
-            viewLifecycleOwner.lifecycleScope.launch {
-                Toast.makeText(requireContext(), "正在刷新令牌...", Toast.LENGTH_SHORT).show()
-                val refreshed = withContext(Dispatchers.IO) {
-                    mainActivity.container.tokenManager.refreshViaTokenAndPersist(prefs.token ?: "", force = true)
-                        ?: if (!prefs.accessKey.isNullOrEmpty() && prefs.userId > 0L) {
-                            mainActivity.container.tokenManager.refreshAndPersist(prefs.userId, prefs.accessKey!!, force = true)
-                        } else null
-                }
-                if (refreshed != null) {
-                    setupJwtInfo(prefs)
-                    Toast.makeText(requireContext(), "令牌已更新", Toast.LENGTH_SHORT).show()
-                } else {
-                    Toast.makeText(requireContext(), "令牌刷新失败", Toast.LENGTH_SHORT).show()
-                }
+            refreshJwtToken(prefs)
+        }
+    }
+
+    private fun refreshJwtToken(prefs: PrefsManager) {
+        val mainActivity = activity as? MainActivity ?: return
+        viewLifecycleOwner.lifecycleScope.launch {
+            Toast.makeText(requireContext(), "正在刷新令牌...", Toast.LENGTH_SHORT).show()
+            val refreshed = withContext(Dispatchers.IO) {
+                mainActivity.container.tokenManager.refreshViaTokenAndPersist(prefs.token ?: "", force = true)
+                    ?: if (!prefs.accessKey.isNullOrEmpty() && prefs.userId > 0L) {
+                        mainActivity.container.tokenManager.refreshAndPersist(prefs.userId, prefs.accessKey!!, force = true)
+                    } else null
+            }
+            if (refreshed != null) {
+                setupJwtInfo(prefs)
+                Toast.makeText(requireContext(), "令牌已更新", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(requireContext(), "令牌刷新失败", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -285,10 +297,15 @@ class SettingsFragment : Fragment() {
                 val user = mainActivity.container.getRepository().getMe(token)
                 prefs.saveUserInfo(user.name, user.isAdmin)
                 prefs.userId = user.id
-                val adminLabel = if (user.isAdmin) {
-                    " (${getString(R.string.setting_admin_label)})"
-                } else ""
-                binding.tvUserName.text = user.name + adminLabel
+                binding.tvUserName.text = user.name
+                binding.tvUserAvatar.text = user.name.firstOrNull()?.uppercaseChar()?.toString() ?: "U"
+                if (user.isAdmin) {
+                    binding.tvUserRoleBadge.text = getString(R.string.setting_admin_label)
+                    binding.tvUserRoleBadge.setBackgroundResource(R.drawable.bg_badge_admin)
+                } else {
+                    binding.tvUserRoleBadge.text = "普通成员"
+                    binding.tvUserRoleBadge.setBackgroundResource(R.drawable.bg_badge_user)
+                }
                 binding.tvAdminSectionHeader.visibility = if (user.isAdmin) View.VISIBLE else View.GONE
                 binding.cardAdminSection.visibility = if (user.isAdmin) View.VISIBLE else View.GONE
             } catch (e: CancellationException) {

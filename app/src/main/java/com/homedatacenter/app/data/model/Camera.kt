@@ -33,7 +33,8 @@ data class Camera(
     // segment_seconds}}) and other operator-set metadata. Defaulted
     // to empty map for backward compat.
     val meta: Map<String, kotlinx.serialization.json.JsonElement> = emptyMap(),
-    val stream: StreamConfig? = null
+    val stream: StreamConfig? = null,
+    @SerialName("can_ptz") val canPtz: Boolean = true
 ) {
     val isOnline: Boolean get() = status == "online"
 

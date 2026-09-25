@@ -3,7 +3,7 @@
 家庭数据中心 Android 客户端 — 一个用 **Kotlin + Jetpack Compose + ExoPlayer + WebRTC** 实现的家庭 NVR / IoT 控制台，配合 [home-datacenter](https://github.com/feiyemomo/home-datacenter) 后端使用，提供摄像头预览、WebRTC/MP4/HLS 直播（含音频）、录像回放、报警查看、设备状态、天气信息、局域网/远程自动切换和实时 WebSocket 推送。
 
 > 服务端项目：<https://github.com/feiyemomo/home-datacenter>
-> 当前版本：**v1.13.0**（versionCode 155）
+> 当前版本：**v1.13.1**（versionCode 156）
 
 ---
 
@@ -36,7 +36,7 @@
 | Compile SDK | 36 |
 | Java / Kotlin | 17 / 2.0 |
 | AGP | 9.2.1 |
-| 当前版本 | 1.13.0 (versionCode 155) |
+| 当前版本 | 1.13.1 (versionCode 156) |
 | 默认服务器 | `https://api.feiyemomo.top/`（远程） / `http://192.168.31.235:8088/`（局域网，自动探测并持久化） |
 
 App 通过 `(user_id, access_key)` 换取 JWT 后访问 `home-datacenter` 的 REST API 与 WebSocket。**BaseUrlResolver** 在启动时通过后台守护线程异步探测局域网 `http://192.168.31.235:8088/` 是否可达（TTFB ~10ms vs Cloudflare Tunnel 1.4s+），可达则切到局域网，否则走远程 Cloudflare Tunnel。冷启动会优先恢复上次有效网络路径，使家庭 Wi-Fi 场景下首个请求即命中内网。启动调度采用指数退避重试（1.5s → 4s → 9s → 16s），覆盖真机「WiFi connected but not validated」窗口；同时附加 TCP socket 直连探测作为 OkHttp cleartext 拒绝时的兜底。NetworkChangeMonitor 注册 ConnectivityManager.NetworkCallback，在 WiFi/移动网络切换时立即触发 re-probe，无需等 5 分钟 TTL。摄像头直播走 go2rtc 暴露的 MP4（主）+ HLS（备），后端根据摄像头 `capabilities.audio` 在 go2rtc 流 URL 上自动追加 `#audio=aac` 启用音频转码，前端通过 ExoPlayer `volume` 控制静音/取消静音。
@@ -592,6 +592,15 @@ newPlayer.setAudioAttributes(
 ---
 
 ### 最新版本详情
+
+### v1.13.1 (versionCode 156) — 用户设置页条理重构、免打扰分钟级微调、PTZ多级权限隔离与普通用户空状态 (2026-09)
+- **用户设置页体系化分级重构**：将臃肿杂乱的设置项彻底重组为 5 大卡片结构（用户与账户中心、消息与告警通知、外观与网络、系统管理（管理员专享）、关于与版本更新），新增头像、用户角色徽章（管理员/普通成员）、会话剩余天数与一键刷新令牌按钮、折叠式凭据详情。
+- **夜间免打扰（DND）精确到分钟选择**：替换粗糙的小时级弹窗，接入 Material 3 `MaterialTimePicker`（24小时制，表盘+键盘双模输入），支持精确到分钟（min）的免打扰起止时段设定。
+- **Frigate 车型与宠物开关移除**：因 Frigate 当前未配置车辆与动物检测模型，移除设置页中多余的车辆和宠物通知开关，通知过滤聚焦于人形（Person）、移动侦测（Motion）与系统运维（System）。
+- **摄像头注册表单“移动侦测”语义修正**：更正摄像头注册界面中将 Motion 机械直译为“动作”的表述，清晰标注为“移动侦测”。
+- **系统日志 502 误报根源治理**：优化摄像头预置位探测与报警列表接口，对无 PTZ 能力或 Frigate 离线的探针优雅返回空结果（200 OK），彻底杜绝进入摄像头详情时频繁触发 502 Bad Gateway 导致系统暴警的问题。
+- **普通用户无权摄像头空状态与防假死**：后端列表接口严格按权限过滤摄像头；普通用户未获分配摄像头时，呈现友好提示卡片并引导联系管理员，彻底消除帧轮询 403 导致的“一直在加载”视觉假死。
+- **普通用户 PTZ 控制权限分配与界面联动**：摄像头共享功能支持管理员为普通用户细粒度开启/关闭 PTZ 云台控制权限；普通用户在未获 PTZ 授权时，摄像头详情页彻底隐藏云台控制卡片与标题。
 
 ### v1.10.9 (versionCode 138) — 录像片段媒体库导出、四分屏多路同屏与安防事件多维过滤 (2026-09)
 - **录像片段相册导出**：`RecordingsDialog` 在视频播放工具栏提供专属【保存到本地】按钮，一键将当前播放的 60 秒 MP4 录像片段流式下载到手机 `Movies/HomeDatacenter` 目录，通过 `MediaStore` 自动注册索引，保存后系统相册即时可查并支持一键分享。

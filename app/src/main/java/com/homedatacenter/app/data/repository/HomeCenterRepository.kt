@@ -463,11 +463,11 @@ class HomeCenterRepository(
      * The caller is responsible for authorization checks (admin or
      * camera owner); the server still enforces it.
      */
-    suspend fun shareCamera(token: String, cameraId: Long, userId: Long) {
+    suspend fun shareCamera(token: String, cameraId: Long, userId: Long, canPtz: Boolean = false) {
         val resp = api.shareCamera(
             bearer(token),
             cameraId,
-            com.homedatacenter.app.data.model.ShareCameraRequest(userId),
+            com.homedatacenter.app.data.model.ShareCameraRequest(userId, canPtz),
         )
         ensureSuccess(resp)
     }

@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:fillViewport="true"
@@ -10,13 +11,9 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:paddingStart="20dp"
-        android:paddingEnd="20dp"
+        android:paddingHorizontal="20dp"
         android:paddingTop="20dp"
-        android:paddingBottom="96dp">
-        <!-- v1.5.7: paddingBottom=96dp (72dp BottomNav + 24dp breathing
-             room) so the logout button and version text aren't clipped
-             by the bottom navigation bar. -->
+        android:paddingBottom="100dp">
 
         <TextView
             android:layout_width="wrap_content"
@@ -25,14 +22,17 @@
             android:textSize="@dimen/fragment_title_size"
             android:textStyle="bold"
             android:textColor="@color/text_primary"
-            android:layout_marginBottom="24dp" />
+            android:layout_marginBottom="20dp" />
 
-        <!-- Profile / Account info card -->
+        <!-- ============================================================
+             1. 账户中心 (Profile & Session Card)
+             ============================================================ -->
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="@string/profile_title"
-            android:textSize="14sp"
+            android:text="👤 用户与账户"
+            android:textSize="13sp"
+            android:textStyle="bold"
             android:textColor="@color/text_secondary"
             android:layout_marginBottom="8dp" />
 
@@ -43,27 +43,132 @@
             android:background="@drawable/bg_glass_card"
             android:orientation="vertical"
             android:padding="16dp"
-            android:layout_marginBottom="16dp">
+            android:layout_marginBottom="20dp">
 
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/setting_user"
-                android:textSize="12sp"
-                android:textColor="@color/text_secondary" />
-
-            <TextView
-                android:id="@+id/tvUserName"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:textSize="18sp"
-                android:textStyle="bold"
-                android:textColor="@color/text_primary"
-                android:layout_marginTop="4dp" />
-
-            <!-- Account management - logout -->
+            <!-- Top Row: Avatar + Name/Role + Logout -->
             <LinearLayout
-                android:id="@+id/btnAccountManagement"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <FrameLayout
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:background="@drawable/bg_circle_avatar">
+
+                    <TextView
+                        android:id="@+id/tvUserAvatar"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent"
+                        android:gravity="center"
+                        android:text="U"
+                        android:textSize="20sp"
+                        android:textStyle="bold"
+                        android:textColor="@android:color/white" />
+                </FrameLayout>
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical"
+                    android:layout_marginStart="14dp">
+
+                    <TextView
+                        android:id="@+id/tvUserName"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:textSize="17sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/text_primary"
+                        tools:text="admin" />
+
+                    <TextView
+                        android:id="@+id/tvUserRoleBadge"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:paddingHorizontal="8dp"
+                        android:paddingVertical="2dp"
+                        android:background="@drawable/bg_badge_admin"
+                        android:text="系统管理员"
+                        android:textSize="11sp"
+                        android:textColor="@android:color/white" />
+                </LinearLayout>
+
+                <!-- Logout Button -->
+                <LinearLayout
+                    android:id="@+id/btnAccountManagement"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:background="?attr/selectableItemBackground"
+                    android:paddingHorizontal="10dp"
+                    android:paddingVertical="6dp"
+                    android:gravity="center">
+
+                    <TextView
+                        android:id="@+id/tvAccountAction"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="退出登录"
+                        android:textSize="13sp"
+                        android:textColor="@color/error"
+                        android:textStyle="bold" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="@color/divider"
+                android:layout_marginTop="14dp"
+                android:layout_marginBottom="12dp" />
+
+            <!-- Session summary row with refresh button -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <ImageView
+                    android:layout_width="16dp"
+                    android:layout_height="16dp"
+                    android:src="@drawable/ic_bolt"
+                    app:tint="@color/online"
+                    android:contentDescription="session status" />
+
+                <TextView
+                    android:id="@+id/tvTokenRemaining"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginStart="8dp"
+                    android:textSize="13sp"
+                    android:textColor="@color/online"
+                    tools:text="有效时间剩余: 30 天" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnRefreshToken"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:minHeight="0dp"
+                    android:minWidth="0dp"
+                    android:paddingHorizontal="8dp"
+                    android:paddingVertical="4dp"
+                    android:text="刷新令牌"
+                    android:textSize="12sp"
+                    app:icon="@drawable/ic_refresh"
+                    app:iconSize="14dp" />
+            </LinearLayout>
+
+            <!-- Collapsible technical details button -->
+            <LinearLayout
+                android:id="@+id/btnToggleSessionDetails"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
@@ -71,142 +176,82 @@
                 android:clickable="true"
                 android:focusable="true"
                 android:background="?attr/selectableItemBackground"
-                android:paddingVertical="12dp"
+                android:paddingVertical="6dp"
                 android:layout_marginTop="4dp">
 
                 <TextView
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="账号管理"
-                    android:textSize="15sp"
-                    android:textColor="@color/text_primary" />
+                    android:text="设备与安全凭据详情"
+                    android:textSize="12sp"
+                    android:textColor="@color/text_secondary" />
 
                 <TextView
-                    android:id="@+id/tvAccountAction"
+                    android:id="@+id/tvSessionToggleArrow"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="退出登录"
-                    android:textSize="13sp"
-                    android:textColor="@color/error"
-                    android:visibility="gone" />
+                    android:text="展开 ▾"
+                    android:textSize="12sp"
+                    android:textColor="@color/text_hint" />
             </LinearLayout>
 
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="1dp"
-                android:background="@color/divider"
-                android:layout_marginTop="12dp"
-                android:layout_marginBottom="12dp" />
-
-            <TextView
-                android:id="@+id/tvUserId"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:textSize="13sp"
-                android:textColor="@color/text_secondary" />
-
-            <TextView
-                android:id="@+id/tvDeviceId"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:textSize="13sp"
-                android:textColor="@color/text_secondary" />
-
-            <TextView
-                android:id="@+id/tvTokenIssued"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:textSize="13sp"
-                android:textColor="@color/text_secondary" />
-
-            <TextView
-                android:id="@+id/tvTokenExpires"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:textSize="13sp"
-                android:textColor="@color/text_secondary" />
-
-            <TextView
-                android:id="@+id/tvTokenRemaining"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:textSize="13sp"
-                android:textColor="@color/online" />
-        </LinearLayout>
-
-        <!-- Theme selector -->
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/setting_theme"
-            android:textSize="14sp"
-            android:textColor="@color/text_secondary"
-            android:layout_marginBottom="8dp" />
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="@drawable/bg_glass_card"
-            android:orientation="vertical"
-            android:padding="16dp"
-            android:layout_marginBottom="24dp">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/setting_theme_summary"
-                android:textSize="13sp"
-                android:textColor="@color/text_secondary"
-                android:layout_marginBottom="12dp" />
-
-            <RadioGroup
-                android:id="@+id/radioGroupTheme"
+            <!-- Expanded Details -->
+            <LinearLayout
+                android:id="@+id/layoutSessionDetails"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="vertical">
+                android:orientation="vertical"
+                android:visibility="gone"
+                android:paddingTop="6dp">
 
-                <com.google.android.material.radiobutton.MaterialRadioButton
-                    android:id="@+id/rb_theme_light"
+                <TextView
+                    android:id="@+id/tvUserId"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="@string/theme_light"
-                    android:textColor="@color/text_primary"
-                    android:textSize="15sp"
-                    android:paddingVertical="8dp" />
+                    android:textSize="12sp"
+                    android:textColor="@color/text_secondary"
+                    tools:text="用户 ID: 1" />
 
-                <com.google.android.material.radiobutton.MaterialRadioButton
-                    android:id="@+id/rb_theme_dark"
+                <TextView
+                    android:id="@+id/tvDeviceId"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="@string/theme_dark"
-                    android:textColor="@color/text_primary"
-                    android:textSize="15sp"
-                    android:paddingVertical="8dp" />
+                    android:layout_marginTop="4dp"
+                    android:textSize="12sp"
+                    android:textColor="@color/text_secondary"
+                    tools:text="设备 ID: 2" />
 
-                <com.google.android.material.radiobutton.MaterialRadioButton
-                    android:id="@+id/rb_theme_system"
+                <TextView
+                    android:id="@+id/tvTokenIssued"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="@string/theme_system"
-                    android:textColor="@color/text_primary"
-                    android:textSize="15sp"
-                    android:paddingVertical="8dp" />
+                    android:layout_marginTop="4dp"
+                    android:textSize="12sp"
+                    android:textColor="@color/text_secondary"
+                    tools:text="签发时间: 2026-09-25 09:27" />
 
-            </RadioGroup>
+                <TextView
+                    android:id="@+id/tvTokenExpires"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:textSize="12sp"
+                    android:textColor="@color/text_secondary"
+                    tools:text="到期时间: 2026-10-25 09:27" />
+            </LinearLayout>
 
         </LinearLayout>
 
-        <!-- v1.13.0: Notification & Alert Preferences -->
+        <!-- ============================================================
+             2. 报警与通知设置 (Notifications Card)
+             ============================================================ -->
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="消息与通知设置"
-            android:textSize="14sp"
+            android:text="🔔 消息与告警通知"
+            android:textSize="13sp"
+            android:textStyle="bold"
             android:textColor="@color/text_secondary"
             android:layout_marginBottom="8dp" />
 
@@ -217,7 +262,7 @@
             android:background="@drawable/bg_glass_card"
             android:orientation="vertical"
             android:padding="16dp"
-            android:layout_marginBottom="24dp">
+            android:layout_marginBottom="20dp">
 
             <!-- Master Switch -->
             <LinearLayout
@@ -236,7 +281,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="系统与安防推送"
+                        android:text="系统与安防推送总开关"
                         android:textSize="15sp"
                         android:textStyle="bold"
                         android:textColor="@color/text_primary" />
@@ -270,11 +315,11 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="通知内容选择"
-                    android:textSize="13sp"
+                    android:text="通知事件类型过滤"
+                    android:textSize="12sp"
                     android:textStyle="bold"
                     android:textColor="@color/text_secondary"
-                    android:layout_marginBottom="8dp" />
+                    android:layout_marginBottom="6dp" />
 
                 <!-- Person Detection Switch -->
                 <LinearLayout
@@ -288,56 +333,12 @@
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="👤 人员与访客检测"
+                        android:text="👤 人员与访客侦测 (Person)"
                         android:textSize="14sp"
                         android:textColor="@color/text_primary" />
 
                     <com.google.android.material.switchmaterial.SwitchMaterial
                         android:id="@+id/switchNotifyPerson"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content" />
-                </LinearLayout>
-
-                <!-- Vehicle Detection Switch -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:paddingVertical="4dp">
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="🚗 车辆进出检测"
-                        android:textSize="14sp"
-                        android:textColor="@color/text_primary" />
-
-                    <com.google.android.material.switchmaterial.SwitchMaterial
-                        android:id="@+id/switchNotifyVehicle"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content" />
-                </LinearLayout>
-
-                <!-- Pet Detection Switch -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:paddingVertical="4dp">
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="🐾 宠物与动物活动"
-                        android:textSize="14sp"
-                        android:textColor="@color/text_primary" />
-
-                    <com.google.android.material.switchmaterial.SwitchMaterial
-                        android:id="@+id/switchNotifyPet"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content" />
                 </LinearLayout>
@@ -354,7 +355,7 @@
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="⚡ 画面移动与普通事件"
+                        android:text="⚡ 画面移动与动态事件 (Motion)"
                         android:textSize="14sp"
                         android:textColor="@color/text_primary" />
 
@@ -376,7 +377,7 @@
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:text="🛠️ 系统维护与服务状态"
+                        android:text="🛠️ 系统维护与服务状态 (System)"
                         android:textSize="14sp"
                         android:textColor="@color/text_primary" />
 
@@ -416,7 +417,7 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="在系统通知栏展开查看现场照片"
+                            android:text="在系统通知栏可展开查看现场抓拍"
                             android:textSize="12sp"
                             android:textColor="@color/text_secondary" />
                     </LinearLayout>
@@ -458,9 +459,10 @@
                             android:id="@+id/tvDndTimeSummary"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="时段: 22:00 ~ 07:00 (点击修改)"
+                            android:text="生效时段: 22:00 ~ 07:00 (点击精确修改)"
                             android:textSize="12sp"
-                            android:textColor="@color/primary" />
+                            android:textColor="@color/primary"
+                            android:paddingVertical="2dp" />
                     </LinearLayout>
 
                     <com.google.android.material.switchmaterial.SwitchMaterial
@@ -473,96 +475,158 @@
 
         </LinearLayout>
 
-        <!-- v1.8.24: LAN URL configuration. Allows the user to set a
-             custom NAS LAN address so the app adapts to IP changes
-             without recompiling. -->
+        <!-- ============================================================
+             3. 外观主题与网络 (Appearance & Network Card)
+             ============================================================ -->
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="@string/setting_lan_config"
-            android:textSize="14sp"
+            android:text="🎨 外观与网络连接"
+            android:textSize="13sp"
+            android:textStyle="bold"
             android:textColor="@color/text_secondary"
             android:layout_marginBottom="8dp" />
 
         <LinearLayout
-            android:id="@+id/cardLanConfig"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:background="@drawable/bg_glass_card"
             android:orientation="vertical"
             android:padding="16dp"
-            android:layout_marginBottom="24dp">
+            android:layout_marginBottom="20dp">
 
+            <!-- Theme Title -->
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/setting_lan_config_summary"
-                android:textSize="13sp"
-                android:textColor="@color/text_secondary"
-                android:layout_marginBottom="12dp" />
+                android:text="界面主题外观"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_primary" />
 
-            <TextView
-                android:id="@+id/tvLanCurrentUrl"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:textSize="13sp"
-                android:textColor="@color/online"
-                android:layout_marginBottom="8dp" />
-
-            <com.google.android.material.textfield.TextInputLayout
-                style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:hint="@string/setting_lan_config_hint"
-                app:boxStrokeColor="@color/primary"
-                app:hintTextColor="@color/text_secondary">
-
-                <com.google.android.material.textfield.TextInputEditText
-                    android:id="@+id/etLanUrl"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:inputType="textUri"
-                    android:textSize="14sp"
-                    android:singleLine="true" />
-
-            </com.google.android.material.textfield.TextInputLayout>
-
-            <LinearLayout
+            <RadioGroup
+                android:id="@+id/radioGroupTheme"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
-                android:layout_marginTop="12dp">
+                android:layout_marginTop="8dp"
+                android:gravity="center_vertical">
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnLanSave"
-                    style="@style/Widget.Material3.Button.TonalButton"
+                <com.google.android.material.radiobutton.MaterialRadioButton
+                    android:id="@+id/rb_theme_light"
                     android:layout_width="0dp"
                     android:layout_weight="1"
                     android:layout_height="wrap_content"
-                    android:text="@string/btn_save"
+                    android:text="@string/theme_light"
+                    android:textSize="13sp"
+                    android:textColor="@color/text_primary" />
+
+                <com.google.android.material.radiobutton.MaterialRadioButton
+                    android:id="@+id/rb_theme_dark"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="wrap_content"
+                    android:text="@string/theme_dark"
+                    android:textSize="13sp"
+                    android:textColor="@color/text_primary" />
+
+                <com.google.android.material.radiobutton.MaterialRadioButton
+                    android:id="@+id/rb_theme_system"
+                    android:layout_width="0dp"
+                    android:layout_weight="1.2"
+                    android:layout_height="wrap_content"
+                    android:text="@string/theme_system"
+                    android:textSize="13sp"
+                    android:textColor="@color/text_primary" />
+            </RadioGroup>
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="@color/divider"
+                android:layout_marginVertical="14dp" />
+
+            <!-- LAN Config -->
+            <LinearLayout
+                android:id="@+id/cardLanConfig"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="局域网服务地址 (NAS LAN Host)"
                     android:textSize="14sp"
-                    android:layout_marginEnd="8dp" />
+                    android:textStyle="bold"
+                    android:textColor="@color/text_primary" />
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnLanReset"
-                    style="@style/Widget.Material3.Button.TextButton"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
+                <TextView
+                    android:id="@+id/tvLanCurrentUrl"
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="@string/btn_reset_default"
-                    android:textSize="14sp" />
+                    android:textSize="12sp"
+                    android:textColor="@color/online"
+                    android:layout_marginTop="2dp"
+                    android:layout_marginBottom="8dp" />
 
+                <com.google.android.material.textfield.TextInputLayout
+                    style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="@string/setting_lan_config_hint"
+                    app:boxStrokeColor="@color/primary"
+                    app:hintTextColor="@color/text_secondary">
+
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/etLanUrl"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="textUri"
+                        android:textSize="14sp"
+                        android:singleLine="true" />
+
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginTop="10dp">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnLanSave"
+                        style="@style/Widget.Material3.Button.TonalButton"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:layout_height="wrap_content"
+                        android:text="@string/btn_save"
+                        android:textSize="13sp"
+                        android:layout_marginEnd="8dp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnLanReset"
+                        style="@style/Widget.Material3.Button.TextButton"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:layout_height="wrap_content"
+                        android:text="@string/btn_reset_default"
+                        android:textSize="13sp" />
+                </LinearLayout>
             </LinearLayout>
 
         </LinearLayout>
 
-        <!-- Admin & Management Section (Admin Only) -->
+        <!-- ============================================================
+             4. 系统管理 (Admin Only Card)
+             ============================================================ -->
         <TextView
             android:id="@+id/tvAdminSectionHeader"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="系统管理"
-            android:textSize="14sp"
+            android:text="⚡ 系统运维与管理"
+            android:textSize="13sp"
+            android:textStyle="bold"
             android:textColor="@color/text_secondary"
             android:layout_marginBottom="8dp" />
 
@@ -573,7 +637,7 @@
             android:background="@drawable/bg_glass_card"
             android:orientation="vertical"
             android:padding="16dp"
-            android:layout_marginBottom="24dp">
+            android:layout_marginBottom="20dp">
 
             <!-- Automations Linkage -->
             <LinearLayout
@@ -666,7 +730,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="管理系统成员账号与权限"
+                        android:text="管理成员账号与设备授权"
                         android:textSize="12sp"
                         android:textColor="@color/text_secondary" />
                 </LinearLayout>
@@ -681,15 +745,15 @@
 
         </LinearLayout>
 
-        <!-- v1.6.11: About / Update section. Houses the "Check for
-             updates" button and a small status summary below it.
-             The same card style as the admin card (bg_glass_card)
-             keeps the visual hierarchy consistent. -->
+        <!-- ============================================================
+             5. 关于与更新 (About & Updates Card)
+             ============================================================ -->
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="@string/setting_check_update"
-            android:textSize="14sp"
+            android:text="ℹ️ 系统与更新"
+            android:textSize="13sp"
+            android:textStyle="bold"
             android:textColor="@color/text_secondary"
             android:layout_marginBottom="8dp" />
 

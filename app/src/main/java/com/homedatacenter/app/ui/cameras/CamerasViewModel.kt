@@ -88,7 +88,10 @@ class CamerasViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
-                // Network failure: keep cached data
+                // Network failure: if no cameras loaded yet, emit empty list so UI doesn't hang
+                if (_cameras.value == null) {
+                    _cameras.value = emptyList()
+                }
             } finally {
                 _refreshing.value = false
             }

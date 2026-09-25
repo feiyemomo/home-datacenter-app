@@ -7,7 +7,7 @@ param(
     # Release notes text written to release-notes-vX.Y.Z.txt on the NAS.
     [string]$Notes,
     # NAS password (SSH_ASKPASS). Omit to use SSH key / interactive prompt.
-    [string]$Password = "<NAS_PASSWORD>",
+    [string]$Password = "",
     # Preview the push without touching the NAS.
     [switch]$DryRun,
     # Automatically bump patch version (e.g. 1.10.5 -> 1.10.6, versionCode + 1)
@@ -23,8 +23,14 @@ $NAS_HOST = "192.168.31.235"
 $NAS_PORT = 22
 $REMOTE_RELEASES = "/vol1/docker/home-datacenter/data/releases"
 
+if (-not $Password) {
+    Remove-Item env:SSH_ASKPASS -ErrorAction SilentlyContinue
+    Remove-Item env:SSH_ASKPASS_REQUIRE -ErrorAction SilentlyContinue
+}
+
 function New-Askpass {
     param([string]$Pass)
+    if (-not $Pass) { return $null }
     $f = [System.IO.Path]::GetTempFileName() + "-askpass.bat"
     "@echo $Pass" | Set-Content $f -Encoding ASCII
     $env:SSH_ASKPASS = $f
@@ -33,13 +39,24 @@ function New-Askpass {
     return $f
 }
 
+function Remove-Askpass {
+    param([string]$File)
+    if ($File -and (Test-Path $File)) {
+        Remove-Item $File -ErrorAction SilentlyContinue
+    }
+    Remove-Item env:SSH_ASKPASS -ErrorAction SilentlyContinue
+    Remove-Item env:SSH_ASKPASS_REQUIRE -ErrorAction SilentlyContinue
+}
+
 function Invoke-NasSSH {
     param([Parameter(Mandatory)][string]$RemoteCmd)
     $opts = @("-p", "$NAS_PORT", "-o", "StrictHostKeyChecking=no",
-              "-o", "UserKnownHostsFile=NUL", "-o", "ConnectTimeout=10",
-              "-o", "PreferredAuthentications=password",
-              "-o", "PubkeyAuthentication=no",
-              "-o", "NumberOfPasswordPrompts=1")
+              "-o", "UserKnownHostsFile=NUL", "-o", "ConnectTimeout=10")
+    if ($Password) {
+        $opts += @("-o", "PreferredAuthentications=password",
+                   "-o", "PubkeyAuthentication=no",
+                   "-o", "NumberOfPasswordPrompts=1")
+    }
     $prev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
     try { & ssh @opts "$NAS_USER@$NAS_HOST" $RemoteCmd 2>&1 | Out-Host; return $LASTEXITCODE }
     finally { $ErrorActionPreference = $prev }
@@ -49,10 +66,12 @@ function Invoke-NasSCP {
     param([Parameter(Mandatory)][string]$Local,
           [Parameter(Mandatory)][string]$Remote)
     $opts = @("-P", "$NAS_PORT", "-o", "StrictHostKeyChecking=no",
-              "-o", "UserKnownHostsFile=NUL", "-o", "ConnectTimeout=10",
-              "-o", "PreferredAuthentications=password",
-              "-o", "PubkeyAuthentication=no",
-              "-o", "NumberOfPasswordPrompts=1")
+              "-o", "UserKnownHostsFile=NUL", "-o", "ConnectTimeout=10")
+    if ($Password) {
+        $opts += @("-o", "PreferredAuthentications=password",
+                   "-o", "PubkeyAuthentication=no",
+                   "-o", "NumberOfPasswordPrompts=1")
+    }
     $prev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
     try { & scp @opts $Local $Remote 2>&1 | Out-Host; return $LASTEXITCODE }
     finally { $ErrorActionPreference = $prev }
@@ -139,24 +158,19 @@ if ($DryRun) {
     exit 0
 }
 
-if (-not $Password) {
-    Write-Host "ERROR: -Password is required for non-interactive push."
-    exit 1
-}
-
 # Ensure the remote releases directory exists (mkdir -p is idempotent).
-$ap = New-Askpass -Pass $Password
+$ap = if ($Password) { New-Askpass -Pass $Password } else { $null }
 $code = Invoke-NasSSH -RemoteCmd "mkdir -p $REMOTE_RELEASES"
-Remove-Item $ap -ErrorAction SilentlyContinue
+if ($ap) { Remove-Askpass -File $ap }
 if ($code -ne 0) {
     Write-Host "ERROR: cannot mkdir on NAS via SSH. Check host/user/password/network."
     exit 1
 }
 
 Write-Host "Pushing APK to NAS releases directory..."
-$ap = New-Askpass -Pass $Password
+$ap = if ($Password) { New-Askpass -Pass $Password } else { $null }
 $code = Invoke-NasSCP -Local $apkPath -Remote $remoteApkPath
-Remove-Item $ap -ErrorAction SilentlyContinue
+if ($ap) { Remove-Askpass -File $ap }
 if ($code -ne 0) {
     Write-Host "APK push failed with exit code $code"
     exit $code
@@ -173,9 +187,9 @@ if ($Notes) {
 }
 if (Test-Path $localNotesPath) {
     Write-Host "Pushing release notes..."
-    $ap = New-Askpass -Pass $Password
+    $ap = if ($Password) { New-Askpass -Pass $Password } else { $null }
     $nc = Invoke-NasSCP -Local $localNotesPath -Remote $remoteNotesPath
-    Remove-Item $ap -ErrorAction SilentlyContinue
+    if ($ap) { Remove-Askpass -File $ap }
     if ($nc -eq 0) {
         Write-Host "Release notes push successful."
         $notesSent = $true
@@ -188,8 +202,8 @@ if (Test-Path $localNotesPath) {
 
 # Verify the pushed files on the NAS and that the API is healthy.
 Write-Host "Verifying files on NAS..."
-$ap = New-Askpass -Pass $Password
+$ap = if ($Password) { New-Askpass -Pass $Password } else { $null }
 Invoke-NasSSH -RemoteCmd "ls -la $REMOTE_RELEASES ; echo '---' ; curl -s http://localhost:8080/health"
-Remove-Item $ap -ErrorAction SilentlyContinue
+if ($ap) { Remove-Askpass -File $ap }
 
 exit 0

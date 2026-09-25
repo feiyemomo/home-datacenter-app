@@ -660,11 +660,13 @@ class CameraDetailActivity : AppCompatActivity() {
 
     private fun setupPtz() {
         val cam = camera ?: return
-        if (!cam.hasPtz) {
-            binding.tvPtzUnsupported.visibility = View.VISIBLE
+        val isAdmin = container.prefsManager.isAdmin
+        val hasPtzPermission = isAdmin || (cam.ownerId > 0 && cam.ownerId == container.prefsManager.userId) || cam.canPtz
+        if (!cam.hasPtz || !hasPtzPermission) {
+            binding.tvPtzUnsupported.visibility = View.GONE
             binding.ptzGrid.visibility = View.GONE
             binding.seekPtzSpeed.isEnabled = false
-            // Hide PTZ section title and presets entirely when no PTZ support
+            // Hide PTZ section title and presets entirely when no PTZ support or no permission
             binding.tvPtzSectionTitle.visibility = View.GONE
             binding.cardPtz.visibility = View.GONE
             binding.tvPresetsSectionTitle.visibility = View.GONE
@@ -673,6 +675,8 @@ class CameraDetailActivity : AppCompatActivity() {
         }
         binding.tvPtzUnsupported.visibility = View.GONE
         binding.ptzGrid.visibility = View.VISIBLE
+        binding.tvPtzSectionTitle.visibility = View.VISIBLE
+        binding.cardPtz.visibility = View.VISIBLE
 
         val buttons = mapOf(
             binding.btnPtzUp to "up",

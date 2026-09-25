@@ -219,6 +219,7 @@ class MultiCameraActivity : AppCompatActivity() {
 
     private fun bindSlots() {
         val activeSlots = getActiveSlots()
+        val hasNoCameras = allCameras.isEmpty()
         for (i in activeSlots.indices) {
             val s = activeSlots[i]
             val cam = allCameras.getOrNull(i)
@@ -235,6 +236,8 @@ class MultiCameraActivity : AppCompatActivity() {
                 }
             } else {
                 s.empty.visibility = View.VISIBLE
+                s.empty.text = if (hasNoCameras && i == 0) "暂无分配的摄像头\n(请联系管理员分享权限)" else "未配置"
+                s.progress.visibility = View.GONE
                 s.overlay.visibility = View.GONE
                 s.preview.setImageDrawable(null)
                 s.card.setOnClickListener(null)
@@ -295,10 +298,17 @@ class MultiCameraActivity : AppCompatActivity() {
                                             }
                                         }
                                     }
+                                } else {
+                                    withContext(Dispatchers.Main) {
+                                        pb.visibility = View.GONE
+                                    }
                                 }
                             }
                         } catch (e: Exception) {
                             if (e is CancellationException) throw e
+                            withContext(Dispatchers.Main) {
+                                pb.visibility = View.GONE
+                            }
                         }
                         delay(mode.intervalMs)
                     }

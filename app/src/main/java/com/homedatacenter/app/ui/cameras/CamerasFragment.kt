@@ -247,8 +247,42 @@ class CamerasFragment : Fragment() {
     }
 
     private fun showEmpty(show: Boolean) {
-        binding.tvEmpty.visibility = if (show) View.VISIBLE else View.GONE
-        binding.recyclerView.visibility = if (show) View.GONE else View.VISIBLE
+        val mainActivity = activity as? MainActivity
+        val isAdmin = mainActivity?.container?.prefsManager?.isAdmin == true
+        if (show) {
+            binding.layoutEmptyCameras.visibility = View.VISIBLE
+            binding.recyclerView.visibility = View.GONE
+            binding.tvAllAlertsTitle.visibility = View.GONE
+            binding.rvAllAlerts.visibility = View.GONE
+            binding.tvAllAlertsEmpty.visibility = View.GONE
+            binding.progressBar.visibility = View.GONE
+            binding.swipeRefresh.isRefreshing = false
+
+            if (isAdmin) {
+                binding.tvEmptyTitle.text = "暂未添加摄像头"
+                binding.tvEmptySubtitle.text = "当前系统尚未接入任何监控摄像头，您可以点击右上角「+」注册新摄像头。"
+                binding.btnEmptyAction.text = "注册摄像头"
+                binding.btnEmptyAction.setIconResource(R.drawable.ic_add)
+                binding.btnEmptyAction.setOnClickListener {
+                    val ctx = context ?: return@setOnClickListener
+                    RegisterCameraDialog(ctx, mainActivity!!.container) { loadCamerasFromNetwork() }.show()
+                }
+            } else {
+                binding.tvEmptyTitle.text = "暂无可用摄像头"
+                binding.tvEmptySubtitle.text = "您当前是普通成员账号，管理员尚未为您分配或分享任何摄像头。\n请联系系统管理员为您分配访问权限。"
+                binding.btnEmptyAction.text = "刷新重试"
+                binding.btnEmptyAction.setIconResource(R.drawable.ic_refresh)
+                binding.btnEmptyAction.setOnClickListener {
+                    loadCamerasFromNetwork()
+                }
+            }
+        } else {
+            binding.layoutEmptyCameras.visibility = View.GONE
+            binding.recyclerView.visibility = View.VISIBLE
+            binding.tvAllAlertsTitle.visibility = View.VISIBLE
+            binding.rvAllAlerts.visibility = View.VISIBLE
+        }
+        binding.tvEmpty.visibility = View.GONE
     }
 
     // --- "全部报警" section ---
