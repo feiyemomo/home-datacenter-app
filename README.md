@@ -659,4 +659,4 @@ newPlayer.setAudioAttributes(
 
 ## License
 
-Private / 家庭项目，未指定开源协议。
+本项目采用 [MIT License](LICENSE) 开源许可证。
