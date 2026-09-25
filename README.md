@@ -3,7 +3,7 @@
 家庭数据中心 Android 客户端 — 一个用 **Kotlin + Jetpack Compose + ExoPlayer + WebRTC** 实现的家庭 NVR / IoT 控制台，配合 [home-datacenter](https://github.com/feiyemomo/home-datacenter) 后端使用，提供摄像头预览、WebRTC/MP4/HLS 直播（含音频）、录像回放、报警查看、设备状态、天气信息、局域网/远程自动切换和实时 WebSocket 推送。
 
 > 服务端项目：<https://github.com/feiyemomo/home-datacenter>
-> 当前版本：**v1.13.1**（versionCode 156）
+> 当前版本：**v1.13.2**（versionCode 157）
 
 ---
 
@@ -36,7 +36,7 @@
 | Compile SDK | 36 |
 | Java / Kotlin | 17 / 2.0 |
 | AGP | 9.2.1 |
-| 当前版本 | 1.13.1 (versionCode 156) |
+| 当前版本 | 1.13.2 (versionCode 157) |
 | 默认服务器 | `https://api.feiyemomo.top/`（远程） / `http://192.168.31.235:8088/`（局域网，自动探测并持久化） |
 
 App 通过 `(user_id, access_key)` 换取 JWT 后访问 `home-datacenter` 的 REST API 与 WebSocket。**BaseUrlResolver** 在启动时通过后台守护线程异步探测局域网 `http://192.168.31.235:8088/` 是否可达（TTFB ~10ms vs Cloudflare Tunnel 1.4s+），可达则切到局域网，否则走远程 Cloudflare Tunnel。冷启动会优先恢复上次有效网络路径，使家庭 Wi-Fi 场景下首个请求即命中内网。启动调度采用指数退避重试（1.5s → 4s → 9s → 16s），覆盖真机「WiFi connected but not validated」窗口；同时附加 TCP socket 直连探测作为 OkHttp cleartext 拒绝时的兜底。NetworkChangeMonitor 注册 ConnectivityManager.NetworkCallback，在 WiFi/移动网络切换时立即触发 re-probe，无需等 5 分钟 TTL。摄像头直播走 go2rtc 暴露的 MP4（主）+ HLS（备），后端根据摄像头 `capabilities.audio` 在 go2rtc 流 URL 上自动追加 `#audio=aac` 启用音频转码，前端通过 ExoPlayer `volume` 控制静音/取消静音。
@@ -592,6 +592,12 @@ newPlayer.setAudioAttributes(
 ---
 
 ### 最新版本详情
+
+### v1.13.2 (versionCode 157) — 版本更新内容全量透传呈现、通知策略精简与退出登录隐蔽化 (2026-09)
+- **版本更新内容全量透传呈现**：设置页更新卡片新增更新日志专区与更新确认弹窗，检测到新版本时自动展开呈现详细特性列表，已是最新版本时亦支持一键展开查看当前版本变更；无论在线更新还是已安装状态均可清晰阅读更新说明。
+- **告警通知默认策略精简**：重新梳理默认通知行为，除核心人形侦测（Person）保持默认开启外，画面移动侦测（Motion）、系统维护（System）等类型均改为默认关闭，大幅降低用户初始使用时的推送干扰。
+- **普通用户界面降噪与系统通知隔离**：普通成员账号在设置页中自动隐藏“系统维护状态”通知开关，且在后台通知分发中自动过滤系统类消息，防止普通家庭成员收到非管理员关心的 NAS 存储/系统运维报警。
+- **退出登录入口隐蔽化优化**：移除用户卡片右上角醒目的红色退出按钮，将退出入口收拢至折叠式的“设备与安全凭据详情”以及设置页面最底部低饱和度灰字区域，既杜绝日常误触风险，又保证在必要注销时的顺畅操作。
 
 ### v1.13.1 (versionCode 156) — 用户设置页条理重构、免打扰分钟级微调、PTZ多级权限隔离与普通用户空状态 (2026-09)
 - **用户设置页体系化分级重构**：将臃肿杂乱的设置项彻底重组为 5 大卡片结构（用户与账户中心、消息与告警通知、外观与网络、系统管理（管理员专享）、关于与版本更新），新增头像、用户角色徽章（管理员/普通成员）、会话剩余天数与一键刷新令牌按钮、折叠式凭据详情。

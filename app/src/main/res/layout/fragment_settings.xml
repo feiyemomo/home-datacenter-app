@@ -96,28 +96,6 @@
                         android:textSize="11sp"
                         android:textColor="@android:color/white" />
                 </LinearLayout>
-
-                <!-- Logout Button -->
-                <LinearLayout
-                    android:id="@+id/btnAccountManagement"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:background="?attr/selectableItemBackground"
-                    android:paddingHorizontal="10dp"
-                    android:paddingVertical="6dp"
-                    android:gravity="center">
-
-                    <TextView
-                        android:id="@+id/tvAccountAction"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="退出登录"
-                        android:textSize="13sp"
-                        android:textColor="@color/error"
-                        android:textStyle="bold" />
-                </LinearLayout>
             </LinearLayout>
 
             <View
@@ -239,6 +217,25 @@
                     android:textSize="12sp"
                     android:textColor="@color/text_secondary"
                     tools:text="到期时间: 2026-10-25 09:27" />
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/divider"
+                    android:layout_marginTop="10dp"
+                    android:layout_marginBottom="8dp" />
+
+                <TextView
+                    android:id="@+id/tvAccountAction"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="退出当前账号登录"
+                    android:textSize="12sp"
+                    android:textColor="@color/error"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:background="?attr/selectableItemBackground"
+                    android:paddingVertical="4dp" />
             </LinearLayout>
 
         </LinearLayout>
@@ -367,6 +364,7 @@
 
                 <!-- System Notification Switch -->
                 <LinearLayout
+                    android:id="@+id/layoutNotifySystem"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
@@ -787,6 +785,68 @@
                 android:text="@string/setting_check_update_summary"
                 android:textSize="11sp"
                 android:textColor="@color/text_hint" />
+
+            <TextView
+                android:id="@+id/tvToggleReleaseNotes"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="56dp"
+                android:layout_marginTop="6dp"
+                android:text="查看版本更新说明 ▾"
+                android:textSize="12sp"
+                android:textColor="@color/primary"
+                android:visibility="gone"
+                android:clickable="true"
+                android:focusable="true"
+                android:background="?attr/selectableItemBackground" />
+
+            <!-- Release Notes Box -->
+            <LinearLayout
+                android:id="@+id/layoutReleaseNotes"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone"
+                android:layout_marginTop="12dp"
+                android:padding="12dp"
+                android:background="@drawable/bg_glass_card">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginBottom="8dp">
+
+                    <TextView
+                        android:id="@+id/tvReleaseNotesTitle"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="📋 版本更新说明"
+                        android:textSize="13sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/text_primary" />
+
+                    <TextView
+                        android:id="@+id/tvReleaseNotesBadge"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="最新版本"
+                        android:textSize="11sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/primary" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tvReleaseNotes"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:textSize="12sp"
+                    android:lineSpacingExtra="4dp"
+                    android:textColor="@color/text_secondary"
+                    tools:text="1. 用户设置页条理化重构\n2. 夜间免打扰分钟级微调" />
+            </LinearLayout>
         </LinearLayout>
 
         <TextView
@@ -796,6 +856,22 @@
             android:textSize="12sp"
             android:textColor="@color/text_hint"
             android:layout_gravity="center" />
+
+        <!-- Discreet bottom logout link -->
+        <TextView
+            android:id="@+id/tvBottomLogout"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:layout_marginTop="20dp"
+            android:paddingHorizontal="16dp"
+            android:paddingVertical="8dp"
+            android:text="退出当前登录"
+            android:textSize="12sp"
+            android:textColor="@color/text_hint"
+            android:clickable="true"
+            android:focusable="true"
+            android:background="?attr/selectableItemBackground" />
 
     </LinearLayout>
 </ScrollView>

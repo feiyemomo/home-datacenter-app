@@ -228,6 +228,8 @@ class AppContainer(private val context: Context) {
     @Volatile
     private var cachedUpdateInfo: com.homedatacenter.app.data.model.UpdateInfo? = null
     @Volatile
+    private var latestKnownReleaseInfo: com.homedatacenter.app.data.model.UpdateInfo? = null
+    @Volatile
     private var updateCheckFailed: Boolean = false
     private var updateCheckJob: kotlinx.coroutines.Job? = null
 
@@ -262,6 +264,7 @@ class AppContainer(private val context: Context) {
                 val isAdmin = prefsManager.isAdmin
                 val targetFlavor = if (isAdmin) null else "release"
                 val info = getRepository().getLatestRelease(token, targetFlavor)
+                latestKnownReleaseInfo = info
                 // 普通用户只接受 release 版本的推送；admin 用户接受两种版本的推送
                 if (!isAdmin && !info.isRelease) {
                     Log.d("AppContainer", "Skipping non-release update for regular user: ${info.file_name}")
@@ -308,6 +311,14 @@ class AppContainer(private val context: Context) {
         cachedUpdateInfo
 
     /**
+     * Returns the latest known release metadata fetched from the server,
+     * regardless of whether an update is available or the app is already
+     * at the latest version. Useful for reading release_notes.
+     */
+    fun getLatestKnownReleaseInfo(): com.homedatacenter.app.data.model.UpdateInfo? =
+        latestKnownReleaseInfo
+
+    /**
      * Force a fresh update check (manual user action). Always hits the
      * network — does not return a cached result. Updates the cache on
      * success so subsequent visits to SettingsFragment show the new
@@ -320,6 +331,7 @@ class AppContainer(private val context: Context) {
             val isAdmin = prefsManager.isAdmin
             val targetFlavor = if (isAdmin) null else "release"
             val info = getRepository().getLatestRelease(token, targetFlavor)
+            latestKnownReleaseInfo = info
             // 普通用户只接受 release 版本的推送；admin 用户接受两种版本的推送
             if (!isAdmin && !info.isRelease) {
                 Log.d("AppContainer", "Skipping non-release update for regular user: ${info.file_name}")

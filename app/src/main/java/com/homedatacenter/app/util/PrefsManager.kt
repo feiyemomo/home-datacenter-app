@@ -146,19 +146,19 @@ class PrefsManager(context: Context) {
         set(value) = prefs.edit().putBoolean(KEY_NOTIFY_PERSON, value).apply()
 
     var notifyVehicle: Boolean
-        get() = prefs.getBoolean(KEY_NOTIFY_VEHICLE, true)
+        get() = prefs.getBoolean(KEY_NOTIFY_VEHICLE, false)
         set(value) = prefs.edit().putBoolean(KEY_NOTIFY_VEHICLE, value).apply()
 
     var notifyPet: Boolean
-        get() = prefs.getBoolean(KEY_NOTIFY_PET, true)
+        get() = prefs.getBoolean(KEY_NOTIFY_PET, false)
         set(value) = prefs.edit().putBoolean(KEY_NOTIFY_PET, value).apply()
 
     var notifyMotion: Boolean
-        get() = prefs.getBoolean(KEY_NOTIFY_MOTION, true)
+        get() = prefs.getBoolean(KEY_NOTIFY_MOTION, false)
         set(value) = prefs.edit().putBoolean(KEY_NOTIFY_MOTION, value).apply()
 
     var notifySystem: Boolean
-        get() = prefs.getBoolean(KEY_NOTIFY_SYSTEM, true)
+        get() = prefs.getBoolean(KEY_NOTIFY_SYSTEM, false)
         set(value) = prefs.edit().putBoolean(KEY_NOTIFY_SYSTEM, value).apply()
 
     var notifyIncludeSnapshot: Boolean
@@ -203,7 +203,7 @@ class PrefsManager(context: Context) {
         if (isDndActive()) return false
         return when (label.lowercase()) {
             "person" -> notifyPerson
-            "system" -> notifySystem
+            "system" -> isAdmin && notifySystem
             else -> notifyMotion
         }
     }

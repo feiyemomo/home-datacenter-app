@@ -79,8 +79,8 @@ class SettingsFragment : Fragment() {
         setupAdminSection(prefs)
         setupUpdateSection()
 
-        binding.btnAccountManagement.setOnClickListener { showLogoutDialog() }
         binding.tvAccountAction.setOnClickListener { showLogoutDialog() }
+        binding.tvBottomLogout.setOnClickListener { showLogoutDialog() }
 
         loadUserInfo()
         setupVersion()
@@ -137,6 +137,7 @@ class SettingsFragment : Fragment() {
             prefs.notifyMotion = isChecked
         }
 
+        binding.layoutNotifySystem.visibility = if (prefs.isAdmin) View.VISIBLE else View.GONE
         binding.switchNotifySystem.isChecked = prefs.notifySystem
         binding.switchNotifySystem.setOnCheckedChangeListener { _, isChecked ->
             prefs.notifySystem = isChecked
@@ -308,6 +309,7 @@ class SettingsFragment : Fragment() {
                 }
                 binding.tvAdminSectionHeader.visibility = if (user.isAdmin) View.VISIBLE else View.GONE
                 binding.cardAdminSection.visibility = if (user.isAdmin) View.VISIBLE else View.GONE
+                binding.layoutNotifySystem.visibility = if (user.isAdmin) View.VISIBLE else View.GONE
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
@@ -442,6 +444,12 @@ class SettingsFragment : Fragment() {
         renderCachedUpdateStatus()
         startUpdatePollingIfNeeded()
 
+        binding.tvToggleReleaseNotes.setOnClickListener {
+            val isGone = binding.layoutReleaseNotes.visibility == View.GONE
+            binding.layoutReleaseNotes.visibility = if (isGone) View.VISIBLE else View.GONE
+            binding.tvToggleReleaseNotes.text = if (isGone) "收起版本说明 ▴" else "查看版本更新说明 ▾"
+        }
+
         binding.btnCheckUpdate.setOnClickListener {
             val action = binding.btnCheckUpdate.tag as? String
             when (action) {
@@ -472,6 +480,9 @@ class SettingsFragment : Fragment() {
                             val info = container.forceCheckUpdate()
                             if (info == null) {
                                 binding.tvUpdateStatus.text = getString(R.string.update_latest)
+                                Toast.makeText(requireContext(), "当前已是最新版本", Toast.LENGTH_SHORT).show()
+                            } else {
+                                showUpdateAvailableDialog(info)
                             }
                         } catch (e: CancellationException) {
                             throw e
@@ -492,6 +503,28 @@ class SettingsFragment : Fragment() {
         }
     }
 
+    private fun showUpdateAvailableDialog(info: com.homedatacenter.app.data.model.UpdateInfo) {
+        val context = context ?: return
+        val mainActivity = activity as? MainActivity ?: return
+        val apkFile = mainActivity.container.getCachedDownloadedApk()
+        val posButtonText = if (apkFile != null && apkFile.exists()) "立即安装" else "确定"
+
+        val notesText = if (info.release_notes.isNotBlank()) {
+            "\n\n【更新内容】\n${info.release_notes}"
+        } else ""
+
+        AlertDialog.Builder(context)
+            .setTitle("🎉 发现新版本 v${info.version_name}")
+            .setMessage("最新版本: v${info.version_name}${notesText}")
+            .setPositiveButton(posButtonText) { _, _ ->
+                if (apkFile != null && apkFile.exists()) {
+                    ApkInstaller.launchInstaller(requireActivity(), apkFile)
+                }
+            }
+            .setNegativeButton("稍后", null)
+            .show()
+    }
+
     /**
      * v1.6.28: render the update card based on AppContainer's
      * background-download state. Sets the button's tag to drive the
@@ -509,10 +542,32 @@ class SettingsFragment : Fragment() {
         val mainActivity = activity as? MainActivity ?: return
         val container = mainActivity.container
         val info = container.getCachedUpdateInfo()
+        val latestInfo = container.getLatestKnownReleaseInfo()
         val apkFile = container.getCachedDownloadedApk()
 
         val flavorSuffix = if (container.prefsManager.isAdmin && info?.isDebug == true) " (Debug)" else ""
         val displayVersion = (info?.version_name ?: "") + flavorSuffix
+
+        // Render release notes section
+        if (info != null && info.release_notes.isNotBlank()) {
+            // New version update detected: expand and show release notes
+            binding.layoutReleaseNotes.visibility = View.VISIBLE
+            binding.tvReleaseNotesTitle.text = "📋 新版本特性 (v${info.version_name})"
+            binding.tvReleaseNotesBadge.text = "待更新"
+            binding.tvReleaseNotesBadge.setTextColor(requireContext().getColor(R.color.primary))
+            binding.tvReleaseNotes.text = info.release_notes
+            binding.tvToggleReleaseNotes.visibility = View.GONE
+        } else if (latestInfo != null && latestInfo.release_notes.isNotBlank()) {
+            // Already latest version: show toggle button to view current release notes
+            binding.tvToggleReleaseNotes.visibility = View.VISIBLE
+            binding.tvReleaseNotesTitle.text = "📋 当前版本特性 (v${latestInfo.version_name})"
+            binding.tvReleaseNotesBadge.text = "已安装"
+            binding.tvReleaseNotesBadge.setTextColor(requireContext().getColor(R.color.online))
+            binding.tvReleaseNotes.text = latestInfo.release_notes
+        } else {
+            binding.tvToggleReleaseNotes.visibility = View.GONE
+            binding.layoutReleaseNotes.visibility = View.GONE
+        }
 
         when {
             // APK fully downloaded — ready to install.
