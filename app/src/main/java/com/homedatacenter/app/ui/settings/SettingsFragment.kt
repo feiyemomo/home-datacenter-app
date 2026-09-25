@@ -17,6 +17,7 @@ import com.homedatacenter.app.R
 import com.homedatacenter.app.databinding.FragmentSettingsBinding
 import com.homedatacenter.app.ui.admin.UsersActivity
 import com.homedatacenter.app.ui.automations.AutomationsActivity
+import com.homedatacenter.app.ui.vision.FamilyFacesActivity
 import com.homedatacenter.app.ui.main.MainActivity
 import com.google.android.material.timepicker.MaterialTimePicker
 import com.google.android.material.timepicker.TimeFormat
@@ -324,6 +325,9 @@ class SettingsFragment : Fragment() {
 
         binding.btnSettingsAutomations.setOnClickListener {
             startActivity(Intent(requireContext(), AutomationsActivity::class.java))
+        }
+        binding.btnSettingsVisionFaces.setOnClickListener {
+            startActivity(Intent(requireContext(), FamilyFacesActivity::class.java))
         }
         binding.btnSettingsUsers.setOnClickListener {
             startActivity(Intent(requireContext(), UsersActivity::class.java))

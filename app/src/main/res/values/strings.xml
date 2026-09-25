@@ -335,4 +335,34 @@
     <string name="automations_metrics_triggers">总触发 %1$d 次</string>
     <string name="automations_card_title">智能联动中枢</string>
     <string name="automations_card_desc">联动规则管理与执行</string>
+
+    <!-- v1.13.3: Vision AI & Face Recognition -->
+    <string name="vision_faces_title">家庭人脸与视觉 AI</string>
+    <string name="vision_faces_subtitle">人脸特征档案库与边缘计算状态</string>
+    <string name="vision_status_title">边缘计算与视觉分析状态</string>
+    <string name="vision_status_online">视觉服务在线</string>
+    <string name="vision_status_offline">视觉服务离线</string>
+    <string name="vision_status_unconfigured">服务未配置</string>
+    <string name="vision_engine_face">人脸识别引擎</string>
+    <string name="vision_engine_pose">姿态/跌倒引擎</string>
+    <string name="vision_engine_ready">已就绪</string>
+    <string name="vision_engine_not_ready">未就绪</string>
+    <string name="vision_cpu_gate">门限保护</string>
+    <string name="vision_cpu_gate_normal">正常 (全速)</string>
+    <string name="vision_cpu_gate_degraded">降级 (仅人脸)</string>
+    <string name="vision_cpu_gate_circuit_break">熔断 (暂停)</string>
+    <string name="vision_cpu_gate_tip" formatted="false">负载保护：CPU ≥ 60% 降级为仅人脸；CPU ≥ 80% 暂停推理。</string>
+    <string name="vision_persons_count">已录入 %1$d 位成员</string>
+    <string name="vision_persons_empty">暂未录入家庭成员人脸档案</string>
+    <string name="vision_persons_empty_tip">录入后，摄像头在人员检测时将自动比对识别成员身份并联动自动化。</string>
+    <string name="vision_btn_add">录入新人脸档案</string>
+    <string name="vision_add_dialog_title">录入家庭人脸档案</string>
+    <string name="vision_hint_name">成员姓名或称呼（例如：爸爸、妈妈）</string>
+    <string name="vision_pick_gallery">相册选图</string>
+    <string name="vision_pick_camera">拍摄人脸</string>
+    <string name="vision_registering">正在提取人脸特征并录入…</string>
+    <string name="vision_register_success">人脸档案录入成功！</string>
+    <string name="vision_delete_confirm_title">确认删除</string>
+    <string name="vision_delete_confirm_message">确定要删除家庭成员「%1$s」的人脸档案吗？删除后将不再识别该成员。</string>
+    <string name="vision_register_from_alert">录入为人脸档案</string>
 </resources>

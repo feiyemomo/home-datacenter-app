@@ -5,6 +5,8 @@ import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.graphics.BitmapFactory
 import android.os.Bundle
+import android.view.GestureDetector
+import android.view.MotionEvent
 import android.view.View
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -35,6 +37,10 @@ import okhttp3.Request
  * MultiCameraActivity — Dynamic Multi-Camera Monitor Hall (v1.13.0).
  * Supports 1-grid / 4-grid / 9-grid modes with adaptive substream resolution
  * (720p/360p/240p) and polling frequency to optimize bandwidth and rendering.
+ *
+ * v1.13.3:
+ * - Double-tap any slot to zoom in/focus to 1-grid; double-tap in 1-grid to restore previous grid mode.
+ * - Toggle aspect ratio between Fit (original 16:9) and Fill (center-crop).
  */
 class MultiCameraActivity : AppCompatActivity() {
 
@@ -48,6 +54,9 @@ class MultiCameraActivity : AppCompatActivity() {
     private lateinit var container: AppContainer
     private var allCameras: List<Camera> = emptyList()
     private var currentGridMode: GridMode = GridMode.FOUR
+    private var previousGridMode: GridMode = GridMode.FOUR
+    private var focusedCameraIndex: Int = 0
+    private var isFillCrop: Boolean = false
     private var pollJob: Job? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -64,9 +73,12 @@ class MultiCameraActivity : AppCompatActivity() {
         binding.btnGridMode.setOnClickListener {
             cycleGridMode()
         }
+        binding.btnAspectRatio.setOnClickListener { toggleAspectRatio() }
+        binding.btnFloatingAspectRatio.setOnClickListener { toggleAspectRatio() }
 
         updateLayoutForOrientation(resources.configuration.orientation)
         applyGridModeLayout()
+        applyAspectRatio()
 
         binding.swipeRefresh.setOnRefreshListener { loadCameras() }
 
@@ -102,7 +114,7 @@ class MultiCameraActivity : AppCompatActivity() {
     private fun updateLayoutForOrientation(orientation: Int) {
         val isLandscape = orientation == Configuration.ORIENTATION_LANDSCAPE
         binding.toolbar.visibility = if (isLandscape) View.GONE else View.VISIBLE
-        binding.btnFloatingExitLandscape.visibility = if (isLandscape) View.VISIBLE else View.GONE
+        binding.layoutFloatingControls.visibility = if (isLandscape) View.VISIBLE else View.GONE
 
         val windowInsetsController = WindowCompat.getInsetsController(window, window.decorView)
         val density = resources.displayMetrics.density
@@ -222,7 +234,8 @@ class MultiCameraActivity : AppCompatActivity() {
         val hasNoCameras = allCameras.isEmpty()
         for (i in activeSlots.indices) {
             val s = activeSlots[i]
-            val cam = allCameras.getOrNull(i)
+            val camIndex = if (currentGridMode == GridMode.ONE) focusedCameraIndex else i
+            val cam = allCameras.getOrNull(camIndex)
             if (cam != null) {
                 s.empty.visibility = View.GONE
                 s.overlay.visibility = View.VISIBLE
@@ -231,8 +244,19 @@ class MultiCameraActivity : AppCompatActivity() {
                 s.status.text = if (isOnline) "实时" else "离线"
                 s.status.setTextColor(if (isOnline) 0xFF5CB880.toInt() else 0xFFE07070.toInt())
 
-                s.card.setOnClickListener {
-                    openCameraDetail(cam)
+                val gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+                    override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                        openCameraDetail(cam)
+                        return true
+                    }
+                    override fun onDoubleTap(e: MotionEvent): Boolean {
+                        toggleFocusSlot(camIndex)
+                        return true
+                    }
+                })
+                s.card.setOnTouchListener { _, event ->
+                    gestureDetector.onTouchEvent(event)
+                    true
                 }
             } else {
                 s.empty.visibility = View.VISIBLE
@@ -240,9 +264,42 @@ class MultiCameraActivity : AppCompatActivity() {
                 s.progress.visibility = View.GONE
                 s.overlay.visibility = View.GONE
                 s.preview.setImageDrawable(null)
+                s.card.setOnTouchListener(null)
                 s.card.setOnClickListener(null)
             }
         }
+    }
+
+    private fun toggleFocusSlot(camIndex: Int) {
+        if (currentGridMode != GridMode.ONE) {
+            previousGridMode = currentGridMode
+            focusedCameraIndex = camIndex
+            currentGridMode = GridMode.ONE
+        } else {
+            currentGridMode = previousGridMode
+        }
+        binding.btnGridMode.text = currentGridMode.label
+        applyGridModeLayout()
+        bindSlots()
+        startFramePolling()
+    }
+
+    private fun toggleAspectRatio() {
+        isFillCrop = !isFillCrop
+        applyAspectRatio()
+    }
+
+    private fun applyAspectRatio() {
+        val scaleType = if (isFillCrop) ImageView.ScaleType.CENTER_CROP else ImageView.ScaleType.FIT_CENTER
+        val allPreviews = listOf(
+            binding.ivPreview0, binding.ivPreview1, binding.ivPreview2,
+            binding.ivPreview3, binding.ivPreview4, binding.ivPreview5,
+            binding.ivPreview6, binding.ivPreview7, binding.ivPreview8
+        )
+        allPreviews.forEach { it.scaleType = scaleType }
+        val label = if (isFillCrop) "铺满" else "适应"
+        binding.btnAspectRatio.text = label
+        binding.btnFloatingAspectRatio.text = label
     }
 
     private fun openCameraDetail(camera: Camera) {
@@ -264,7 +321,8 @@ class MultiCameraActivity : AppCompatActivity() {
             val mode = currentGridMode
 
             for (i in activeSlots.indices) {
-                val cam = allCameras.getOrNull(i) ?: continue
+                val camIndex = if (mode == GridMode.ONE) focusedCameraIndex else i
+                val cam = allCameras.getOrNull(camIndex) ?: continue
                 val slot = activeSlots[i]
                 val iv = slot.preview
                 val pb = slot.progress

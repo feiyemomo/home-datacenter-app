@@ -594,6 +594,33 @@ class HomeCenterRepository(
         ensureSuccess(resp)
     }
 
+    // --- Vision AI / Face Recognition ---
+
+    suspend fun getVisionStatus(token: String): com.homedatacenter.app.data.model.VisionStatus {
+        val resp = api.getVisionStatus(bearer(token))
+        ensureSuccess(resp)
+        return resp.decodeDataOrThrow()
+    }
+
+    suspend fun listVisionPersons(token: String): List<com.homedatacenter.app.data.model.VisionPerson> {
+        val resp = api.listVisionPersons(bearer(token))
+        ensureSuccess(resp)
+        return resp.decodeData<List<com.homedatacenter.app.data.model.VisionPerson>>() ?: emptyList()
+    }
+
+    suspend fun registerVisionPerson(token: String, name: String, imageBase64: String) {
+        val resp = api.registerVisionPerson(
+            bearer(token),
+            com.homedatacenter.app.data.model.RegisterPersonRequest(name, imageBase64)
+        )
+        ensureSuccess(resp)
+    }
+
+    suspend fun deleteVisionPerson(token: String, name: String) {
+        val resp = api.deleteVisionPerson(bearer(token), name)
+        ensureSuccess(resp)
+    }
+
     private fun bearer(token: String): String = "Bearer $token"
 
     private fun ensureSuccess(resp: com.homedatacenter.app.data.model.ApiResponse) {

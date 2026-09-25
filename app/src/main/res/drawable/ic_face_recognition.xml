@@ -1,0 +1,36 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Top-left bracket -->
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M2,4C2,2.9 2.9,2 4,2H8V4H4V8H2V4Z" />
+    <!-- Top-right bracket -->
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M22,4V8H20V4H16V2H20C21.1,2 22,2.9 22,4Z" />
+    <!-- Bottom-left bracket -->
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M2,20C2,21.1 2.9,22 4,22H8V20H4V16H2V20Z" />
+    <!-- Bottom-right bracket -->
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M22,20C22,21.1 21.1,22 20,22H16V20H20V16H22V20Z" />
+    <!-- Eyes -->
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M9,10A1,1 0 1,1 9,8A1,1 0 0,1 9,10Z" />
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M15,10A1,1 0 1,1 15,8A1,1 0 0,1 15,10Z" />
+    <!-- Smile / Face curve -->
+    <path
+        android:fillColor="@android:color/white"
+        android:pathData="M8.5,14C8.5,14 10,16.5 12,16.5C14,16.5 15.5,14 15.5,14"
+        android:strokeColor="@android:color/white"
+        android:strokeWidth="1.5"
+        android:strokeLineCap="round" />
+</vector>

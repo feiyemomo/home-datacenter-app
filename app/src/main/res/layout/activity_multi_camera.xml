@@ -43,6 +43,29 @@
             app:iconGravity="textStart"
             app:iconPadding="4dp" />
 
+        <!-- Aspect ratio toggle (fitCenter vs centerCrop) -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnAspectRatio"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="wrap_content"
+            android:layout_height="36dp"
+            android:layout_gravity="end|center_vertical"
+            android:layout_marginEnd="8dp"
+            android:paddingStart="10dp"
+            android:paddingEnd="12dp"
+            android:text="适应"
+            android:textSize="12sp"
+            android:textColor="@color/text_primary"
+            app:cornerRadius="18dp"
+            app:strokeColor="@color/card_stroke"
+            app:strokeWidth="1.5dp"
+            app:backgroundTint="@color/card_bg"
+            app:icon="@drawable/ic_aspect_ratio"
+            app:iconTint="@color/text_primary"
+            app:iconSize="16dp"
+            app:iconGravity="textStart"
+            app:iconPadding="4dp" />
+
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnToggleLandscape"
             style="@style/Widget.MaterialComponents.Button.OutlinedButton"
@@ -779,29 +802,58 @@
             </LinearLayout>
         </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnFloatingExitLandscape"
+        <LinearLayout
+            android:id="@+id/layoutFloatingControls"
             android:layout_width="wrap_content"
-            android:layout_height="40dp"
+            android:layout_height="wrap_content"
             android:layout_gravity="top|end"
             android:layout_margin="12dp"
-            android:paddingStart="12dp"
-            android:paddingEnd="14dp"
-            android:visibility="gone"
-            android:text="退出全屏"
-            android:textSize="12sp"
-            android:textStyle="bold"
-            android:textColor="@color/text_primary"
-            app:cornerRadius="20dp"
-            app:backgroundTint="@color/card_bg"
-            app:strokeColor="@color/card_stroke"
-            app:strokeWidth="1.5dp"
-            app:elevation="6dp"
-            app:icon="@drawable/ic_fullscreen_exit"
-            app:iconTint="@color/text_primary"
-            app:iconSize="18dp"
-            app:iconGravity="textStart"
-            app:iconPadding="6dp" />
+            android:orientation="horizontal"
+            android:visibility="gone">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnFloatingAspectRatio"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:layout_marginEnd="8dp"
+                android:paddingStart="12dp"
+                android:paddingEnd="14dp"
+                android:text="适应"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_primary"
+                app:cornerRadius="20dp"
+                app:backgroundTint="@color/card_bg"
+                app:strokeColor="@color/card_stroke"
+                app:strokeWidth="1.5dp"
+                app:elevation="6dp"
+                app:icon="@drawable/ic_aspect_ratio"
+                app:iconTint="@color/text_primary"
+                app:iconSize="18dp"
+                app:iconGravity="textStart"
+                app:iconPadding="6dp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnFloatingExitLandscape"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:paddingStart="12dp"
+                android:paddingEnd="14dp"
+                android:text="退出全屏"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_primary"
+                app:cornerRadius="20dp"
+                app:backgroundTint="@color/card_bg"
+                app:strokeColor="@color/card_stroke"
+                app:strokeWidth="1.5dp"
+                app:elevation="6dp"
+                app:icon="@drawable/ic_fullscreen_exit"
+                app:iconTint="@color/text_primary"
+                app:iconSize="18dp"
+                app:iconGravity="textStart"
+                app:iconPadding="6dp" />
+        </LinearLayout>
 
     </FrameLayout>
 </LinearLayout>

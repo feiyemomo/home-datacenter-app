@@ -119,5 +119,30 @@
                 android:textColor="@color/text_hint"
                 android:visibility="gone" />
         </FrameLayout>
+
+        <!-- Bottom Action Bar (Register Face for person detection) -->
+        <LinearLayout
+            android:id="@+id/layoutSnapshotActions"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="end|center_vertical"
+            android:paddingHorizontal="14dp"
+            android:paddingVertical="10dp"
+            android:visibility="gone">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btnRegisterFace"
+                style="@style/Widget.Material3.Button.TonalButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:minHeight="0dp"
+                android:paddingHorizontal="14dp"
+                android:paddingVertical="6dp"
+                android:textSize="13sp"
+                android:text="@string/vision_register_from_alert"
+                app:icon="@drawable/ic_face_recognition"
+                app:iconSize="16dp" />
+        </LinearLayout>
     </LinearLayout>
 </FrameLayout>

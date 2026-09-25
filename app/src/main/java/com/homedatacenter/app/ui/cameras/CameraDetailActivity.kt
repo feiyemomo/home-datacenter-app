@@ -187,6 +187,17 @@ class CameraDetailActivity : AppCompatActivity() {
 
         // 4. Truly exiting CameraDetailActivity
         isBackNavigating = true
+        streamRetryJob?.cancel()
+        streamRetryJob = null
+        webRtcClient?.stopPlayoutImmediately()
+        webRtcClient?.setAudioEnabled(false)
+        player?.pause()
+        player?.volume = 0f
+        player?.playWhenReady = false
+        fallbackPlayer?.stop()
+        releaseExoPlayerOnly()
+        try { binding.surfaceRenderer.release() } catch (_: Exception) {}
+        try { webRtcClient?.release() } catch (_: Exception) {}
         if (isTaskRoot) {
             val intent = Intent(this, com.homedatacenter.app.ui.main.MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
@@ -528,7 +539,7 @@ class CameraDetailActivity : AppCompatActivity() {
         player?.playWhenReady = false
         fallbackPlayer?.stop()
         releaseExoPlayerOnly()
-        if (wasInPipMode || isFinishing) {
+        if (wasInPipMode || isFinishing || isBackNavigating) {
             try { binding.surfaceRenderer.release() } catch (_: Exception) {}
             try { webRtcClient?.release() } catch (_: Exception) {}
             if (!isFinishing) {
@@ -540,7 +551,7 @@ class CameraDetailActivity : AppCompatActivity() {
     override fun onStop() {
         super.onStop()
         // No longer in foreground and invisible on screen: stop playback and release WebRTC to prevent audio leaks
-        val shouldFinish = wasInPipMode || isFinishing
+        val shouldFinish = wasInPipMode || isFinishing || isBackNavigating
         streamRetryJob?.cancel()
         webRtcClient?.stopPlayoutImmediately()
         webRtcClient?.setAudioEnabled(false)
@@ -996,6 +1007,7 @@ class CameraDetailActivity : AppCompatActivity() {
      * onPause/onDestroy to free the MediaCodec for other apps.
      */
     private fun setupVideo() {
+        if (isFinishing || isDestroyed || isBackNavigating) return
         camera ?: return
         // Surface must be attached before prepare() to avoid the
         // "setOutputSurface -- failed to set consumer usage (BAD_INDEX)"
@@ -1327,6 +1339,7 @@ class CameraDetailActivity : AppCompatActivity() {
     }
 
     private fun startPlayback() {
+        if (isFinishing || isDestroyed || isBackNavigating) return
         val cam = camera ?: return
         // Reset the fallback ladder. The reload button should always
         // try WebRTC first (it's the lowest-latency transport and the
@@ -1619,6 +1632,12 @@ class CameraDetailActivity : AppCompatActivity() {
                 listener = object : WebRtcClient.Listener {
                     override fun onConnected() {
                         webRtcInProgress = false
+                        if (isFinishing || isDestroyed || isBackNavigating) {
+                            client.stopPlayoutImmediately()
+                            client.setAudioEnabled(false)
+                            try { client.release() } catch (_: Exception) {}
+                            return
+                        }
                         streamRetryCount = 0
                         streamRetryJob?.cancel()
                         if (isLivePausedForDialog) {
@@ -1649,6 +1668,11 @@ class CameraDetailActivity : AppCompatActivity() {
 
                     override fun onError(reason: String) {
                         webRtcInProgress = false
+                        if (isFinishing || isDestroyed || isBackNavigating) {
+                            fallbackPlayer?.release()
+                            fallbackPlayer = null
+                            return
+                        }
                         if (isLivePausedForDialog) {
                             android.util.Log.d(TAG, "WebRTC error while dialog open: ignoring fallback")
                             return
@@ -1706,6 +1730,7 @@ class CameraDetailActivity : AppCompatActivity() {
      * the fallback ladder cleanly.
      */
     private fun startMp4Playback(cam: Camera) {
+        if (isFinishing || isDestroyed || isBackNavigating) return
         val mp4Url = resolveMp4Url(cam)
         val hlsUrl = resolveHlsUrl(cam)
         if (mp4Url.isBlank() && hlsUrl.isBlank()) {
@@ -1905,6 +1930,7 @@ class CameraDetailActivity : AppCompatActivity() {
     }
 
     private fun preparePlayback(mp4Url: String, hlsUrl: String, useMp4: Boolean) {
+        if (isFinishing || isDestroyed || isBackNavigating) return
         releasePlayer()
         val url = if (useMp4) mp4Url else hlsUrl
         if (url.isBlank()) {

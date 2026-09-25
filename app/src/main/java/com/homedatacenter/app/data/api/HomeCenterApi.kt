@@ -370,4 +370,28 @@ interface HomeCenterApi {
     suspend fun cleanSystemCache(
         @Header("Authorization") auth: String
     ): ApiResponse
+
+    // --- Vision AI / Face Recognition ---
+
+    @GET("api/v1/vision/status")
+    suspend fun getVisionStatus(
+        @Header("Authorization") auth: String
+    ): ApiResponse
+
+    @GET("api/v1/vision/persons")
+    suspend fun listVisionPersons(
+        @Header("Authorization") auth: String
+    ): ApiResponse
+
+    @POST("api/v1/vision/persons")
+    suspend fun registerVisionPerson(
+        @Header("Authorization") auth: String,
+        @Body req: com.homedatacenter.app.data.model.RegisterPersonRequest
+    ): ApiResponse
+
+    @DELETE("api/v1/vision/persons/{name}")
+    suspend fun deleteVisionPerson(
+        @Header("Authorization") auth: String,
+        @Path("name") name: String
+    ): ApiResponse
 }

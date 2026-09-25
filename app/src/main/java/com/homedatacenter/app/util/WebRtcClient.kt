@@ -113,6 +113,7 @@ class WebRtcClient(
     private var audioEnabledByUser: Boolean = true
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var signalingJob: Job? = null
+    private var watchdogJob: Job? = null
     // v1.6.13: latched true once the listener has received onConnected
     // OR onError for the current stream. Used by the app-level
     // connection timeout to avoid firing after the stream has
@@ -208,9 +209,19 @@ class WebRtcClient(
             audioDeviceModule?.setSpeakerMute(true)
         } catch (_: Exception) {}
         try {
+            val audioOutput = audioDeviceModule?.audioOutput
+            if (audioOutput != null) {
+                val method = audioOutput.javaClass.getDeclaredMethod("stopPlayout").apply {
+                    isAccessible = true
+                }
+                method.invoke(audioOutput)
+            }
+        } catch (_: Exception) {}
+        try {
             val at = getAudioTrackFromAdm()
             at?.pause()
             at?.flush()
+            at?.stop()
         } catch (e: Exception) {
             Log.w(TAG, "stopPlayoutImmediately: ${e.message}")
         }
@@ -879,14 +890,15 @@ class WebRtcClient(
         // IPv6 ICE completion time (~2-3s) but feels much more
         // responsive when the path is broken. LAN stays at 5s
         // (host-candidate ICE completes in <500ms).
+        watchdogJob?.cancel()
         if (!connectedOrFailed) {
             // v1.10.8: fast failover watchdog: 3.5s on LAN, 4.5s on remote
             val connectTimeoutMs = if (isLan) 3_500L else 4_500L
-            scope.launch {
+            watchdogJob = scope.launch {
                 delay(connectTimeoutMs)
-                if (!connectedOrFailed) {
+                if (!connectedOrFailed && activeListener === listener) {
                     Log.w(TAG, "WebRTC connection timed out after ${connectTimeoutMs}ms — falling back to MP4")
-                    listener.onError("connection timeout")
+                    activeListener?.onError("connection timeout")
                 }
             }
         }
@@ -1005,6 +1017,10 @@ class WebRtcClient(
 
     /** Detaches video sinks and disposes the PeerConnection. */
     fun release() {
+        watchdogJob?.cancel()
+        watchdogJob = null
+        activeListener = null
+        activeSurfaceRenderer = null
         stopPlayoutImmediately()
         signalingJob?.cancel()
         // v1.6.35: cancel any pending pre-negotiation and dispose

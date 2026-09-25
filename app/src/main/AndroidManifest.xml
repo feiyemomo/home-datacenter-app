@@ -91,6 +91,11 @@
             android:label="@string/automations_title" />
 
         <activity
+            android:name=".ui.vision.FamilyFacesActivity"
+            android:exported="false"
+            android:label="@string/vision_faces_title" />
+
+        <activity
             android:name=".ui.network.NetworkDetailActivity"
             android:exported="false"
             android:label="@string/network_detail_title" />

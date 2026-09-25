@@ -39,6 +39,7 @@ class AlertSnapshotDialogFragment : DialogFragment() {
     private var baseUrl: String? = null
     private var token: String? = null
     private var okHttpClient: OkHttpClient? = null
+    private var loadedBitmap: android.graphics.Bitmap? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -108,7 +109,14 @@ class AlertSnapshotDialogFragment : DialogFragment() {
                     }
                 }
                 if (bitmap != null) {
+                    loadedBitmap = bitmap
                     binding.ivSnapshot.setImageBitmap(bitmap)
+                    if (alert.label.equals("person", ignoreCase = true)) {
+                        binding.layoutSnapshotActions.visibility = View.VISIBLE
+                        binding.btnRegisterFace.setOnClickListener {
+                            showRegisterFaceDialog(bitmap)
+                        }
+                    }
                 } else {
                     binding.tvSnapshotError.visibility = View.VISIBLE
                     binding.tvSnapshotError.text = getString(R.string.weather_failed)
@@ -118,6 +126,70 @@ class AlertSnapshotDialogFragment : DialogFragment() {
                 binding.tvSnapshotError.text = e.message ?: getString(R.string.error)
             } finally {
                 binding.progressSnapshot.visibility = View.GONE
+            }
+        }
+    }
+
+    private fun showRegisterFaceDialog(bitmap: android.graphics.Bitmap) {
+        val context = context ?: return
+        val input = android.widget.EditText(context).apply {
+            hint = getString(R.string.vision_hint_name)
+            setSingleLine()
+            val pad = (16 * resources.displayMetrics.density).toInt()
+            setPadding(pad, pad, pad, pad)
+        }
+
+        android.app.AlertDialog.Builder(context)
+            .setTitle(R.string.vision_add_dialog_title)
+            .setMessage("将当前告警检测到的人脸录入为家庭成员：")
+            .setView(input)
+            .setPositiveButton(R.string.btn_confirm) { _, _ ->
+                val name = input.text.toString().trim()
+                if (name.isNotEmpty()) {
+                    registerFace(name, bitmap)
+                } else {
+                    android.widget.Toast.makeText(context, "姓名不能为空", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNegativeButton(R.string.btn_cancel, null)
+            .show()
+    }
+
+    private fun registerFace(name: String, bitmap: android.graphics.Bitmap) {
+        val app = activity?.application as? com.homedatacenter.app.HomeCenterApp ?: return
+        val tok = token ?: app.container.prefsManager.token
+        if (tok.isNullOrEmpty()) return
+        val validToken: String = tok
+
+        binding.btnRegisterFace.isEnabled = false
+        binding.btnRegisterFace.text = getString(R.string.vision_registering)
+
+        lifecycleScope.launch {
+            try {
+                val base64 = withContext(Dispatchers.IO) {
+                    val stream = java.io.ByteArrayOutputStream()
+                    bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, stream)
+                    android.util.Base64.encodeToString(stream.toByteArray(), android.util.Base64.NO_WRAP)
+                }
+
+                withContext(Dispatchers.IO) {
+                    app.container.getRepository().registerVisionPerson(validToken, name, base64)
+                }
+
+                android.widget.Toast.makeText(
+                    context,
+                    "已成功录入家庭成员「$name」的人脸档案！",
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
+                binding.btnRegisterFace.text = "已录入为 $name"
+            } catch (e: Exception) {
+                binding.btnRegisterFace.isEnabled = true
+                binding.btnRegisterFace.text = getString(R.string.vision_register_from_alert)
+                android.widget.Toast.makeText(
+                    context,
+                    "录入失败: ${e.message}",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
             }
         }
     }
