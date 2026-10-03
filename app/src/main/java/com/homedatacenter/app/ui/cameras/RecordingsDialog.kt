@@ -660,11 +660,12 @@ class RecordingsDialog(
 
         val renderersFactory = ExoPlayerRendererFactory.create(context)
         val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(3000, 15000, 1000, 2000)
+            .setBufferDurationsMs(2500, 15000, 250, 500)
             .build()
 
         player = ExoPlayer.Builder(context, renderersFactory)
             .setLoadControl(loadControl)
+            .setSeekParameters(com.google.android.exoplayer2.SeekParameters.CLOSEST_SYNC)
             .build().apply {
                 setAudioAttributes(
                     com.google.android.exoplayer2.audio.AudioAttributes.Builder()
@@ -811,19 +812,24 @@ class RecordingsDialog(
         // Recording playback is NOT a low-latency scenario — a 3s
         // first-frame delay is acceptable, but mid-playback stutter
         // at every segment boundary is not.
+        // v1.13.18: Optimized load control for instant seek & scrub playback.
+        // Reduced bufferForPlaybackMs from 1000ms to 250ms and rebufferMs to 500ms
+        // so the player starts rendering frames immediately upon seeking.
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                /* minBufferMs= */ 5_000,
+                /* minBufferMs= */ 2_500,
                 /* maxBufferMs= */ 30_000,
-                /* bufferForPlaybackMs= */ 1_000,
-                /* bufferForPlaybackAfterRebufferMs= */ 2_000,
+                /* bufferForPlaybackMs= */ 250,
+                /* bufferForPlaybackAfterRebufferMs= */ 500,
             )
             .setTargetBufferBytes(com.google.android.exoplayer2.DefaultLoadControl.DEFAULT_TARGET_BUFFER_BYTES)
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
         player = ExoPlayer.Builder(context, renderersFactory)
             .setLoadControl(loadControl)
-            .setSeekParameters(com.google.android.exoplayer2.SeekParameters.EXACT)
+            // v1.13.18: Use CLOSEST_SYNC instead of EXACT for fast sub-300ms keyframe snap.
+            // Eliminates the 2~3s sequential decode latency on seek.
+            .setSeekParameters(com.google.android.exoplayer2.SeekParameters.CLOSEST_SYNC)
             .build().apply {
             setAudioAttributes(
                 com.google.android.exoplayer2.audio.AudioAttributes.Builder()

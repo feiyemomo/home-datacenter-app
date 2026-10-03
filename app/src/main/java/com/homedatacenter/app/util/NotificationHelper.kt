@@ -216,9 +216,32 @@ object NotificationHelper {
             try {
                 val notificationId = 1000 + (alert.cameraId?.toInt() ?: (alert.id.hashCode() % 1000))
                 NotificationManagerCompat.from(context).notify(notificationId, builder.build())
+                wakeScreen(context, 3000L)
             } catch (_: SecurityException) {
                 // Android 13+ permission might not be granted yet
             }
+        }
+    }
+
+    /**
+     * Wakes the screen for a brief duration (3 seconds) when a critical
+     * alarm/fall/intrusion occurs while the device is locked/sleeping.
+     */
+    fun wakeScreen(context: Context, timeoutMs: Long = 3000L) {
+        try {
+            val pm = context.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+            if (pm != null && !pm.isInteractive) {
+                @Suppress("DEPRECATION")
+                val wakeLock = pm.newWakeLock(
+                    android.os.PowerManager.SCREEN_BRIGHT_WAKE_LOCK or
+                    android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP or
+                    android.os.PowerManager.ON_AFTER_RELEASE,
+                    "HomeCenter:AlertWakeLock"
+                )
+                wakeLock.acquire(timeoutMs)
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("NotificationHelper", "wakeScreen error: ${e.message}")
         }
     }
 
@@ -287,6 +310,7 @@ object NotificationHelper {
 
         try {
             NotificationManagerCompat.from(context).notify(9999, notification)
+            wakeScreen(context, 3000L)
         } catch (_: SecurityException) {
             // Android 13+ permission might not be granted yet
         }
@@ -356,6 +380,9 @@ object NotificationHelper {
 
         try {
             NotificationManagerCompat.from(context).notify(9998, notification)
+            if (priority >= NotificationCompat.PRIORITY_HIGH) {
+                wakeScreen(context, 3000L)
+            }
         } catch (_: SecurityException) {
             // Android 13+ permission might not be granted yet
         }
