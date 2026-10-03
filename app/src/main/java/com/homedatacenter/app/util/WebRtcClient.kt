@@ -1081,42 +1081,54 @@ class WebRtcClient(
         val currentToken = tokenProvider()
         val url = "$currentBase/api/v1/cameras/$cameraId/webrtc?quality=$quality"
         android.util.Log.i(TAG, "postOffer: url=$url, offerLen=${sdpOffer.length}")
-        val req = Request.Builder()
-            .url(url)
-            .post(sdpOffer.toRequestBody("application/sdp".toMediaType()))
-            .apply {
-                // Unified UA (overwrites OkHttp default). Use header()
-                // instead of addHeader() so there's exactly one value.
-                header("User-Agent", NetworkFactory.USER_AGENT)
-                if (!currentToken.isNullOrEmpty()) {
-                    addHeader("Authorization", "Bearer $currentToken")
-                    addHeader("Cookie", "home_token=$currentToken")
-                }
-                addHeader("Accept", "application/sdp")
-            }
-            .build()
-        val start = System.currentTimeMillis()
+
         val signalingClient = okHttpClient.newBuilder()
-            .callTimeout(6_000, TimeUnit.MILLISECONDS)
-            .connectTimeout(3_000, TimeUnit.MILLISECONDS)
-            .readTimeout(5_000, TimeUnit.MILLISECONDS)
+            .callTimeout(9_000, TimeUnit.MILLISECONDS)
+            .connectTimeout(4_000, TimeUnit.MILLISECONDS)
+            .readTimeout(8_000, TimeUnit.MILLISECONDS)
             .build()
-        return try {
-            signalingClient.newCall(req).execute().use { resp ->
-                val elapsed = System.currentTimeMillis() - start
-                if (!resp.isSuccessful) {
-                    Log.w(TAG, "WebRTC signaling HTTP ${resp.code} for $url in ${elapsed}ms")
-                    return@use null
+
+        // v1.13.20: Try up to 2 times. If camera was in a cold-start state waiting for keyframe
+        // or remote tunnel had transient lag, the 1st attempt warms up the upstream ffmpeg/RTSP pipeline
+        // and the 2nd attempt returns in ~150ms, completely avoiding accidental fallback to HLS.
+        for (attempt in 1..2) {
+            val start = System.currentTimeMillis()
+            try {
+                val req = Request.Builder()
+                    .url(url)
+                    .post(sdpOffer.toRequestBody("application/sdp".toMediaType()))
+                    .apply {
+                        header("User-Agent", NetworkFactory.USER_AGENT)
+                        if (!currentToken.isNullOrEmpty()) {
+                            addHeader("Authorization", "Bearer $currentToken")
+                            addHeader("Cookie", "home_token=$currentToken")
+                        }
+                        addHeader("Accept", "application/sdp")
+                    }
+                    .build()
+
+                val answer = signalingClient.newCall(req).execute().use { resp ->
+                    val elapsed = System.currentTimeMillis() - start
+                    if (!resp.isSuccessful) {
+                        Log.w(TAG, "WebRTC signaling HTTP ${resp.code} for $url (attempt $attempt) in ${elapsed}ms")
+                        return@use null
+                    }
+                    val body = resp.body?.string()?.takeIf { it.isNotBlank() }
+                    Log.i(TAG, "WebRTC signaling HTTP 200 for $url (attempt $attempt) in ${elapsed}ms, answerLen=${body?.length ?: 0}")
+                    body
                 }
-                val answer = resp.body?.string()?.takeIf { it.isNotBlank() }
-                Log.i(TAG, "WebRTC signaling HTTP 200 for $url in ${elapsed}ms, answerLen=${answer?.length ?: 0}")
-                answer
+                if (answer != null) {
+                    return answer
+                }
+            } catch (e: Exception) {
+                val elapsed = System.currentTimeMillis() - start
+                Log.w(TAG, "WebRTC signaling network error for $url (attempt $attempt) after ${elapsed}ms: ${e.message}")
             }
-        } catch (e: Exception) {
-            val elapsed = System.currentTimeMillis() - start
-            Log.w(TAG, "WebRTC signaling network error for $url after ${elapsed}ms: ${e.message}")
-            null
+            if (attempt < 2) {
+                delay(300)
+            }
         }
+        return null
     }
 
     /** Detaches video sinks and disposes the PeerConnection. */
