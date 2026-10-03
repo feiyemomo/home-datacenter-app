@@ -527,6 +527,10 @@ class WebRtcClient(
             val constraints = MediaConstraints().apply {
                 mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
                 mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
+                // Disable CPU overuse detection and bandwidth suspension to prevent WebRTC
+                // from artificially dropping frames or freezing video during transient network/CPU load.
+                optional.add(MediaConstraints.KeyValuePair("googCpuOveruseDetection", "false"))
+                optional.add(MediaConstraints.KeyValuePair("googSuspendBelowMinBitrate", "false"))
             }
 
             val offer = withContext(Dispatchers.IO) {
@@ -595,7 +599,10 @@ class WebRtcClient(
         }
         return PeerConnection.RTCConfiguration(filteredServers).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
-            continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_ONCE
+            // v1.13.19: GATHER_CONTINUALLY allows dynamic candidate adaptation during
+            // network handovers and transient NAT re-mapping, preventing video freeze.
+            continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
+            iceConnectionReceivingTimeout = 4000
             tcpCandidatePolicy = if (isLan) {
                 PeerConnection.TcpCandidatePolicy.DISABLED
             } else {
@@ -645,18 +652,20 @@ class WebRtcClient(
                             scope.launch { activeListener?.onConnected() }
                         }
                         PeerConnection.IceConnectionState.DISCONNECTED -> {
-                            // v1.13.18 fast failover watchdog: do not hang for 30s.
-                            // If remote tunnel rotated or NAT dropped, trigger recovery within 2000ms.
+                            // v1.13.19 fast failover watchdog: do not hang for 30s.
+                            // If remote tunnel rotated or NAT dropped, trigger recovery.
+                            // Relaxed to 3500ms to allow WebRTC continual gathering to recover from brief network jitter
+                            // without falsely tearing down the stream.
                             disconnectWatchdogJob?.cancel()
                             disconnectWatchdogJob = scope.launch {
-                                delay(2000)
+                                delay(3500)
                                 val current = peerConnection?.iceConnectionState()
                                 if (current == PeerConnection.IceConnectionState.DISCONNECTED ||
                                     current == PeerConnection.IceConnectionState.FAILED
                                 ) {
-                                    Log.w(TAG, "ICE remained DISCONNECTED for 2000ms — triggering seamless failover")
+                                    Log.w(TAG, "ICE remained DISCONNECTED for 3500ms — triggering seamless failover")
                                     connectedOrFailed = true
-                                    activeListener?.onError("ICE disconnected (2s fast failover)")
+                                    activeListener?.onError("ICE disconnected (3.5s fast failover)")
                                 }
                             }
                         }
@@ -874,6 +883,10 @@ class WebRtcClient(
             val constraints = MediaConstraints().apply {
                 mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
                 mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveAudio", "true"))
+                // Disable CPU overuse detection and bandwidth suspension to prevent WebRTC
+                // from artificially dropping frames or freezing video during transient network/CPU load.
+                optional.add(MediaConstraints.KeyValuePair("googCpuOveruseDetection", "false"))
+                optional.add(MediaConstraints.KeyValuePair("googSuspendBelowMinBitrate", "false"))
             }
 
             val offer = withContext(Dispatchers.IO) {
