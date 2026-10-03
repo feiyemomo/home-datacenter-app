@@ -60,22 +60,23 @@
         android:layout_height="0dp"
         android:layout_weight="1">
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btnLoadEarlier"
-            style="@style/Widget.Material3.Button.TextButton"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center_horizontal|top"
-            android:layout_marginTop="4dp"
-            android:text="更早录像"
-            android:textColor="#FFFFFF" />
         <androidx.recyclerview.widget.RecyclerView
             android:id="@+id/recyclerView"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:clipToPadding="false"
             android:paddingTop="4dp"
-            android:paddingBottom="16dp" />
+            android:paddingBottom="72dp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnLoadEarlier"
+            style="@style/Widget.Material3.Button.TonalButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal|bottom"
+            android:layout_marginBottom="12dp"
+            android:text="加载更早录像"
+            android:textColor="#FFFFFF" />
 
         <ProgressBar
             android:id="@+id/progressBar"
@@ -177,14 +178,39 @@
                     android:layout_height="200dp"
                     android:background="@android:color/black">
 
-                    <com.google.android.exoplayer2.ui.StyledPlayerView
-                        android:id="@+id/playerView"
+                    <!-- v1.13.7: wrap playerView in PinchToZoomFrameLayout
+                         so users can pinch-to-zoom on recording playback,
+                         same as the live view in CameraDetailActivity. -->
+                    <com.homedatacenter.app.ui.cameras.PinchToZoomFrameLayout
+                        android:id="@+id/zoomContainer"
                         android:layout_width="match_parent"
-                        android:layout_height="match_parent"
-                        app:use_controller="true"
-                        app:show_buffering="when_playing"
-                        app:resize_mode="fit"
-                        app:show_timeout="3000" />
+                        android:layout_height="match_parent">
+
+                        <com.google.android.exoplayer2.ui.StyledPlayerView
+                            android:id="@+id/playerView"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            app:use_controller="true"
+                            app:show_buffering="when_playing"
+                            app:resize_mode="fit"
+                            app:show_timeout="3000" />
+
+                    </com.homedatacenter.app.ui.cameras.PinchToZoomFrameLayout>
+
+                    <!-- v1.13.7: zoom level badge, shown when user pinch-zooms -->
+                    <TextView
+                        android:id="@+id/tvZoomBadge"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="top|end"
+                        android:layout_marginTop="8dp"
+                        android:layout_marginEnd="8dp"
+                        android:background="#80000000"
+                        android:paddingHorizontal="8dp"
+                        android:paddingVertical="4dp"
+                        android:textColor="@android:color/white"
+                        android:textSize="11sp"
+                        android:visibility="gone" />
 
                     <ProgressBar
                         android:id="@+id/progressPlayer"
@@ -325,6 +351,28 @@
                         android:visibility="gone"
                         app:icon="@drawable/ic_fullscreen"
                         app:iconTint="@android:color/white" />
+
+                    <!-- v1.13.8: recording resolution quality toggle button (720P / 1080P) -->
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnRecordingQuality"
+                        style="@style/Widget.Material3.Button.TextButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="bottom|end"
+                        android:layout_marginEnd="68dp"
+                        android:layout_marginBottom="12dp"
+                        android:text="720P"
+                        android:textColor="@android:color/white"
+                        android:textSize="12sp"
+                        android:textStyle="bold"
+                        android:background="@drawable/bg_glass_dark_panel"
+                        android:minWidth="0dp"
+                        android:minHeight="0dp"
+                        android:paddingHorizontal="10dp"
+                        android:paddingVertical="4dp"
+                        app:strokeWidth="1dp"
+                        app:strokeColor="#33FFFFFF"
+                        android:visibility="gone" />
                 </FrameLayout>
 
                 <!-- v1.6.4 rev2: scrub bar moved UP to sit directly

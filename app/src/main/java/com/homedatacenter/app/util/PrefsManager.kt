@@ -158,8 +158,12 @@ class PrefsManager(context: Context) {
         set(value) = prefs.edit().putBoolean(KEY_NOTIFY_MOTION, value).apply()
 
     var notifySystem: Boolean
-        get() = prefs.getBoolean(KEY_NOTIFY_SYSTEM, false)
+        get() = prefs.getBoolean(KEY_NOTIFY_SYSTEM, true)
         set(value) = prefs.edit().putBoolean(KEY_NOTIFY_SYSTEM, value).apply()
+
+    var keepAliveEnabled: Boolean
+        get() = prefs.getBoolean(KEY_KEEPALIVE_ENABLED, true)
+        set(value) = prefs.edit().putBoolean(KEY_KEEPALIVE_ENABLED, value).apply()
 
     var notifyIncludeSnapshot: Boolean
         get() = prefs.getBoolean(KEY_NOTIFY_INCLUDE_SNAPSHOT, true)
@@ -226,6 +230,7 @@ class PrefsManager(context: Context) {
         private const val KEY_NOTIFY_MOTION = "notify_motion"
         private const val KEY_NOTIFY_SYSTEM = "notify_system"
         private const val KEY_NOTIFY_INCLUDE_SNAPSHOT = "notify_include_snapshot"
+        private const val KEY_KEEPALIVE_ENABLED = "keepalive_enabled"
         private const val KEY_NOTIFY_DND_ENABLED = "notify_dnd_enabled"
         private const val KEY_NOTIFY_DND_START_HOUR = "notify_dnd_start_hour"
         private const val KEY_NOTIFY_DND_START_MINUTE = "notify_dnd_start_minute"

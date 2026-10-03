@@ -30,41 +30,47 @@
     android:focusable="true"
     android:minHeight="72dp">
 
-    <!-- Thumbnail (tap to open full-resolution snapshot modal) -->
-    <FrameLayout
-        android:id="@+id/thumbnailContainer"
-        android:layout_width="72dp"
-        android:layout_height="48dp"
+    <!-- Thumbnail: enlarged to 100dp x 64dp with card rounded corners -->
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/thumbnailCard"
+        android:layout_width="104dp"
+        android:layout_height="66dp"
+        app:cardCornerRadius="8dp"
+        app:cardElevation="2dp"
+        app:strokeWidth="1dp"
+        app:strokeColor="#22FFFFFF"
         android:clickable="true"
         android:focusable="true"
         android:foreground="?android:attr/selectableItemBackground">
 
-        <ImageView
-            android:id="@+id/ivThumbnail"
+        <FrameLayout
+            android:id="@+id/thumbnailContainer"
             android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:scaleType="centerCrop"
-            android:background="@color/camera_bg" />
+            android:layout_height="match_parent">
 
-        <ProgressBar
-            android:id="@+id/progressThumbnail"
-            android:layout_width="20dp"
-            android:layout_height="20dp"
-            android:layout_gravity="center"
-            android:visibility="gone"
-            android:indeterminateTint="@android:color/white" />
+            <ImageView
+                android:id="@+id/ivThumbnail"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:scaleType="centerCrop"
+                android:background="@color/camera_bg" />
 
-        <!-- Play overlay: only shown when the alert has a clip
-             (chipClip visibility tracks hasClip). Tapping the
-             thumbnail still opens the snapshot modal; the play badge
-             is just a visual hint that a clip is also available. -->
-        <ImageView
-            android:id="@+id/btnPlay"
-            android:layout_width="24dp"
-            android:layout_height="24dp"
-            android:src="@drawable/ic_play_circle"
-            android:layout_gravity="center" />
-    </FrameLayout>
+            <ProgressBar
+                android:id="@+id/progressThumbnail"
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_gravity="center"
+                android:visibility="gone"
+                android:indeterminateTint="@android:color/white" />
+
+            <ImageView
+                android:id="@+id/btnPlay"
+                android:layout_width="26dp"
+                android:layout_height="26dp"
+                android:src="@drawable/ic_play_circle"
+                android:layout_gravity="center" />
+        </FrameLayout>
+    </com.google.android.material.card.MaterialCardView>
 
     <!-- Main content: label + confidence + camera name. Weight=1 so
          it takes all available width and the camera name (e.g. "前门")

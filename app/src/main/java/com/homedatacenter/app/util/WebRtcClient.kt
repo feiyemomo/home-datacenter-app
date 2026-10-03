@@ -32,6 +32,7 @@ import org.webrtc.SessionDescription
 import org.webrtc.SurfaceViewRenderer
 import org.webrtc.VideoTrack
 import org.webrtc.audio.JavaAudioDeviceModule
+import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -88,9 +89,16 @@ import kotlin.coroutines.resumeWithException
 class WebRtcClient(
     private val context: Context,
     private val okHttpClient: OkHttpClient,
-    private val baseUrl: String,
-    private val token: String?,
+    private val baseUrlProvider: () -> String,
+    private val tokenProvider: () -> String?,
 ) {
+    /** Secondary constructor for static baseUrl / token backward compatibility. */
+    constructor(
+        context: Context,
+        okHttpClient: OkHttpClient,
+        baseUrl: String,
+        token: String?,
+    ) : this(context, okHttpClient, { baseUrl }, { token })
     /** Owns the EGL context used for video decoding + rendering. */
     val eglBase: EglBase = EglBase.create()
 
@@ -135,6 +143,13 @@ class WebRtcClient(
     @Volatile
     private var preparedCameraId: Long = -1L
     private var prepareJob: Job? = null
+    private var disconnectWatchdogJob: Job? = null
+    @Volatile
+    private var candidateCount: Int = 0
+    @Volatile
+    private var hasSrflxCandidate: Boolean = false
+    @Volatile
+    private var hasHostCandidate: Boolean = false
 
     // v1.6.35: settable listener + surface renderer for the shared
     // observer. The observer is created at PeerConnection creation
@@ -266,7 +281,31 @@ class WebRtcClient(
     }
 
     /**
-     * v1.13.0: Starts two-way talkback over WebRTC.
+     * v1.13.0: Prepares or gets the local microphone audio track and attaches it to the transceiver.
+     */
+    private fun ensureLocalAudioTrack(transceiver: RtpTransceiver) {
+        val pcFactory = factory ?: run {
+            Log.w(TAG, "ensureLocalAudioTrack: factory is null")
+            return
+        }
+        if (localAudioTrack == null) {
+            val constraints = MediaConstraints().apply {
+                mandatory.add(MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
+                mandatory.add(MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
+                mandatory.add(MediaConstraints.KeyValuePair("googHighpassFilter", "true"))
+                mandatory.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
+            }
+            val src = pcFactory.createAudioSource(constraints)
+            localAudioSource = src
+            val track = pcFactory.createAudioTrack("ARDAMSa0_mic", src)
+            track.setEnabled(false) // Muted until user explicitly speaks
+            localAudioTrack = track
+            transceiver.sender.setTrack(track, true)
+            Log.i(TAG, "ensureLocalAudioTrack: local audio track attached to transceiver (muted)")
+        }
+    }
+
+    /**
      * Captures audio from the device microphone and sends it to the camera backchannel.
      */
     fun startTalkback(): Boolean {
@@ -282,25 +321,8 @@ class WebRtcClient(
             }
         audioTransceiver = transceiver
 
-        val pcFactory = factory ?: run {
-            Log.w(TAG, "startTalkback: factory is null")
-            return false
-        }
-
         return try {
-            if (localAudioTrack == null) {
-                val constraints = MediaConstraints().apply {
-                    mandatory.add(MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
-                    mandatory.add(MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
-                    mandatory.add(MediaConstraints.KeyValuePair("googHighpassFilter", "true"))
-                    mandatory.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
-                }
-                val src = pcFactory.createAudioSource(constraints)
-                localAudioSource = src
-                val track = pcFactory.createAudioTrack("ARDAMSa0_mic", src)
-                localAudioTrack = track
-                transceiver.sender.setTrack(track, true)
-            }
+            ensureLocalAudioTrack(transceiver)
             localAudioTrack?.setEnabled(true)
             isTalkingBack = true
             Log.i(TAG, "Talkback started (mic unmuted)")
@@ -359,6 +381,8 @@ class WebRtcClient(
         val audioDevice = JavaAudioDeviceModule.builder(context)
             .setUseHardwareAcousticEchoCanceler(true)
             .setUseHardwareNoiseSuppressor(true)
+            .setUseStereoInput(false)
+            .setUseStereoOutput(false)
             .createAudioDeviceModule()
         audioDeviceModule = audioDevice
         // Hardware-accelerated encoder/decoder where available.
@@ -401,7 +425,7 @@ class WebRtcClient(
         isLan: Boolean,
         listener: Listener,
     ) {
-        startStream(cameraId, surfaceRenderer, iceServers, isLan, false, listener)
+        startStream(cameraId, surfaceRenderer, iceServers, isLan, false, "720p", listener)
     }
 
     fun startStream(
@@ -410,12 +434,13 @@ class WebRtcClient(
         iceServers: List<PeerConnection.IceServer>,
         isLan: Boolean,
         enableTwoWayAudio: Boolean,
+        quality: String = "720p",
         listener: Listener,
     ) {
         signalingJob?.cancel()
         signalingJob = scope.launch {
             try {
-                startStreamInternal(cameraId, surfaceRenderer, iceServers, isLan, enableTwoWayAudio, listener)
+                startStreamInternal(cameraId, surfaceRenderer, iceServers, isLan, enableTwoWayAudio, quality, listener)
             } catch (e: Exception) {
                 Log.e(TAG, "WebRTC signaling failed: ${e.message}", e)
                 listener.onError(e.message ?: "unknown")
@@ -495,6 +520,9 @@ class WebRtcClient(
                 MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO,
                 RtpTransceiver.RtpTransceiverInit(audioDirection)
             )
+            if (enableTwoWayAudio && audioTransceiver != null) {
+                ensureLocalAudioTrack(audioTransceiver!!)
+            }
 
             val constraints = MediaConstraints().apply {
                 mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
@@ -509,14 +537,18 @@ class WebRtcClient(
                 return
             }
 
+            candidateCount = 0
+            hasSrflxCandidate = false
+            hasHostCandidate = false
+
             withContext(Dispatchers.IO) {
                 setLocalDescriptionSuspend(pc, offer)
             }
 
-            // Wait for ICE gathering — same timeout logic as startStreamInternal.
-            val iceTimeoutMs = if (isLan) 800L else 5_000L
+            // Wait for ICE gathering — fast early exit once candidates are gathered.
+            val iceTimeoutMs = if (isLan) 600L else 1_200L
             val gatheringComplete = withContext(Dispatchers.IO) {
-                waitForIceGathering(pc, timeoutMs = iceTimeoutMs)
+                waitForIceGathering(pc, timeoutMs = iceTimeoutMs, isLan = isLan)
             }
             if (!gatheringComplete) {
                 Log.w(TAG, "prepareOffer: ICE gathering timed out; using partial offer")
@@ -548,7 +580,20 @@ class WebRtcClient(
         iceServers: List<PeerConnection.IceServer>,
         isLan: Boolean,
     ): PeerConnection.RTCConfiguration {
-        return PeerConnection.RTCConfiguration(iceServers).apply {
+        val filteredServers = iceServers.filterNot { srv ->
+            srv.urls.any { it.contains("google.com") }
+        }.let { list ->
+            if (list.isEmpty() && !isLan) {
+                listOf(
+                    PeerConnection.IceServer.builder("stun:stun.qq.com:3478").createIceServer(),
+                    PeerConnection.IceServer.builder("stun:stun.miwifi.com:3478").createIceServer(),
+                    PeerConnection.IceServer.builder("stun:stun.cloudflare.com:3478").createIceServer()
+                )
+            } else {
+                list
+            }
+        }
+        return PeerConnection.RTCConfiguration(filteredServers).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_ONCE
             tcpCandidatePolicy = if (isLan) {
@@ -576,7 +621,10 @@ class WebRtcClient(
         return object : PeerConnection.Observer {
             override fun onIceCandidate(candidate: IceCandidate?) {
                 candidate?.let { c ->
+                    candidateCount++
                     val sdp = c.sdp ?: "(no sdp)"
+                    if (sdp.contains("typ srflx")) hasSrflxCandidate = true
+                    if (sdp.contains("typ host")) hasHostCandidate = true
                     val addrIsIpv6 = sdp.contains("::")
                     android.util.Log.i(TAG, "ICE candidate: type=${c.sdpMid ?: "?"} " +
                         "url=${c.serverUrl ?: ""} " +
@@ -592,11 +640,35 @@ class WebRtcClient(
                         PeerConnection.IceConnectionState.CONNECTED,
                         PeerConnection.IceConnectionState.COMPLETED -> {
                             connectedOrFailed = true
+                            disconnectWatchdogJob?.cancel()
+                            disconnectWatchdogJob = null
                             scope.launch { activeListener?.onConnected() }
                         }
+                        PeerConnection.IceConnectionState.DISCONNECTED -> {
+                            // v1.13.18 fast failover watchdog: do not hang for 30s.
+                            // If remote tunnel rotated or NAT dropped, trigger recovery within 2000ms.
+                            disconnectWatchdogJob?.cancel()
+                            disconnectWatchdogJob = scope.launch {
+                                delay(2000)
+                                val current = peerConnection?.iceConnectionState()
+                                if (current == PeerConnection.IceConnectionState.DISCONNECTED ||
+                                    current == PeerConnection.IceConnectionState.FAILED
+                                ) {
+                                    Log.w(TAG, "ICE remained DISCONNECTED for 2000ms — triggering seamless failover")
+                                    connectedOrFailed = true
+                                    activeListener?.onError("ICE disconnected (2s fast failover)")
+                                }
+                            }
+                        }
                         PeerConnection.IceConnectionState.FAILED -> {
+                            disconnectWatchdogJob?.cancel()
+                            disconnectWatchdogJob = null
                             connectedOrFailed = true
                             scope.launch { activeListener?.onError("ICE failed") }
+                        }
+                        PeerConnection.IceConnectionState.CLOSED -> {
+                            disconnectWatchdogJob?.cancel()
+                            disconnectWatchdogJob = null
                         }
                         else -> {}
                     }
@@ -673,6 +745,7 @@ class WebRtcClient(
         iceServers: List<PeerConnection.IceServer>,
         isLan: Boolean,
         enableTwoWayAudio: Boolean = false,
+        quality: String = "720p",
         listener: Listener,
     ) {
         val pcFactory = factory ?: run {
@@ -707,14 +780,8 @@ class WebRtcClient(
         // timeout, so a stuck prepare means a stuck full flow too).
         val prepareJobLocal = prepareJob
         if (prepareJobLocal != null && prepareJobLocal.isActive) {
-            // v1.6.41: cap the wait at min(iceTimeoutMs, 2000L). On
-            // remote this prevents a 5s prepare wait from stacking on
-            // top of the full flow's 5s ICE gathering — if prepare
-            // hasn't finished in 2s, cancel it and start fresh so the
-            // 6s connection timeout is the only backstop the user
-            // waits for. LAN is unaffected (min(800, 2000) = 800).
-            val iceTimeoutMs = if (isLan) 800L else 5_000L
-            val waitMs = minOf(iceTimeoutMs, 2_000L)
+            val iceTimeoutMs = if (isLan) 600L else 1_200L
+            val waitMs = iceTimeoutMs + 300L
             try {
                 withTimeout(waitMs) { prepareJobLocal.join() }
             } catch (_: Exception) {
@@ -800,6 +867,9 @@ class WebRtcClient(
                 MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO,
                 RtpTransceiver.RtpTransceiverInit(audioDirection)
             )
+            if (enableTwoWayAudio && audioTransceiver != null) {
+                ensureLocalAudioTrack(audioTransceiver!!)
+            }
 
             val constraints = MediaConstraints().apply {
                 mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
@@ -813,19 +883,18 @@ class WebRtcClient(
                 return
             }
 
+            candidateCount = 0
+            hasSrflxCandidate = false
+            hasHostCandidate = false
+
             withContext(Dispatchers.IO) {
                 setLocalDescriptionSuspend(pc, offer)
             }
 
-            // Wait for ICE gathering — non-trickle ICE requires all
-            // candidates to be in the local SDP before sending.
-            // v1.6.13: timeout is isLan-based (800ms LAN / 5s remote)
-            // to allow STUN round-trips on cellular while keeping LAN
-            // fast. If gathering times out we send the partial SDP
-            // anyway — backend will reject if it can't pick a candidate.
-            val iceTimeoutMs = if (isLan) 800L else 5_000L
+            // Wait for ICE gathering — fast early exit once candidates are gathered.
+            val iceTimeoutMs = if (isLan) 600L else 1_200L
             val gatheringComplete = withContext(Dispatchers.IO) {
-                waitForIceGathering(pc, timeoutMs = iceTimeoutMs)
+                waitForIceGathering(pc, timeoutMs = iceTimeoutMs, isLan = isLan)
             }
             if (!gatheringComplete) {
                 Log.w(TAG, "ICE gathering timed out; sending partial offer")
@@ -841,7 +910,7 @@ class WebRtcClient(
         // POST the offer to the backend's WHEP-style endpoint.
         // The body is the raw SDP string (Content-Type: application/sdp).
         val answerSdp = withContext(Dispatchers.IO) {
-            postOffer(cameraId, localSdp)
+            postOffer(cameraId, localSdp, quality)
         } ?: run {
             listener.onError("backend returned empty SDP answer")
             return
@@ -892,8 +961,8 @@ class WebRtcClient(
         // (host-candidate ICE completes in <500ms).
         watchdogJob?.cancel()
         if (!connectedOrFailed) {
-            // v1.10.8: fast failover watchdog: 3.5s on LAN, 4.5s on remote
-            val connectTimeoutMs = if (isLan) 3_500L else 4_500L
+            // Fast failover watchdog: 4.0s on LAN, 7.0s on remote
+            val connectTimeoutMs = if (isLan) 4_000L else 7_000L
             watchdogJob = scope.launch {
                 delay(connectTimeoutMs)
                 if (!connectedOrFailed && activeListener === listener) {
@@ -958,22 +1027,31 @@ class WebRtcClient(
 
     /**
      * Waits for ICE gathering to reach COMPLETE state, or times out.
-     * Polls the PeerConnection state every 50ms — WebRTC has no
-     * callback-based "wait for gathering" API; the observer fires
-     * onIceGatheringChange but coordinating that with a suspendable
-     * wait requires an extra state machine. Polling is simpler
-     * and the gathering is fast (sub-second on LAN).
+     * Fast-paths return early once host candidates (LAN) or reflexive
+     * candidates (remote) are discovered, avoiding long waits on unresponsive STUN servers.
      */
     private suspend fun waitForIceGathering(
         pc: PeerConnection,
         timeoutMs: Long,
+        isLan: Boolean = false,
     ): Boolean {
         val start = System.currentTimeMillis()
         while (System.currentTimeMillis() - start < timeoutMs) {
             if (pc.iceGatheringState() == PeerConnection.IceGatheringState.COMPLETE) {
                 return true
             }
-            delay(50)
+            val elapsed = System.currentTimeMillis() - start
+            // On LAN: once host candidates are present (after min 150ms), return early
+            if (isLan && hasHostCandidate && elapsed >= 150) {
+                Log.d(TAG, "waitForIceGathering: LAN host candidates ready in ${elapsed}ms")
+                return true
+            }
+            // On remote: once reflexive candidate is discovered or 2+ candidates (after min 250ms), return early
+            if (!isLan && (hasSrflxCandidate || candidateCount >= 2) && elapsed >= 250) {
+                Log.d(TAG, "waitForIceGathering: remote candidates ready (srflx=$hasSrflxCandidate, count=$candidateCount) in ${elapsed}ms")
+                return true
+            }
+            delay(40)
         }
         return false
     }
@@ -985,8 +1063,11 @@ class WebRtcClient(
      *
      * Returns null on any non-2xx response or network error.
      */
-    private suspend fun postOffer(cameraId: Long, sdpOffer: String): String? {
-        val url = "${baseUrl.trimEnd('/')}/api/v1/cameras/$cameraId/webrtc"
+    private suspend fun postOffer(cameraId: Long, sdpOffer: String, quality: String = "720p"): String? {
+        val currentBase = baseUrlProvider().trimEnd('/')
+        val currentToken = tokenProvider()
+        val url = "$currentBase/api/v1/cameras/$cameraId/webrtc?quality=$quality"
+        android.util.Log.i(TAG, "postOffer: url=$url, offerLen=${sdpOffer.length}")
         val req = Request.Builder()
             .url(url)
             .post(sdpOffer.toRequestBody("application/sdp".toMediaType()))
@@ -994,23 +1075,33 @@ class WebRtcClient(
                 // Unified UA (overwrites OkHttp default). Use header()
                 // instead of addHeader() so there's exactly one value.
                 header("User-Agent", NetworkFactory.USER_AGENT)
-                if (!token.isNullOrEmpty()) {
-                    addHeader("Authorization", "Bearer $token")
-                    addHeader("Cookie", "home_token=$token")
+                if (!currentToken.isNullOrEmpty()) {
+                    addHeader("Authorization", "Bearer $currentToken")
+                    addHeader("Cookie", "home_token=$currentToken")
                 }
                 addHeader("Accept", "application/sdp")
             }
             .build()
+        val start = System.currentTimeMillis()
+        val signalingClient = okHttpClient.newBuilder()
+            .callTimeout(6_000, TimeUnit.MILLISECONDS)
+            .connectTimeout(3_000, TimeUnit.MILLISECONDS)
+            .readTimeout(5_000, TimeUnit.MILLISECONDS)
+            .build()
         return try {
-            okHttpClient.newCall(req).execute().use { resp ->
+            signalingClient.newCall(req).execute().use { resp ->
+                val elapsed = System.currentTimeMillis() - start
                 if (!resp.isSuccessful) {
-                    Log.w(TAG, "WebRTC signaling HTTP ${resp.code} for $url")
+                    Log.w(TAG, "WebRTC signaling HTTP ${resp.code} for $url in ${elapsed}ms")
                     return@use null
                 }
-                resp.body?.string()?.takeIf { it.isNotBlank() }
+                val answer = resp.body?.string()?.takeIf { it.isNotBlank() }
+                Log.i(TAG, "WebRTC signaling HTTP 200 for $url in ${elapsed}ms, answerLen=${answer?.length ?: 0}")
+                answer
             }
         } catch (e: Exception) {
-            Log.w(TAG, "WebRTC signaling network error: ${e.message}")
+            val elapsed = System.currentTimeMillis() - start
+            Log.w(TAG, "WebRTC signaling network error for $url after ${elapsed}ms: ${e.message}")
             null
         }
     }
@@ -1019,6 +1110,8 @@ class WebRtcClient(
     fun release() {
         watchdogJob?.cancel()
         watchdogJob = null
+        disconnectWatchdogJob?.cancel()
+        disconnectWatchdogJob = null
         activeListener = null
         activeSurfaceRenderer = null
         stopPlayoutImmediately()

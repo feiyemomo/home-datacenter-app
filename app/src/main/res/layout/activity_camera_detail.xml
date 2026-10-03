@@ -59,8 +59,9 @@
                         android:id="@+id/playerView"
                         android:layout_width="match_parent"
                         android:layout_height="200dp"
+                        android:layout_gravity="center"
                         app:surface_type="texture_view"
-                        app:resize_mode="fixed_width"
+                        app:resize_mode="fit"
                         app:use_controller="true"
                         app:show_buffering="when_playing"
                         app:show_timeout="3000" />
@@ -76,6 +77,7 @@
                         android:id="@+id/ivPreviewFrame"
                         android:layout_width="match_parent"
                         android:layout_height="200dp"
+                        android:layout_gravity="center"
                         android:scaleType="centerCrop"
                         android:background="@android:color/black"
                         android:visibility="gone" />
@@ -87,6 +89,7 @@
                         android:id="@+id/surfaceRenderer"
                         android:layout_width="match_parent"
                         android:layout_height="200dp"
+                        android:layout_gravity="center"
                         android:visibility="gone" />
                 </FrameLayout>
             </com.homedatacenter.app.ui.cameras.PinchToZoomFrameLayout>
@@ -198,6 +201,25 @@
                     android:layout_width="0dp"
                     android:layout_height="0dp"
                     android:layout_weight="1" />
+
+                <!-- Quality toggle button (720P / 1080P) -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnWebRtcQuality"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:minWidth="0dp"
+                    android:minHeight="0dp"
+                    android:paddingHorizontal="8dp"
+                    android:paddingVertical="4dp"
+                    android:layout_marginEnd="6dp"
+                    android:text="720P"
+                    android:textColor="@android:color/white"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:background="@drawable/bg_glass_dark_panel"
+                    app:strokeWidth="1dp"
+                    app:strokeColor="#33FFFFFF" />
 
                 <!-- PiP button in WebRTC control overlay -->
                 <com.google.android.material.button.MaterialButton
@@ -462,13 +484,13 @@
                         android:layout_marginStart="8dp"
                         android:layout_marginEnd="8dp"
                         android:max="100"
-                        android:progress="50" />
+                        android:progress="25" />
 
                     <TextView
                         android:id="@+id/tvPtzSpeed"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="0.50"
+                        android:text="0.25"
                         android:textSize="12sp"
                         android:textColor="@color/text_secondary" />
                 </LinearLayout>
@@ -603,6 +625,14 @@
                         android:layout_height="wrap_content"
                         android:layout_marginTop="16dp"
                         android:text="@string/camera_codec_h264" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnDetectFps"
+                        style="@style/Widget.Material3.Button.OutlinedButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:text="AI 抽样检测频率 (2 fps)" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnDelete"

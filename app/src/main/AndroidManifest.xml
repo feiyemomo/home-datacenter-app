@@ -20,6 +20,11 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- Android 13+ runtime permission for security and system alert notifications -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <!-- Camera and microphone are optional because the app receives streams
          and must remain installable on devices without capture hardware. -->
@@ -99,6 +104,11 @@
             android:name=".ui.network.NetworkDetailActivity"
             android:exported="false"
             android:label="@string/network_detail_title" />
+
+        <service
+            android:name=".service.AlertKeepAliveService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync|remoteMessaging" />
 
         <!-- v1.6.11: FileProvider for sharing the downloaded APK
              with the system PackageInstaller. The installer needs a

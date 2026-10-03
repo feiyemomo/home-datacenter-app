@@ -70,10 +70,19 @@ class AlertSnapshotDialogFragment : DialogFragment() {
         val timeStr = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(date)
         binding.tvSnapshotMeta.text = "$camera · $zones · $timeStr"
 
+        // Explicit close button only — do not dismiss on tapping snapshot image or card
         binding.btnCloseSnapshot.setOnClickListener { dismiss() }
-        binding.root.setOnClickListener { dismiss() }
-        // Prevent clicks inside the inner card from dismissing the dialog
-        binding.root.findViewById<View>(R.id.btnCloseSnapshot)?.let { /* already wired */ }
+        binding.btnSaveSnapshot.setOnClickListener { saveSnapshotToGallery() }
+
+        // Wire pinch-to-zoom badge
+        binding.zoomContainer.onZoomChanged = { scale ->
+            if (scale > 1.01f) {
+                binding.tvZoomBadge.visibility = View.VISIBLE
+                binding.tvZoomBadge.text = String.format(Locale.US, "%.1fx 双击复位", scale)
+            } else {
+                binding.tvZoomBadge.visibility = View.GONE
+            }
+        }
 
         loadSnapshot()
     }
@@ -81,20 +90,69 @@ class AlertSnapshotDialogFragment : DialogFragment() {
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
         val dialog = super.onCreateDialog(savedInstanceState)
         dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        dialog.window?.apply {
+            setBackgroundDrawableResource(android.R.color.transparent)
+            clearFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            setDimAmount(0f)
+        }
         return dialog
     }
 
+    private fun saveSnapshotToGallery() {
+        val bitmap = loadedBitmap ?: run {
+            android.widget.Toast.makeText(context, "图片尚未加载完成", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        val ctx = context ?: return
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val filename = "Snapshot_${alert.cameraSlug}_${System.currentTimeMillis()}.jpg"
+                val values = android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, filename)
+                    put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                        put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, android.os.Environment.DIRECTORY_PICTURES + "/HomeSecurity")
+                        put(android.provider.MediaStore.Images.Media.IS_PENDING, 1)
+                    }
+                }
+                val uri = ctx.contentResolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                if (uri != null) {
+                    ctx.contentResolver.openOutputStream(uri)?.use { out ->
+                        bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, out)
+                    }
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                        values.clear()
+                        values.put(android.provider.MediaStore.Images.Media.IS_PENDING, 0)
+                        ctx.contentResolver.update(uri, values, null, null)
+                    }
+                    withContext(Dispatchers.Main) {
+                        android.widget.Toast.makeText(ctx, "抓拍大图已保存至系统相册！", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                } else {
+                    withContext(Dispatchers.Main) {
+                        android.widget.Toast.makeText(ctx, "保存失败，无法创建文件", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(ctx, "保存失败: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
     private fun loadSnapshot() {
+        val b = _binding ?: return
         val url = buildSnapshotUrl(alert.id)
         if (url.isEmpty()) {
-            binding.progressSnapshot.visibility = View.GONE
-            binding.tvSnapshotError.visibility = View.VISIBLE
-            binding.tvSnapshotError.text = getString(R.string.error)
+            b.progressSnapshot.visibility = View.GONE
+            b.tvSnapshotError.visibility = View.VISIBLE
+            b.tvSnapshotError.text = getString(R.string.error)
             return
         }
 
-        binding.progressSnapshot.visibility = View.VISIBLE
-        binding.tvSnapshotError.visibility = View.GONE
+        b.progressSnapshot.visibility = View.VISIBLE
+        b.tvSnapshotError.visibility = View.GONE
 
         lifecycleScope.launch {
             try {
@@ -105,33 +163,53 @@ class AlertSnapshotDialogFragment : DialogFragment() {
                 val bitmap = withContext(Dispatchers.IO) {
                     client.newCall(req).execute().use { resp ->
                         if (!resp.isSuccessful) return@use null
-                        resp.body?.byteStream()?.use { BitmapFactory.decodeStream(it) }
-                    }
-                }
-                if (bitmap != null) {
-                    loadedBitmap = bitmap
-                    binding.ivSnapshot.setImageBitmap(bitmap)
-                    if (alert.label.equals("person", ignoreCase = true)) {
-                        binding.layoutSnapshotActions.visibility = View.VISIBLE
-                        binding.btnRegisterFace.setOnClickListener {
-                            showRegisterFaceDialog(bitmap)
+                        resp.body?.byteStream()?.use {
+                            val opts = BitmapFactory.Options().apply {
+                                inPreferredConfig = android.graphics.Bitmap.Config.ARGB_8888
+                                inScaled = false
+                            }
+                            BitmapFactory.decodeStream(it, null, opts)
                         }
                     }
+                }
+                val curBinding = _binding ?: return@launch
+                if (bitmap != null) {
+                    loadedBitmap = bitmap
+                    curBinding.ivSnapshot.setImageBitmap(bitmap)
+                    val app = activity?.application as? com.homedatacenter.app.HomeCenterApp
+                    val isAdmin = app?.container?.let { it.roleManager.isAdmin() || it.prefsManager.isAdmin } == true
+                    if (isAdmin && alert.label.equals("person", ignoreCase = true)) {
+                        curBinding.layoutSnapshotActions.visibility = View.VISIBLE
+                        curBinding.btnRegisterFace.setOnClickListener {
+                            showRegisterFaceDialog(bitmap)
+                        }
+                    } else {
+                        curBinding.layoutSnapshotActions.visibility = View.GONE
+                    }
                 } else {
-                    binding.tvSnapshotError.visibility = View.VISIBLE
-                    binding.tvSnapshotError.text = getString(R.string.weather_failed)
+                    curBinding.tvSnapshotError.visibility = View.VISIBLE
+                    curBinding.tvSnapshotError.text = getString(R.string.weather_failed)
                 }
             } catch (e: Exception) {
-                binding.tvSnapshotError.visibility = View.VISIBLE
-                binding.tvSnapshotError.text = e.message ?: getString(R.string.error)
+                _binding?.let { curBinding ->
+                    curBinding.tvSnapshotError.visibility = View.VISIBLE
+                    curBinding.tvSnapshotError.text = e.message ?: getString(R.string.error)
+                }
             } finally {
-                binding.progressSnapshot.visibility = View.GONE
+                _binding?.progressSnapshot?.visibility = View.GONE
             }
         }
     }
 
     private fun showRegisterFaceDialog(bitmap: android.graphics.Bitmap) {
         val context = context ?: return
+        val app = activity?.application as? com.homedatacenter.app.HomeCenterApp
+        val isAdmin = app?.container?.let { it.roleManager.isAdmin() || it.prefsManager.isAdmin } == true
+        if (!isAdmin) {
+            android.widget.Toast.makeText(context, "只有管理员可以录入人脸档案", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+
         val input = android.widget.EditText(context).apply {
             hint = getString(R.string.vision_hint_name)
             setSingleLine()
@@ -157,12 +235,20 @@ class AlertSnapshotDialogFragment : DialogFragment() {
 
     private fun registerFace(name: String, bitmap: android.graphics.Bitmap) {
         val app = activity?.application as? com.homedatacenter.app.HomeCenterApp ?: return
+        val isAdmin = app.container.let { it.roleManager.isAdmin() || it.prefsManager.isAdmin }
+        if (!isAdmin) {
+            context?.let { android.widget.Toast.makeText(it, "只有管理员可以录入人脸档案", android.widget.Toast.LENGTH_SHORT).show() }
+            return
+        }
+
         val tok = token ?: app.container.prefsManager.token
         if (tok.isNullOrEmpty()) return
         val validToken: String = tok
 
-        binding.btnRegisterFace.isEnabled = false
-        binding.btnRegisterFace.text = getString(R.string.vision_registering)
+        _binding?.let { b ->
+            b.btnRegisterFace.isEnabled = false
+            b.btnRegisterFace.text = getString(R.string.vision_registering)
+        }
 
         lifecycleScope.launch {
             try {
@@ -176,20 +262,26 @@ class AlertSnapshotDialogFragment : DialogFragment() {
                     app.container.getRepository().registerVisionPerson(validToken, name, base64)
                 }
 
-                android.widget.Toast.makeText(
-                    context,
-                    "已成功录入家庭成员「$name」的人脸档案！",
-                    android.widget.Toast.LENGTH_SHORT
-                ).show()
-                binding.btnRegisterFace.text = "已录入为 $name"
+                context?.let { ctx ->
+                    android.widget.Toast.makeText(
+                        ctx,
+                        "已成功录入家庭成员「$name」的人脸档案！",
+                        android.widget.Toast.LENGTH_SHORT
+                    ).show()
+                }
+                _binding?.btnRegisterFace?.text = "已录入为 $name"
             } catch (e: Exception) {
-                binding.btnRegisterFace.isEnabled = true
-                binding.btnRegisterFace.text = getString(R.string.vision_register_from_alert)
-                android.widget.Toast.makeText(
-                    context,
-                    "录入失败: ${e.message}",
-                    android.widget.Toast.LENGTH_LONG
-                ).show()
+                _binding?.let { b ->
+                    b.btnRegisterFace.isEnabled = true
+                    b.btnRegisterFace.text = getString(R.string.vision_register_from_alert)
+                }
+                context?.let { ctx ->
+                    android.widget.Toast.makeText(
+                        ctx,
+                        "录入失败: ${e.message}",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
             }
         }
     }
@@ -197,7 +289,7 @@ class AlertSnapshotDialogFragment : DialogFragment() {
     private fun buildSnapshotUrl(alertId: String): String {
         if (baseUrl.isNullOrBlank()) return ""
         val base = if (baseUrl!!.endsWith("/")) baseUrl!! else "$baseUrl/"
-        return "${base}api/v1/cameras/alerts/$alertId/snapshot"
+        return "${base}api/v1/cameras/alerts/$alertId/snapshot?quality=100"
     }
 
     private fun formatLabel(label: String): String {

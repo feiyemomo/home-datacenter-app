@@ -118,6 +118,15 @@ class MultiCameraActivity : AppCompatActivity() {
 
         val windowInsetsController = WindowCompat.getInsetsController(window, window.decorView)
         val density = resources.displayMetrics.density
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            val lp = window.attributes
+            lp.layoutInDisplayCutoutMode = if (isLandscape) {
+                android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            } else {
+                android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT
+            }
+            window.attributes = lp
+        }
         if (isLandscape) {
             windowInsetsController.hide(WindowInsetsCompat.Type.systemBars())
             windowInsetsController.systemBarsBehavior =

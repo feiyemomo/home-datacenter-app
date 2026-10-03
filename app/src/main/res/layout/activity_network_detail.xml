@@ -225,8 +225,9 @@
                     </com.google.android.material.button.MaterialButtonToggleGroup>
                 </LinearLayout>
 
-                <!-- IPv6 -->
+                <!-- IPv6 (Hidden while upstream IPv6 is unavailable) -->
                 <TextView
+                    android:id="@+id/tvIpv6Title"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="@string/network_detail_ipv6_section"
@@ -235,6 +236,7 @@
                     android:layout_marginBottom="6dp" />
 
                 <LinearLayout
+                    android:id="@+id/cardIpv6"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:background="@drawable/bg_glass_card"

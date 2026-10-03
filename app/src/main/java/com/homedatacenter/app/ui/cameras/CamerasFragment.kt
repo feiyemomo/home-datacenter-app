@@ -160,6 +160,7 @@ class CamerasFragment : Fragment() {
                             adapter.submitList(cameras)
                             showEmpty(cameras.isEmpty())
                             AnimationHelper.fadeIn(binding.recyclerView, 300)
+                            preheatOnlineCameras(cameras)
                         }
                     }
                 }
@@ -185,6 +186,18 @@ class CamerasFragment : Fragment() {
         }
 
         mainActivity.container.prefetchIceConfig()
+    }
+
+    private fun preheatOnlineCameras(cameras: List<Camera>) {
+        val mainActivity = activity as? MainActivity ?: return
+        val token = mainActivity.container.prefsManager.token ?: return
+        viewLifecycleOwner.lifecycleScope.launch {
+            cameras.filter { it.isOnline }.forEach { cam ->
+                try {
+                    mainActivity.container.getRepository().preheatCamera(token, cam.id)
+                } catch (_: Exception) {}
+            }
+        }
     }
 
     private fun openCameraDetail(camera: Camera) {

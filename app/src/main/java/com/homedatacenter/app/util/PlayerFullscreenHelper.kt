@@ -99,6 +99,7 @@ class PlayerFullscreenHelper(
      * (it should stay GONE for the whole fullscreen session).
      */
     private val controllerSyncViews: List<View> = emptyList(),
+    private val onFullscreenChanged: ((Boolean) -> Unit)? = null,
 ) {
     var isFullscreen: Boolean = false
         private set
@@ -118,6 +119,7 @@ class PlayerFullscreenHelper(
     // the container instead of filling it after exiting fullscreen.
     private var savedPlayerHeightPx: Int = ViewGroup.LayoutParams.MATCH_PARENT
     private var savedSecondaryHeightPx: Int = ViewGroup.LayoutParams.MATCH_PARENT
+    private var savedResizeMode: Int = com.google.android.exoplayer2.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
     // v1.5.9: remember each host view's fitsSystemWindows state so
     // we can restore it on exit. CameraDetailActivity's root ScrollView
     // sets fitsSystemWindows=true to push content below the status bar
@@ -147,6 +149,11 @@ class PlayerFullscreenHelper(
         val paddingRight: Int,
     )
     private val savedAncestorStates = mutableListOf<SavedInsetState>()
+    // v1.13.7: save hideOnFullscreen views' visibility before entering
+    // fullscreen so we can restore them exactly on exit. Previously we
+    // unconditionally set them to VISIBLE, which made PTZ and Talkback
+    // cards appear even when the camera didn't support those features.
+    private val savedHideVisibilities = mutableMapOf<View, Int>()
 
     /**
      * Attaches the fullscreen button click listener. Must be called
@@ -286,6 +293,15 @@ class PlayerFullscreenHelper(
         if (activity != null) {
             val window = activity.window
             if (window != null) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    val lp = window.attributes
+                    lp.layoutInDisplayCutoutMode = if (isFullscreen) {
+                        WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                    } else {
+                        WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT
+                    }
+                    window.attributes = lp
+                }
                 WindowCompat.setDecorFitsSystemWindows(window, !isFullscreen)
                 val controller = WindowInsetsControllerCompat(window, window.decorView)
                 if (isFullscreen) {
@@ -347,15 +363,25 @@ class PlayerFullscreenHelper(
         }
 
         // Hide/show non-player UI elements.
-        // v1.6.4: [hideOnFullscreen] views (toolbar) always go GONE in
-        // fullscreen and VISIBLE outside. [controllerSyncViews] follow
-        // [controllerOverlayVisible] when IN fullscreen (initially
-        // true → VISIBLE; tap playerView to toggle). When exiting
-        // fullscreen we always restore them to VISIBLE regardless of
-        // latch state — non-fullscreen is the "normal" layout per the
-        // user's request "正常未全屏时，播放器就放在顶部".
-        val hideVisibility = if (isFullscreen) View.GONE else View.VISIBLE
-        hideOnFullscreen.forEach { it.visibility = hideVisibility }
+        // v1.13.7: save each view's current visibility before hiding so
+        // we can restore exactly on exit. This prevents PTZ / Talkback
+        // cards from appearing after fullscreen when the camera doesn't
+        // support them (previously we blindly set VISIBLE on exit).
+        if (isFullscreen) {
+            savedResizeMode = playerView.resizeMode
+            playerView.resizeMode = com.google.android.exoplayer2.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+            savedHideVisibilities.clear()
+            hideOnFullscreen.forEach {
+                savedHideVisibilities[it] = it.visibility
+                it.visibility = View.GONE
+            }
+        } else {
+            playerView.resizeMode = savedResizeMode
+            hideOnFullscreen.forEach {
+                it.visibility = savedHideVisibilities[it] ?: View.VISIBLE
+            }
+            savedHideVisibilities.clear()
+        }
         if (controllerSyncViews.isNotEmpty()) {
             val syncVisibility = if (isFullscreen && !controllerOverlayVisible) View.GONE else View.VISIBLE
             controllerSyncViews.forEach { v ->
@@ -376,6 +402,7 @@ class PlayerFullscreenHelper(
         // rendering. When the secondary view is GONE (i.e. ExoPlayer
         // is the active player), resizing it has no visible effect.
         applyHeight(secondaryPlayerView, save = { savedSecondaryHeightPx = it }, restore = { savedSecondaryHeightPx })
+        onFullscreenChanged?.invoke(isFullscreen)
     }
 
     /**
@@ -507,17 +534,18 @@ class PlayerFullscreenHelper(
         return runCatching {
             val wm = hostView.context.getSystemService(Context.WINDOW_SERVICE)
                 as WindowManager
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-                // currentWindowMetrics reflects what the user
-                // actually sees right now (post-rotation). Using
-                // maximumWindowMetrics gives the max POSSIBLE size
-                // which on a foldable can differ — but on phones
-                // currentWindowMetrics is the right call after the
-                // rotation completes.
-                wm.currentWindowMetrics.bounds.height()
+            val (width, height) = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                val bounds = wm.currentWindowMetrics.bounds
+                bounds.width() to bounds.height()
             } else {
                 @Suppress("DEPRECATION")
-                hostView.resources.displayMetrics.heightPixels
+                val dm = hostView.resources.displayMetrics
+                dm.widthPixels to dm.heightPixels
+            }
+            if (isFullscreen) {
+                minOf(width, height)
+            } else {
+                height
             }
         }.getOrDefault(hostView.resources.displayMetrics.heightPixels)
     }

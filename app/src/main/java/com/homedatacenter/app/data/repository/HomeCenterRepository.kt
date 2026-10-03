@@ -309,7 +309,7 @@ class HomeCenterRepository(
         token: String,
         cameraId: Long,
         command: String,
-        speed: Double = 0.5,
+        speed: Double = 0.25,
         profileToken: String? = null,
     ) {
         val resp = api.moveCamera(
@@ -366,7 +366,7 @@ class HomeCenterRepository(
         token: String,
         cameraId: Long,
         alias: String,
-        speed: Double = 0.5,
+        speed: Double = 0.25,
     ) {
         val resp = api.gotoCameraPreset(
             bearer(token),
@@ -591,6 +591,32 @@ class HomeCenterRepository(
 
     suspend fun cleanSystemCache(token: String) {
         val resp = api.cleanSystemCache(bearer(token))
+        ensureSuccess(resp)
+    }
+
+    suspend fun getStorageConfig(token: String): kotlinx.serialization.json.JsonObject? {
+        val resp = api.getStorageConfig(bearer(token))
+        ensureSuccess(resp)
+        return resp.data as? kotlinx.serialization.json.JsonObject
+    }
+
+    suspend fun updateStorageConfig(token: String, quotaGb: Int, archiveHour: Int, minAgeDays: Int) {
+        val req = mapOf(
+            "quota_gb" to quotaGb,
+            "archive_schedule_hour" to archiveHour,
+            "archive_min_age_days" to minAgeDays
+        )
+        val resp = api.updateStorageConfig(bearer(token), req)
+        ensureSuccess(resp)
+    }
+
+    suspend fun triggerArchiveSync(token: String) {
+        val resp = api.triggerArchiveSync(bearer(token))
+        ensureSuccess(resp)
+    }
+
+    suspend fun updateCameraDetectFps(token: String, cameraId: Long, fps: Int) {
+        val resp = api.updateCameraDetectFps(bearer(token), cameraId, mapOf("fps" to fps))
         ensureSuccess(resp)
     }
 

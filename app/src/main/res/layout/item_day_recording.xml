@@ -83,6 +83,23 @@
                 android:layout_marginBottom="3dp"
                 android:visibility="gone" />
 
+            <!-- v1.13.13: "蓝奏云" badge for cloud-archived days -->
+            <TextView
+                android:id="@+id/tvCloudBadge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="蓝奏云"
+                android:textSize="9sp"
+                android:textStyle="bold"
+                android:textColor="@android:color/white"
+                android:background="@drawable/bg_chip_blue"
+                android:paddingStart="6dp"
+                android:paddingEnd="6dp"
+                android:paddingTop="1dp"
+                android:paddingBottom="1dp"
+                android:layout_marginBottom="3dp"
+                android:visibility="gone" />
+
             <TextView
                 android:id="@+id/tvDayOfMonth"
                 android:layout_width="wrap_content"

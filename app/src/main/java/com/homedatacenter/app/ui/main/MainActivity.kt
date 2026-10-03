@@ -23,8 +23,19 @@ import com.homedatacenter.app.ui.dashboard.DashboardFragment
 import com.homedatacenter.app.ui.login.LoginActivity
 import com.homedatacenter.app.ui.logs.ServiceLogsFragment
 import com.homedatacenter.app.ui.settings.SettingsFragment
+import com.homedatacenter.app.data.model.Alert
+import com.homedatacenter.app.data.model.SystemLog
+import com.homedatacenter.app.data.model.SystemLogLevel
+import com.homedatacenter.app.data.model.WsMessage
+import com.homedatacenter.app.data.model.WsMessageType
+import com.homedatacenter.app.data.ws.HomeCenterWebSocket
+import com.homedatacenter.app.data.ws.WsEventListener
 import com.homedatacenter.app.util.NotificationHelper
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
+import java.util.concurrent.CopyOnWriteArrayList
 
 class MainActivity : AppCompatActivity() {
 
@@ -79,6 +90,25 @@ class MainActivity : AppCompatActivity() {
         NotificationHelper.createChannels(this)
         checkNotificationPermission()
         handleIntentNavigation(intent)
+        ensureWebSocketConnected()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+    }
+
+    fun registerWsListener(listener: (WsMessage) -> Unit) {
+        com.homedatacenter.app.service.AlertKeepAliveService.registerUiListener(listener)
+    }
+
+    fun unregisterWsListener(listener: (WsMessage) -> Unit) {
+        com.homedatacenter.app.service.AlertKeepAliveService.unregisterUiListener(listener)
+    }
+
+    fun ensureWebSocketConnected() {
+        if (container.prefsManager.keepAliveEnabled) {
+            com.homedatacenter.app.service.AlertKeepAliveService.start(this)
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -145,6 +175,7 @@ class MainActivity : AppCompatActivity() {
         // Refresh role on resume — covers the case where the admin
         // demoted themselves in another session (e.g. web dashboard).
         refreshRole()
+        ensureWebSocketConnected()
     }
 
     // v1.6.13: re-sync the active fragment to the BottomNavigationView's
@@ -239,7 +270,6 @@ class MainActivity : AppCompatActivity() {
         if (target != null && target === activeFragment) return
 
         fm.commit {
-            setCustomAnimations(R.anim.fragment_slide_in_right, R.anim.fragment_slide_out_left)
             activeFragment?.let { hide(it) }
             if (target == null) {
                 val newFragment = factory()

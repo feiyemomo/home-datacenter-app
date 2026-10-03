@@ -342,6 +342,11 @@ class ServiceLogsFragment : Fragment() {
                         "WebSocket error, reconnect #$reconnectAttempt: ${throwable.message}")
                 }
             },
+            wsUrlProvider = { mainActivity.container.getWsUrl() },
+            onConnectionFailed = { failedWsUrl ->
+                val failedHttpUrl = failedWsUrl.replace("ws://", "http://").replace("wss://", "https://")
+                mainActivity.container.baseUrlResolver.notifyUrlFailed(failedHttpUrl)
+            }
         )
         logsWebSocket?.connect()
     }

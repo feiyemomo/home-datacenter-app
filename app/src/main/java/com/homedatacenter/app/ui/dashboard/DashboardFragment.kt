@@ -68,7 +68,7 @@ class DashboardFragment : Fragment() {
     private lateinit var recentLogAdapter: RecentLogAdapter
     private var statusPollingJob: Job? = null
     private var liveAlertDismissJob: Job? = null
-    private var dashboardWebSocket: HomeCenterWebSocket? = null
+    private var wsListener: ((com.homedatacenter.app.data.model.WsMessage) -> Unit)? = null
     private var latestSystemStatus: SystemStatus? = null
     // v1.6.0: cache the last live alert so the banner's click handler
     // can jump to its recording at the exact timestamp. Cleared when
@@ -589,8 +589,11 @@ class DashboardFragment : Fragment() {
         // the measured RTT alongside the label.
         val mainActivity = activity as? MainActivity
         val resolver = mainActivity?.container?.baseUrlResolver
+        val showIpv6 = com.homedatacenter.app.util.BaseUrlResolver.ENABLE_IPV6
+        binding.containerDotIpv6.visibility = if (showIpv6) View.VISIBLE else View.GONE
+
         val isLan = resolver?.isLan() ?: false
-        val isIpv6 = resolver?.isIpv6Direct() ?: false
+        val isIpv6 = if (showIpv6) resolver?.isIpv6Direct() ?: false else false
         val rtt = resolver?.currentRttMs() ?: -1L
         val rttStr = if (rtt >= 0) " (${rtt}ms)" else ""
         binding.tvNetworkStrategy.text = when {
@@ -622,11 +625,12 @@ class DashboardFragment : Fragment() {
         // that as a hint.
         val canUpgrade = status.strategy != "relay" &&
             status.strategy.isNotBlank() &&
-            status.strategy != status.initial
+            status.strategy != status.initial &&
+            (showIpv6 || status.strategy != "ipv6_direct")
         if (canUpgrade) {
             binding.tvNetworkUpgrade.visibility = View.VISIBLE
             binding.tvNetworkUpgrade.text = when (status.strategy) {
-                "ipv6_direct" -> "↑ " + getString(R.string.network_upgrade_ipv6)
+                "ipv6_direct" -> if (showIpv6) "↑ " + getString(R.string.network_upgrade_ipv6) else ""
                 "p2p" -> "↑ " + getString(R.string.network_upgrade_p2p)
                 else -> ""
             }
@@ -641,7 +645,9 @@ class DashboardFragment : Fragment() {
         }
 
         // Capability dots: IPv6, P2P, Relay
-        applyDot(binding.dotIPv6, status.ipv6.reachable)
+        if (showIpv6) {
+            applyDot(binding.dotIPv6, status.ipv6.reachable)
+        }
         applyDot(binding.dotP2P, status.p2p.supported)
         applyDot(binding.dotRelay, status.relay.available)
     }
@@ -651,7 +657,11 @@ class DashboardFragment : Fragment() {
         stars.forEach { it.setImageResource(R.drawable.ic_star_off) }
         binding.tvNetworkStrategy.text = getString(R.string.network_unknown)
         binding.tvNetworkUpgrade.visibility = View.GONE
-        applyDot(binding.dotIPv6, false)
+        val showIpv6 = com.homedatacenter.app.util.BaseUrlResolver.ENABLE_IPV6
+        binding.containerDotIpv6.visibility = if (showIpv6) View.VISIBLE else View.GONE
+        if (showIpv6) {
+            applyDot(binding.dotIPv6, false)
+        }
         applyDot(binding.dotP2P, false)
         applyDot(binding.dotRelay, false)
     }
@@ -663,44 +673,19 @@ class DashboardFragment : Fragment() {
     // --- Real-time WebSocket events ---
 
     private fun setupDashboardWebSocket() {
-        if (dashboardWebSocket != null) return
+        if (wsListener != null) return
         val mainActivity = activity as? MainActivity ?: return
-        val token = mainActivity.container.prefsManager.token ?: return
-        dashboardWebSocket = HomeCenterWebSocket(
-            client = mainActivity.container.okHttpClient,
-            wsUrl = mainActivity.container.getWsUrl(),
-            token = token,
-            listener = object : WsEventListener {
-                override fun onConnected() {
-                    dashboardWebSocket?.subscribe("device")
-                    dashboardWebSocket?.subscribe("camera")
-                    dashboardWebSocket?.subscribe("camera.motion")
-                    dashboardWebSocket?.subscribe("camera.fall_detected")
-                    dashboardWebSocket?.subscribe("camera.person_recognized")
-                    dashboardWebSocket?.subscribe("system.log")
-                }
-
-                override fun onMessage(message: WsMessage) {
-                    activity?.runOnUiThread {
-                        if (_binding != null) handleWebSocketMessage(message)
-                    }
-                }
-
-                override fun onDisconnected(code: Int, reason: String?) = Unit
-
-                override fun onError(throwable: Throwable, reconnectAttempt: Int) {
-                    android.util.Log.w(
-                        "Dashboard",
-                        "WebSocket error, reconnect #$reconnectAttempt: ${throwable.message}",
-                    )
-                }
-            },
-        )
+        val listener: (WsMessage) -> Unit = { message ->
+            if (_binding != null) handleWebSocketMessage(message)
+        }
+        wsListener = listener
+        mainActivity.registerWsListener(listener)
+        mainActivity.ensureWebSocketConnected()
     }
 
     private fun connectDashboardWebSocket() {
         setupDashboardWebSocket()
-        dashboardWebSocket?.connect()
+        (activity as? MainActivity)?.ensureWebSocketConnected()
     }
 
     private fun handleWebSocketMessage(message: WsMessage) {
@@ -1169,8 +1154,8 @@ class DashboardFragment : Fragment() {
         stopStatusPolling()
         liveAlertDismissJob?.cancel()
         liveAlertDismissJob = null
-        dashboardWebSocket?.disconnect()
-        dashboardWebSocket = null
+        wsListener?.let { (activity as? MainActivity)?.unregisterWsListener(it) }
+        wsListener = null
         binding.rvAlerts.adapter = null
         binding.rvRecentLogs.adapter = null
         _binding = null

@@ -104,6 +104,7 @@ class CameraDetailActivity : AppCompatActivity() {
     private var triedWebRtc = false
     private var triedMp4 = false
     private var triedHls = false
+    private var triedH264Hls = false
     private var audioEnabled = true
     private var recordingsDialog: RecordingsDialog? = null
     private var alertsDialog: AlertsDialog? = null
@@ -132,6 +133,8 @@ class CameraDetailActivity : AppCompatActivity() {
     // PeerConnection stays alive so resume is instant.
     private var webRtcPaused = false
     private var webRtcMuted = false
+    // v1.13.8: live stream quality (defaults to 720p per user requirement)
+    private var currentLiveQuality = "720p"
     // Cached ICE config from /api/v1/cameras/ice — fetched once
     // per activity instance (re-fetched on retry if null).
     private var cachedIceConfig: IceConfig? = null
@@ -582,7 +585,7 @@ class CameraDetailActivity : AppCompatActivity() {
                 binding.surfaceRenderer.init(client.eglBase.eglBaseContext, null)
                 binding.surfaceRenderer.setMirror(false)
                 binding.surfaceRenderer.setScalingType(
-                    RendererCommon.ScalingType.SCALE_ASPECT_FILL
+                    RendererCommon.ScalingType.SCALE_ASPECT_FIT
                 )
                 client.reattachVideoTrack(binding.surfaceRenderer)
             } catch (e: Exception) {
@@ -636,6 +639,7 @@ class CameraDetailActivity : AppCompatActivity() {
         // Reset fallback ladder flags so reload retries WebRTC first.
         triedMp4 = false
         triedHls = false
+        triedH264Hls = false
         // Hide WebRTC-only overlays so they don't linger during reload.
         binding.btnWebRtcFullscreen.visibility = View.GONE
         binding.webRtcControls.visibility = View.GONE
@@ -796,9 +800,42 @@ class CameraDetailActivity : AppCompatActivity() {
         binding.btnCodecH264.visibility = View.VISIBLE
         binding.btnCodecH264.setOnClickListener { updateCodec() }
 
+        // AI Detect FPS button
+        val currentFps = camera?.detectFps ?: 2
+        binding.btnDetectFps.visibility = View.VISIBLE
+        binding.btnDetectFps.text = "AI 抽样检测频率 (${currentFps} fps)"
+        binding.btnDetectFps.setOnClickListener { showDetectFpsDialog() }
+
         // Delete camera — admin only.
         binding.btnDelete.visibility = View.VISIBLE
         binding.btnDelete.setOnClickListener { confirmDeleteCamera() }
+    }
+
+    private fun showDetectFpsDialog() {
+        val cam = camera ?: return
+        val token = container.prefsManager.token ?: return
+        val fpsOptions = arrayOf("1 fps (极低负载/省 CPU)", "2 fps (标准推荐/平衡)", "5 fps (高频运动抓拍)")
+        val fpsValues = intArrayOf(1, 2, 5)
+        val currentIndex = fpsValues.indexOf(cam.detectFps).let { if (it >= 0) it else 1 }
+
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("设置 AI 抽样检测频率")
+            .setSingleChoiceItems(fpsOptions, currentIndex) { dialog, which ->
+                val selectedFps = fpsValues[which]
+                dialog.dismiss()
+                lifecycleScope.launch {
+                    try {
+                        container.getRepository().updateCameraDetectFps(token, cam.id, selectedFps)
+                        camera = cam.copy(detectFps = selectedFps)
+                        binding.btnDetectFps.text = "AI 抽样检测频率 (${selectedFps} fps)"
+                        toast("AI 抽样检测频率已设置为 ${selectedFps} fps")
+                    } catch (e: Exception) {
+                        toast("设置失败: ${e.message}")
+                    }
+                }
+            }
+            .setNegativeButton("取消", null)
+            .show()
     }
 
     // --- API actions ---
@@ -1041,12 +1078,31 @@ class CameraDetailActivity : AppCompatActivity() {
             hideOnFullscreen = listOf(
                 binding.toolbar,
                 binding.actionButtonsRow,
+                binding.cardTalkback,
+                binding.tvPtzSectionTitle,
                 binding.cardPtz,
-                binding.rvPresets.parent.parent as View, // presets section LinearLayout
+                binding.tvPresetsSectionTitle,
+                binding.cardPresets,
+                binding.tvSettingsSectionTitle,
+                binding.cardSettings,
             ),
             speedButton = null,
             secondaryPlayerView = binding.surfaceRenderer,
             fullscreenButton = binding.btnWebRtcFullscreen,
+            onFullscreenChanged = { isFs ->
+                binding.pinchZoomContainer.resetZoom(false)
+                if (isFs) {
+                    // v1.13.9: adapt to phone screen (FIT mode) rather than crop/fill (FILL mode)
+                    binding.surfaceRenderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT)
+                    binding.playerView.resizeMode = com.google.android.exoplayer2.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    binding.root.isNestedScrollingEnabled = false
+                    binding.root.scrollTo(0, 0)
+                } else {
+                    binding.surfaceRenderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT)
+                    binding.playerView.resizeMode = com.google.android.exoplayer2.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    binding.root.isNestedScrollingEnabled = true
+                }
+            }
         )
         helper.attach()
         fullscreenHelper = helper
@@ -1230,6 +1286,29 @@ class CameraDetailActivity : AppCompatActivity() {
         binding.btnWebRtcPip.setOnClickListener {
             enterPipMode()
         }
+        binding.btnWebRtcQuality.text = if (currentLiveQuality == "1080p") "1080P" else "720P"
+        binding.btnWebRtcQuality.setOnClickListener { v ->
+            val popup = android.widget.PopupMenu(this, v)
+            popup.menu.add(0, 720, 0, "720P (默认/高清)")
+            popup.menu.add(0, 1080, 1, "1080P (超清/原画)")
+            popup.setOnMenuItemClickListener { item ->
+                val newQ = if (item.itemId == 1080) "1080p" else "720p"
+                if (newQ != currentLiveQuality) {
+                    currentLiveQuality = newQ
+                    binding.btnWebRtcQuality.text = if (newQ == "1080p") "1080P" else "720P"
+                    try {
+                        webRtcClient?.stopPlayoutImmediately()
+                        webRtcClient?.release()
+                    } catch (_: Exception) {}
+                    webRtcInProgress = false
+                    binding.root.postDelayed({
+                        startPlayback()
+                    }, 150)
+                }
+                true
+            }
+            popup.show()
+        }
     }
 
     private fun updateWebRtcControlButtons() {
@@ -1347,6 +1426,7 @@ class CameraDetailActivity : AppCompatActivity() {
         triedWebRtc = false
         triedMp4 = false
         triedHls = false
+        triedH264Hls = false
 
         binding.tvVideoError.setOnClickListener {
             val c = camera
@@ -1447,11 +1527,11 @@ class CameraDetailActivity : AppCompatActivity() {
             // creation requires it on most GPUs).
             binding.surfaceRenderer.init(client.eglBase.eglBaseContext, null)
             binding.surfaceRenderer.setMirror(false)
-            // SCALE_ASPECT_FILL so the video fills the renderer bounds
-            // without letterboxing — matches ExoPlayer's resize_mode
-            // = fixed_width behavior.
+            // v1.13.7: always use FILL — in fullscreen the video should
+            // fill the screen (user can pinch-to-zoom to adjust). FIT was
+            // causing letterboxing on tall-aspect phones.
             binding.surfaceRenderer.setScalingType(
-                RendererCommon.ScalingType.SCALE_ASPECT_FILL
+                RendererCommon.ScalingType.SCALE_ASPECT_FIT
             )
             true
         } catch (e: Exception) {
@@ -1574,13 +1654,6 @@ class CameraDetailActivity : AppCompatActivity() {
         webRtcMuted = false
         updateWebRtcControlButtons()
 
-        // Pre-prepare the ExoPlayer fallback (playWhenReady=false) so
-        // that if WebRTC fails we can promote it to the main player
-        // slot instantly, skipping the ExoPlayer cold-start delay.
-        // ExoPlayer.prepare() is async so this doesn't block the
-        // WebRTC negotiation below.
-        prepareFallbackPlayer(cam)
-
         // Fetch ICE config (cached after first call). The list may
         // be empty on LAN — host candidates are enough there.
         // v1.5.7: prefer container.getCachedIceConfig() to skip the
@@ -1629,6 +1702,7 @@ class CameraDetailActivity : AppCompatActivity() {
                 iceServers = iceServers,
                 isLan = isDirectPath,
                 enableTwoWayAudio = cam.hasTwoWayAudio,
+                quality = currentLiveQuality,
                 listener = object : WebRtcClient.Listener {
                     override fun onConnected() {
                         webRtcInProgress = false
@@ -1677,42 +1751,31 @@ class CameraDetailActivity : AppCompatActivity() {
                             android.util.Log.d(TAG, "WebRTC error while dialog open: ignoring fallback")
                             return
                         }
-                        android.util.Log.w(TAG, "WebRTC failed: $reason — falling back to MP4")
-                        // Hide WebRTC surface, show ExoPlayer surface.
-                        binding.surfaceRenderer.visibility = View.GONE
+                        android.util.Log.w(TAG, "WebRTC failed: $reason — falling back to fresh ExoPlayer")
+
+                        // v1.13.18: If failure was due to ICE disconnect or tunnel rotation, immediately notify resolver
+                        if (reason.contains("ICE disconnected") || reason.contains("ICE failed")) {
+                            val resolver = container.baseUrlResolver
+                            val activeH3c = resolver.getCachedH3cUrl()
+                            if (!activeH3c.isNullOrBlank()) {
+                                resolver.notifyUrlFailed(activeH3c)
+                            }
+                        }
+
+                        // Seamless failover: keep surfaceRenderer visible displaying the last frame
+                        // until ExoPlayer is prepared and buffers first frame (STATE_READY)
                         binding.webRtcControls.visibility = View.GONE
                         binding.btnWebRtcFullscreen.visibility = View.GONE
                         binding.playerView.visibility = View.VISIBLE
-                        // Promote the pre-prepared fallback player to
-                        // the main slot if it's still alive. This skips
-                        // the ExoPlayer cold-start delay since the media
-                        // source was already prepared in the background
-                        // while WebRTC was negotiating. If the fallback
-                        // player is null (prepare failed or never ran),
-                        // fall back to the original startMp4Playback path.
-                        val fb = fallbackPlayer
-                        if (fb != null) {
-                            player = fb
-                            fallbackPlayer = null
-                            binding.playerView.player = fb
-                            fb.playWhenReady = true
-                            fb.volume = if (audioEnabled) 1.0f else 0.0f
-                            // Re-derive the strategy badge from the
-                            // current path config (the fallback player
-                            // was prepared with this transport).
-                            val isDirectPath = container.baseUrlResolver.isDirectPath()
-                            val mp4Url = resolveMp4Url(cam)
-                            val hlsUrl = resolveHlsUrl(cam)
-                            val useMp4 = when {
-                                isDirectPath -> mp4Url.isNotBlank()
-                                hlsUrl.isNotBlank() -> false
-                                else -> mp4Url.isNotBlank()
-                            }
-                            updateStreamStrategy(if (useMp4) "MP4" else "HLS")
-                            fullscreenHelper?.onPlayerChanged(fb)
-                        } else {
-                            startMp4Playback(cam)
-                        }
+                        binding.progressVideo.visibility = View.VISIBLE
+
+                        // Clean up stale fallback player: unconsumed HLS sessions in go2rtc expire
+                        // in 5s, so a pre-prepared session is already dead (404) when WebRTC times out.
+                        fallbackPlayer?.stop()
+                        fallbackPlayer?.release()
+                        fallbackPlayer = null
+
+                        startMp4Playback(cam)
                     }
 
                     override fun onIceStateChanged(state: PeerConnection.IceConnectionState) {
@@ -1808,7 +1871,8 @@ class CameraDetailActivity : AppCompatActivity() {
         fallbackPlayer = null
 
         val mp4Url = resolveMp4Url(cam)
-        val hlsUrl = resolveHlsUrl(cam)
+        // For fallback while WebRTC is negotiating, prefer rock-solid H.264 HLS
+        val hlsUrl = resolveHlsUrl(cam, preferH264 = true)
         if (mp4Url.isBlank() && hlsUrl.isBlank()) return
 
         val isDirectPath = container.baseUrlResolver.isDirectPath()
@@ -1843,9 +1907,9 @@ class CameraDetailActivity : AppCompatActivity() {
                 .setUri(Uri.parse(url))
                 .setLiveConfiguration(
                     MediaItem.LiveConfiguration.Builder()
-                        .setTargetOffsetMs(1_500)
-                        .setMaxOffsetMs(5_000)
-                        .setMinOffsetMs(500)
+                        .setTargetOffsetMs(3_000)
+                        .setMaxOffsetMs(10_000)
+                        .setMinOffsetMs(1_000)
                         .build()
                 )
                 .build()
@@ -1855,10 +1919,10 @@ class CameraDetailActivity : AppCompatActivity() {
 
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                /* minBufferMs= */ 1_000,
-                /* maxBufferMs= */ 3_000,
-                /* bufferForPlaybackMs= */ 500,
-                /* bufferForPlaybackAfterRebufferMs= */ 1_000,
+                /* minBufferMs= */ 2_500,
+                /* maxBufferMs= */ 10_000,
+                /* bufferForPlaybackMs= */ 1_000,
+                /* bufferForPlaybackAfterRebufferMs= */ 1_500,
             )
             .setTargetBufferBytes(DefaultLoadControl.DEFAULT_TARGET_BUFFER_BYTES)
             .setPrioritizeTimeOverSizeThresholds(true)
@@ -1893,6 +1957,7 @@ class CameraDetailActivity : AppCompatActivity() {
                         streamRetryJob?.cancel()
                         binding.tvVideoError.text = getString(R.string.camera_video_failed)
                         binding.tvVideoError.visibility = View.GONE
+                        binding.surfaceRenderer.visibility = View.GONE
                         hidePreviewFrame()
                         updatePipParams()
                     }
@@ -1907,6 +1972,13 @@ class CameraDetailActivity : AppCompatActivity() {
                         "Fallback player error (useMp4=$useMp4): ${error.message}",
                         error,
                     )
+                    // Auto-heal BehindLiveWindowException without breaking playback
+                    if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {
+                        android.util.Log.w(TAG, "Fallback player behind live window, re-seeking...")
+                        newPlayer.seekToDefaultPosition()
+                        newPlayer.prepare()
+                        return
+                    }
                     if (fallbackPlayer === newPlayer) {
                         // Still in the fallback slot (not promoted):
                         // release and null out so WebRTC onError falls
@@ -1973,18 +2045,13 @@ class CameraDetailActivity : AppCompatActivity() {
                 .createMediaSource(MediaItem.fromUri(Uri.parse(url)))
         } else {
             triedHls = true
-            // v1.6.19: tightened live offset for 0.5s LL-HLS segments.
-            // targetOffset=1.5s (3 segments) down from 3s — matches
-            // the new segment size and gets the user closer to live.
-            // minOffset=500ms (1 segment) lets ExoPlayer chase live
-            // aggressively when the playlist advances.
             val mediaItem = MediaItem.Builder()
                 .setUri(Uri.parse(url))
                 .setLiveConfiguration(
                     MediaItem.LiveConfiguration.Builder()
-                        .setTargetOffsetMs(1_500)
-                        .setMaxOffsetMs(5_000)
-                        .setMinOffsetMs(500)
+                        .setTargetOffsetMs(3_000)
+                        .setMaxOffsetMs(10_000)
+                        .setMinOffsetMs(1_000)
                         .build()
                 )
                 .build()
@@ -1992,20 +2059,12 @@ class CameraDetailActivity : AppCompatActivity() {
                 .createMediaSource(mediaItem)
         }
 
-        // v1.6.19: tightened LoadControl for the new 0.5s LL-HLS
-        // segments. With segment=0.5s (config.yml), 2 segments = 1s
-        // of content — enough to start playback without stalls on
-        // most networks. bufferForPlayback=500ms lets ExoPlayer
-        // start as soon as one partial segment (~167ms) is buffered,
-        // cutting first-frame from ~3s to ~1.5-2s on remote.
-        // maxBuffer=3s (6 segments) keeps memory bounded while
-        // allowing enough runway to absorb Cloudflare Tunnel jitter.
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                /* minBufferMs= */ 1_000,
-                /* maxBufferMs= */ 3_000,
-                /* bufferForPlaybackMs= */ 500,
-                /* bufferForPlaybackAfterRebufferMs= */ 1_000,
+                /* minBufferMs= */ 2_500,
+                /* maxBufferMs= */ 10_000,
+                /* bufferForPlaybackMs= */ 1_000,
+                /* bufferForPlaybackAfterRebufferMs= */ 1_500,
             )
             .setTargetBufferBytes(DefaultLoadControl.DEFAULT_TARGET_BUFFER_BYTES)
             .setPrioritizeTimeOverSizeThresholds(true)
@@ -2040,6 +2099,7 @@ class CameraDetailActivity : AppCompatActivity() {
                         streamRetryJob?.cancel()
                         binding.tvVideoError.text = getString(R.string.camera_video_failed)
                         binding.tvVideoError.visibility = View.GONE
+                        binding.surfaceRenderer.visibility = View.GONE
                         // v1.6.16: hide the JPEG preview frame once
                         // ExoPlayer has its first frame ready.
                         hidePreviewFrame()
@@ -2056,9 +2116,31 @@ class CameraDetailActivity : AppCompatActivity() {
                         "Playback error (useMp4=$useMp4): ${error.message}",
                         error,
                     )
-                    // Failover: MP4 → HLS → self-healing retry.
+                    // Auto-heal BehindLiveWindowException without breaking playback
+                    if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {
+                        android.util.Log.w(TAG, "Behind live window in HLS, re-seeking to live edge...")
+                        newPlayer.seekToDefaultPosition()
+                        newPlayer.prepare()
+                        return
+                    }
+
+                    // Failover: MP4 → HLS → H.264 HLS → self-healing retry.
                     if (useMp4 && hlsUrl.isNotBlank() && !triedHls) {
+                        triedHls = true
                         preparePlayback(mp4Url, hlsUrl, useMp4 = false)
+                    } else if (!useMp4 && !triedH264Hls) {
+                        // Failover: HEVC HLS -> H.264 HLS
+                        val cam = camera
+                        if (cam != null) {
+                            val h264Url = resolveHlsUrl(cam, preferH264 = true)
+                            if (h264Url.isNotBlank() && h264Url != url) {
+                                triedH264Hls = true
+                                android.util.Log.w(TAG, "HLS error on primary stream, falling back to H.264 HLS: $h264Url")
+                                preparePlayback(mp4Url, h264Url, useMp4 = false)
+                                return
+                            }
+                        }
+                        handleStreamPlaybackFailure()
                     } else {
                         handleStreamPlaybackFailure()
                     }
@@ -2120,17 +2202,16 @@ class CameraDetailActivity : AppCompatActivity() {
         return "${baseUrl.trimEnd('/')}/api/v1/cameras/${camera.id}/stream.mp4"
     }
 
-    private fun resolveHlsUrl(camera: Camera): String {
+    private fun resolveHlsUrl(camera: Camera, preferH264: Boolean = false): String {
         val baseUrl = container.getApiBaseUrl().orEmpty()
         val stream = camera.stream
-        // v1.8.48: prefer the camera's native-HEVC passthrough HLS when the
-        // device can decode HEVC and the backend exposed an <name>_hevc
-        // stream (zero-transcode). Falls back to the H.264 transcode chain.
+        val hlsUrl = stream?.hlsUrl?.trim().orEmpty()
         val hlsHevcUrl = stream?.hlsHevcUrl?.trim().orEmpty()
-        if (hlsHevcUrl.isNotEmpty() && DecoderSupport.canDecodeHevc()) {
+
+        // If not forcing H.264, try native-HEVC passthrough when supported
+        if (!preferH264 && hlsHevcUrl.isNotEmpty() && DecoderSupport.canDecodeHevc()) {
             return resolveAbsoluteUrl(hlsHevcUrl)
         }
-        val hlsUrl = stream?.hlsUrl?.trim().orEmpty()
         if (hlsUrl.isNotEmpty()) return resolveAbsoluteUrl(hlsUrl)
 
         val streamName = stream?.streamName?.trim().orEmpty()
@@ -2139,10 +2220,17 @@ class CameraDetailActivity : AppCompatActivity() {
     }
 
     private fun resolveAbsoluteUrl(url: String): String {
-        if (url.startsWith("http://") || url.startsWith("https://")) return url
         val baseUrl = container.getApiBaseUrl().orEmpty()
-        if (baseUrl.isBlank()) return url
         val origin = baseUrl.trimEnd('/')
+        if (url.startsWith("http://") || url.startsWith("https://")) {
+            val uri = Uri.parse(url)
+            if (uri.port == 1984 || uri.host == "home-frigate" || uri.host == "home-go2rtc") {
+                val pathAndQuery = url.substringAfter(uri.authority ?: "")
+                return "$origin$pathAndQuery"
+            }
+            return url
+        }
+        if (baseUrl.isBlank()) return url
         return if (url.startsWith('/')) "$origin$url" else "$origin/$url"
     }
 

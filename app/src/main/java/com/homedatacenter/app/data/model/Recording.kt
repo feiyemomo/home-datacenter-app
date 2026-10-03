@@ -13,5 +13,9 @@ data class Recording(
     @SerialName("segment_count") val segmentCount: Int = 0,
     @SerialName("size_bytes") val sizeBytes: Long = 0,
     @SerialName("size_human") val sizeHuman: String = "--",
-    @SerialName("file_path") val filePath: String = ""
-)
+    @SerialName("file_path") val filePath: String = "",
+    val storage: String = "local"
+) {
+    val isCloud: Boolean
+        get() = storage == "cloud"
+}

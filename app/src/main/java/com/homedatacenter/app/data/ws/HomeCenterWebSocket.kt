@@ -30,12 +30,15 @@ class HomeCenterWebSocket(
     private val token: String,
     private val listener: WsEventListener,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
-    private val heartbeatIntervalMs: Long = 30_000L
+    private val heartbeatIntervalMs: Long = 30_000L,
+    private val wsUrlProvider: (() -> String)? = null,
+    private val onConnectionFailed: ((String) -> Unit)? = null,
 ) {
 
     @Volatile private var webSocket: WebSocket? = null
     @Volatile private var isConnected: Boolean = false
     @Volatile private var shouldReconnect: Boolean = true
+    @Volatile private var activeWsUrl: String = wsUrl
 
     private var heartbeatJob: Job? = null
     private var reconnectJob: Job? = null
@@ -47,12 +50,16 @@ class HomeCenterWebSocket(
         shouldReconnect = true
         if (webSocket != null) return
 
+        val targetUrl = wsUrlProvider?.invoke()?.ifBlank { null } ?: wsUrl
+        activeWsUrl = targetUrl
+        Log.i(TAG, "connecting to $targetUrl (attempt $reconnectAttempt)")
+
         val request = Request.Builder()
-            .url(wsUrl)
+            .url(targetUrl)
             .header("Authorization", "Bearer $token")
             .build()
 
-        webSocket = client.newWebSocket(request, WsListener())
+        webSocket = client.newWebSocket(request, WsListener(targetUrl))
     }
 
     fun disconnect() {
@@ -136,10 +143,10 @@ class HomeCenterWebSocket(
         listener.onMessage(msg)
     }
 
-    private inner class WsListener : WebSocketListener() {
+    private inner class WsListener(private val connectingUrl: String) : WebSocketListener() {
 
         override fun onOpen(webSocket: WebSocket, response: okhttp3.Response) {
-            Log.i(TAG, "ws connected (http=${response.code})")
+            Log.i(TAG, "ws connected to $connectingUrl (http=${response.code})")
             isConnected = true
             reconnectAttempt = 0
             this@HomeCenterWebSocket.webSocket = webSocket
@@ -172,10 +179,13 @@ class HomeCenterWebSocket(
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: okhttp3.Response?) {
-            Log.w(TAG, "ws failure: ${t.message}")
+            Log.w(TAG, "ws failure on $connectingUrl: ${t.message}")
             isConnected = false
             stopHeartbeat()
             this@HomeCenterWebSocket.webSocket = null
+            if (reconnectAttempt >= 1) {
+                onConnectionFailed?.invoke(connectingUrl)
+            }
             listener.onError(t, reconnectAttempt + 1)
             if (shouldReconnect) scheduleReconnect()
         }

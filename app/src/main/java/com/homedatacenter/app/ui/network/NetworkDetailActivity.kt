@@ -70,6 +70,14 @@ class NetworkDetailActivity : AppCompatActivity() {
             }
         }
 
+        // Upstream optical modem has no IPv6; hide IPv6 UI elements (kept dormant).
+        if (!com.homedatacenter.app.util.BaseUrlResolver.ENABLE_IPV6) {
+            binding.btnPrefIpv6.visibility = View.GONE
+            binding.tvIpv6Title.visibility = View.GONE
+            binding.cardIpv6.visibility = View.GONE
+            binding.tvServerIpv6.visibility = View.GONE
+        }
+
         // Initial render from cache so the user sees something immediately.
         renderFromCache()
         loadAll(forceRefresh = false)
@@ -286,7 +294,7 @@ class NetworkDetailActivity : AppCompatActivity() {
             val newPref = when (checkedId) {
                 R.id.btnPrefAuto -> NetworkPathPreference.AUTO
                 R.id.btnPrefLan -> NetworkPathPreference.LAN
-                R.id.btnPrefIpv6 -> NetworkPathPreference.IPV6_DIRECT
+                R.id.btnPrefIpv6 -> if (com.homedatacenter.app.util.BaseUrlResolver.ENABLE_IPV6) NetworkPathPreference.IPV6_DIRECT else NetworkPathPreference.AUTO
                 R.id.btnPrefRelay -> NetworkPathPreference.RELAY
                 else -> return@addOnButtonCheckedListener
             }
@@ -316,7 +324,7 @@ class NetworkDetailActivity : AppCompatActivity() {
         val btnId = when (currentPref) {
             NetworkPathPreference.AUTO -> R.id.btnPrefAuto
             NetworkPathPreference.LAN -> R.id.btnPrefLan
-            NetworkPathPreference.IPV6_DIRECT -> R.id.btnPrefIpv6
+            NetworkPathPreference.IPV6_DIRECT -> if (com.homedatacenter.app.util.BaseUrlResolver.ENABLE_IPV6) R.id.btnPrefIpv6 else R.id.btnPrefAuto
             NetworkPathPreference.RELAY -> R.id.btnPrefRelay
         }
         // Only call check() if the button isn't already checked —

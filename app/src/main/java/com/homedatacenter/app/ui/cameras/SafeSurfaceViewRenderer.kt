@@ -36,7 +36,10 @@ class SafeSurfaceViewRenderer @JvmOverloads constructor(
             widthSpec
         }
 
-        val safeHeightSpec = if (hMode == MeasureSpec.UNSPECIFIED || hSize >= 16384 || hSize <= 0) {
+        val lpHeight = layoutParams?.height ?: android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+        val safeHeightSpec = if (lpHeight > 0) {
+            MeasureSpec.makeMeasureSpec(lpHeight, MeasureSpec.EXACTLY)
+        } else if (hMode == MeasureSpec.UNSPECIFIED || hSize >= 16384 || hSize <= 0) {
             val w = MeasureSpec.getSize(safeWidthSpec)
             val computedH = (w * 9) / 16
             MeasureSpec.makeMeasureSpec(computedH, MeasureSpec.EXACTLY)

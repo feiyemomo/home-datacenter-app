@@ -209,9 +209,16 @@ class BaseUrlResolver(
         val lastGood = prefs.getString(KEY_LAST_RESOLVED_URL, null)
         resolved = when (preference) {
             NetworkPathPreference.LAN -> effectiveLanUrl
-            NetworkPathPreference.IPV6_DIRECT -> IPV6_DIRECT_URL
+            NetworkPathPreference.IPV6_DIRECT -> if (ENABLE_IPV6) IPV6_DIRECT_URL else REMOTE_URL
             NetworkPathPreference.RELAY -> REMOTE_URL
-            NetworkPathPreference.AUTO -> if (!lastGood.isNullOrBlank()) lastGood else REMOTE_URL
+            NetworkPathPreference.AUTO -> {
+                if (!lastGood.isNullOrBlank() && (ENABLE_IPV6 || (lastGood != IPV6_DIRECT_URL && lastGood != IPV6_LITERAL_URL && !lastGood.startsWith("http://[")))) {
+                    lastGood
+                } else {
+                    val cachedH3c = getCachedH3cUrl()
+                    if (!cachedH3c.isNullOrBlank()) cachedH3c else REMOTE_URL
+                }
+            }
         }
     }
 
@@ -343,64 +350,133 @@ class BaseUrlResolver(
      * RTT is omitted when [lastRttMs] is negative (no successful
      * probe yet) to avoid misleading "( -1ms)" output.
      */
+    fun getCachedH3cUrl(): String? = prefs.getString(KEY_H3C_URL, null)
+
+    fun isH3cFast(): Boolean {
+        val h3c = getCachedH3cUrl()
+        return !h3c.isNullOrBlank() && (resolved == h3c || resolved.trimEnd('/') == h3c.trimEnd('/'))
+    }
+
+    private fun fetchH3cUrl(): String? {
+        val fastClient = client.newBuilder()
+            .callTimeout(8_000, TimeUnit.MILLISECONDS)
+            .connectTimeout(5_000, TimeUnit.MILLISECONDS)
+            .readTimeout(5_000, TimeUnit.MILLISECONDS)
+            .build()
+        val req = Request.Builder()
+            .url("${REMOTE_URL.trimEnd('/')}/fast-status")
+            .header("X-Probe-Request", "true")
+            .get()
+            .build()
+        return try {
+            fastClient.newCall(req).execute().use { resp ->
+                if (resp.isSuccessful) {
+                    val body = resp.body?.string() ?: return null
+                    val json = org.json.JSONObject(body)
+                    if (json.optString("status") == "online") {
+                        val addr = json.optString("externalAddr")
+                        if (addr.isNotBlank()) {
+                            val normalized = if (addr.endsWith("/")) addr else "$addr/"
+                            prefs.edit().putString(KEY_H3C_URL, normalized).apply()
+                            android.util.Log.i(TAG, "Discovered H3C Domestic Gateway: $normalized")
+                            normalized
+                        } else null
+                    } else null
+                } else null
+            }
+        } catch (e: Exception) {
+            android.util.Log.w(TAG, "fetchH3cUrl failed: ${e.message}")
+            null
+        }
+    }
+
+    /**
+     * Called by RetryInterceptor, WebSocket, or Repository when a request to [failedUrl] fails
+     * with an IOException (connection reset, broken stream, timeout, host unreachable) or 5xx.
+     *
+     * If the failed URL corresponds to the current resolved URL or the cached H3C tunnel,
+     * immediately switches to REMOTE_URL as a safe fallback, invalidates the bad cache,
+     * fires onUrlChanged, and triggers a re-probe in the background to discover fresh paths.
+     */
+    fun notifyUrlFailed(failedUrl: String) {
+        val currentResolved = resolved
+        android.util.Log.w(TAG, "notifyUrlFailed called for: $failedUrl (current resolved=$currentResolved)")
+
+        val cachedH3c = getCachedH3cUrl()
+        val isFailedH3c = (!cachedH3c.isNullOrBlank() && failedUrl.contains(cachedH3c.trimEnd('/'))) ||
+                (isH3cFast() && (failedUrl.contains(currentResolved.trimEnd('/')) || failedUrl.contains("154.8.195.220"))) ||
+                failedUrl.contains("154.8.195.220")
+        val isFailedLan = isLan() && (failedUrl.contains(effectiveLanUrl.trimEnd('/')) || failedUrl.contains(effectiveLanHost))
+
+        if (isFailedH3c) {
+            android.util.Log.w(TAG, "Active H3C tunnel failed: $failedUrl. Clearing cached H3C and falling back to Remote Tunnel")
+            prefs.edit().remove(KEY_H3C_URL).putString(KEY_LAST_RESOLVED_URL, REMOTE_URL).apply()
+            resolved = REMOTE_URL
+            lastRttMs = -1L
+            lastProbedAt = 0L
+            onUrlChanged?.invoke(REMOTE_URL)
+            forceProbe()
+        } else if (isFailedLan) {
+            android.util.Log.w(TAG, "Active LAN path failed: $failedUrl. Falling back to Remote / H3C")
+            val fallback = if (!cachedH3c.isNullOrBlank()) cachedH3c else REMOTE_URL
+            resolved = fallback
+            lastRttMs = -1L
+            lastProbedAt = 0L
+            onUrlChanged?.invoke(fallback)
+            forceProbe()
+        } else if (failedUrl.contains(currentResolved.trimEnd('/')) && resolved != REMOTE_URL) {
+            android.util.Log.w(TAG, "Current path failed: $failedUrl. Falling back to Remote Tunnel")
+            resolved = REMOTE_URL
+            lastRttMs = -1L
+            lastProbedAt = 0L
+            onUrlChanged?.invoke(REMOTE_URL)
+            forceProbe()
+        }
+    }
+
+    /**
+     * v1.6.26: human-readable label of the currently selected path,
+     * e.g. "局域网 (12ms)" or "国内高速 (35ms)" or "远程 (1400ms)".
+     */
     fun currentMethodLabel(): String {
         val rtt = if (lastRttMs >= 0) " (${lastRttMs}ms)" else ""
         return when {
             isLan() -> "局域网$rtt"
-            isIpv6Direct() -> "IPv6 直连$rtt"
+            isH3cFast() -> "国内高速$rtt"
+            ENABLE_IPV6 && isIpv6Direct() -> "IPv6 直连$rtt"
             else -> "远程$rtt"
         }
     }
 
     /**
-     * v1.6.10: returns true if the currently resolved URL is the LAN
-     * URL. Used by WebRTC code to decide whether to skip STUN/TURN
-     * servers (LAN only needs host candidates, avoids 1-2s STUN
-     * gathering delay) and to shorten ICE gathering timeout.
+     * v1.6.10: returns true if the currently resolved URL is the LAN URL.
      */
     fun isLan(): Boolean = resolved == effectiveLanUrl
 
     /**
-     * v1.6.23: returns true if the currently resolved URL is the IPv6
-     * direct URL. Used by WebRTC code to decide whether to attempt
-     * IPv6 P2P (skip STUN, gather IPv6 host candidates only) and by
-     * CameraDetailActivity to gate the WebRTC-over-IPv6 path.
+     * v1.6.23: returns true if the currently resolved URL is the IPv6 direct URL.
      */
-    fun isIpv6Direct(): Boolean = resolved == IPV6_DIRECT_URL
+    fun isIpv6Direct(): Boolean = ENABLE_IPV6 && (resolved == IPV6_DIRECT_URL || resolved == IPV6_LITERAL_URL || resolved.startsWith("http://["))
 
     /**
-     * v1.6.23: returns true if the resolved URL is a direct path to
-     * the NAS (either LAN or IPv6 direct), bypassing Cloudflare Tunnel.
-     * Used by WebRTC code to decide whether to skip STUN/TURN servers
-     * — direct paths only need host candidates, the Tunnel can't route
-     * WebRTC media anyway.
+     * v1.6.23 / v1.13.11: returns true if the resolved URL is a direct or high-speed domestic path.
      */
     fun isDirectPath(): Boolean = resolved == effectiveLanUrl || isIpv6Direct()
 
     /**
-     * v1.6.23: immediate fallback for NetworkChangeMonitor.onLost().
-     * Switches `resolved` to the best known safe default BEFORE
-     * kicking off the async probe — fixes the "LAN → remote switch
-     * is slow" bug where every API call timed out against the
-     * now-unreachable LAN URL (1.5s each) while the probe was
-     * still running.
-     *
-     * Safe default selection:
-     *  - If IPv6 direct was reachable on the last probe, switch to
-     *    it immediately (phone likely still has IPv6 on the new
-     *    network — cellular handoff preserves IPv6 in most cases).
-     *  - Otherwise switch to the Cloudflare Tunnel (works from any
-     *    network, just slower).
-     *
-     * After switching, kicks off forceProbe() to re-validate and
-     * potentially switch to LAN if the new network is the home WiFi.
+     * v1.6.23 / v1.13.11: immediate fallback for NetworkChangeMonitor.onLost().
      */
     fun onNetworkLost() {
-        val safeDefault = if (ipv6DirectAvailable) IPV6_DIRECT_URL else REMOTE_URL
+        val cachedH3c = getCachedH3cUrl()
+        val safeDefault = when {
+            ENABLE_IPV6 && ipv6DirectAvailable -> IPV6_DIRECT_URL
+            !cachedH3c.isNullOrBlank() -> cachedH3c
+            else -> REMOTE_URL
+        }
         if (resolved != safeDefault) {
             android.util.Log.i(
                 TAG,
-                "onNetworkLost: switching resolved → $safeDefault (safe default, ipv6Cached=$ipv6DirectAvailable)",
+                "onNetworkLost: switching resolved → $safeDefault (safe default)",
             )
             resolved = safeDefault
             onUrlChanged?.invoke(safeDefault)
@@ -578,15 +654,19 @@ class BaseUrlResolver(
             // RELAY preference: always Tunnel. Still cache IPv6
             // availability in the background for onNetworkLost.
             if (preference == NetworkPathPreference.RELAY) {
-                Thread {
-                    try {
-                        val r = probeUrl(ipv6Url, IPV6_TIMEOUT_MS)
-                        ipv6DirectAvailable = r.alive
-                    } catch (_: Exception) {}
-                }.apply {
-                    isDaemon = true
-                    name = "BaseUrlResolver-relay-cache"
-                    start()
+                if (ENABLE_IPV6) {
+                    Thread {
+                        try {
+                            val r = probeUrl(ipv6Url, IPV6_TIMEOUT_MS)
+                            ipv6DirectAvailable = r.alive
+                        } catch (_: Exception) {}
+                    }.apply {
+                        isDaemon = true
+                        name = "BaseUrlResolver-relay-cache"
+                        start()
+                    }
+                } else {
+                    ipv6DirectAvailable = false
                 }
                 val remoteResult = probeUrl(REMOTE_URL, REMOTE_TIMEOUT_MS)
                 android.util.Log.i(
@@ -628,7 +708,36 @@ class BaseUrlResolver(
                         }
                     }
                     val ipv6Deferred = async(Dispatchers.IO) {
-                        probeUrl(ipv6Url, IPV6_TIMEOUT_MS)
+                        if (!ENABLE_IPV6) {
+                            return@async ipv6Url to ProbeResult(alive = false, rttMs = -1L)
+                        }
+                        val ddnsResult = probeUrl(ipv6Url, IPV6_TIMEOUT_MS)
+                        if (ddnsResult.alive) {
+                            ipv6Url to ddnsResult
+                        } else {
+                            val literalResult = probeUrl(IPV6_LITERAL_URL, IPV6_TIMEOUT_MS)
+                            if (literalResult.alive) IPV6_LITERAL_URL to literalResult
+                            else ipv6Url to ddnsResult
+                        }
+                    }
+                    val h3cDeferred = async(Dispatchers.IO) {
+                        var candidate = getCachedH3cUrl()
+                        if (candidate.isNullOrBlank()) {
+                            candidate = fetchH3cUrl()
+                        }
+                        if (!candidate.isNullOrBlank()) {
+                            var r = probeUrl(candidate, H3C_TIMEOUT_MS)
+                            if (!r.alive) {
+                                val fresh = fetchH3cUrl()
+                                if (!fresh.isNullOrBlank() && fresh != candidate) {
+                                    candidate = fresh
+                                    r = probeUrl(candidate, H3C_TIMEOUT_MS)
+                                }
+                            }
+                            candidate to r
+                        } else {
+                            null to ProbeResult(alive = false, rttMs = -1L)
+                        }
                     }
                     val remoteDeferred = async(Dispatchers.IO) {
                         probeUrl(REMOTE_URL, REMOTE_TIMEOUT_MS)
@@ -636,25 +745,29 @@ class BaseUrlResolver(
 
                     // Await direct path probes first (max ~1.5s).
                     val lanResult = lanDeferred.await()
-                    val ipv6Result = ipv6Deferred.await()
+                    val (effectiveIpv6Url, ipv6Result) = ipv6Deferred.await()
+                    val (effectiveH3cUrl, h3cResult) = h3cDeferred.await()
                     ipv6DirectAvailable = ipv6Result.alive
 
                     // Select a direct path based on preference.
                     val directChosen: String? = when (preference) {
                         NetworkPathPreference.LAN -> when {
                             lanResult.alive -> effectiveLanUrl
-                            ipv6Result.alive -> ipv6Url
+                            h3cResult.alive && effectiveH3cUrl != null -> effectiveH3cUrl
+                            ipv6Result.alive -> effectiveIpv6Url
                             else -> null
                         }
                         NetworkPathPreference.IPV6_DIRECT -> when {
-                            ipv6Result.alive -> ipv6Url
+                            ipv6Result.alive -> effectiveIpv6Url
+                            h3cResult.alive && effectiveH3cUrl != null -> effectiveH3cUrl
                             lanResult.alive -> effectiveLanUrl
                             else -> null
                         }
                         NetworkPathPreference.AUTO -> {
                             val candidates = mutableListOf<Pair<String, Long>>()
                             if (lanResult.alive) candidates.add(effectiveLanUrl to lanResult.rttMs)
-                            if (ipv6Result.alive) candidates.add(ipv6Url to ipv6Result.rttMs)
+                            if (h3cResult.alive && effectiveH3cUrl != null) candidates.add(effectiveH3cUrl to h3cResult.rttMs)
+                            if (ipv6Result.alive) candidates.add(effectiveIpv6Url to ipv6Result.rttMs)
                             candidates.minByOrNull { it.second }?.first
                         }
                         NetworkPathPreference.RELAY -> null // handled above
@@ -663,10 +776,15 @@ class BaseUrlResolver(
                     if (directChosen != null) {
                         // Fast path: switch immediately, cancel Tunnel probe.
                         remoteDeferred.cancel()
-                        val chosenRtt = if (directChosen == effectiveLanUrl) lanResult.rttMs else ipv6Result.rttMs
+                        val chosenRtt = when (directChosen) {
+                            effectiveLanUrl -> lanResult.rttMs
+                            effectiveH3cUrl -> h3cResult.rttMs
+                            else -> ipv6Result.rttMs
+                        }
                         android.util.Log.i(
                             TAG,
                             "probeSync: LAN=${lanResult.alive}(${lanResult.rttMs}ms) " +
+                                "H3C=${h3cResult.alive}(${h3cResult.rttMs}ms) " +
                                 "IPv6=${ipv6Result.alive}(${ipv6Result.rttMs}ms) " +
                                 "Tunnel=cancelled " +
                                 "preference=$preference (resolved=$resolved)",
@@ -674,11 +792,12 @@ class BaseUrlResolver(
                         lastRttMs = chosenRtt
                         applyResolved(directChosen)
                     } else {
-                        // Fallback: both direct paths dead, wait for Tunnel.
+                        // Fallback: direct paths dead, wait for Tunnel.
                         val remoteResult = remoteDeferred.await()
                         android.util.Log.i(
                             TAG,
                             "probeSync: LAN=${lanResult.alive}(${lanResult.rttMs}ms) " +
+                                "H3C=${h3cResult.alive}(${h3cResult.rttMs}ms) " +
                                 "IPv6=${ipv6Result.alive}(${ipv6Result.rttMs}ms) " +
                                 "Tunnel=${remoteResult.alive}(${remoteResult.rttMs}ms) " +
                                 "preference=$preference (resolved=$resolved)",
@@ -814,6 +933,7 @@ class BaseUrlResolver(
             .build()
         val request = Request.Builder()
             .url("${url.trimEnd('/')}/api/v1/system/status")
+            .header("X-Probe-Request", "true")
             .get()
             .build()
         val sw = System.currentTimeMillis()
@@ -893,14 +1013,12 @@ class BaseUrlResolver(
         private const val KEY_PREF = "preference"
 
         // v1.8.24: SharedPreferences key for user-configured custom LAN URL.
-        // When set (e.g. "http://192.168.31.235:8088/"), overrides the
-        // hardcoded LAN_URL so the app adapts to NAS IP changes without
-        // recompiling. Set/cleared from SettingsFragment.
         private const val KEY_CUSTOM_LAN_URL = "custom_lan_url"
 
+        // v1.13.11: SharedPreferences key for discovered H3C domestic tunnel URL.
+        private const val KEY_H3C_URL = "h3c_cached_url"
+
         // v1.10.1: SharedPreferences key for the last successfully resolved base URL.
-        // Persisted so cold starts immediately prefetch against the last known good
-        // path (e.g. LAN ~10ms) instead of defaulting to Cloudflare Tunnel (1.4s+).
         private const val KEY_LAST_RESOLVED_URL = "last_resolved_url"
 
         // LAN (NAS) URL — the home network address of the backend.
@@ -915,9 +1033,12 @@ class BaseUrlResolver(
         // full reverse-proxy stack so HLS/MP4/WebRTC URLs work
         // identically. Port 80 on the NAS is the FNOS system UI, NOT
         // our backend, so http://192.168.31.235/ would be wrong.
-        const val LAN_URL = "http://192.168.31.235:8088/"
-        const val LAN_HOST = "192.168.31.235"
+        const val LAN_URL = "http://192.168.31.234:8088/"
+        const val LAN_HOST = "192.168.31.234"
         const val LAN_PORT = 8088
+
+        // Upstream optical modem has no IPv6 enabled; hide and keep dormant for future re-enablement.
+        const val ENABLE_IPV6 = false
 
         // v1.6.23: IPv6 direct URL — bypasses Cloudflare Tunnel when
         // the phone has IPv6 connectivity. The NAS 8088 port is bound
@@ -955,18 +1076,16 @@ class BaseUrlResolver(
         // Those are infrastructure-layer config, not app-layer URLs —
         // the app always uses the DDNS domain.
         const val IPV6_DIRECT_URL = "http://nas.feiyemomo.top:8088/"
+        const val IPV6_LITERAL_URL = "http://[2409:8a70:266c:92a1:f34d:e904:cd7f:2830]:8088/"
 
         // Remote URL — Cloudflare Tunnel. Works from anywhere but is
         // slow + lossy from China (TTFB 1.4s average, 10s+ timeouts on
         // ~1/3 of requests through the tunnel).
         const val REMOTE_URL = "https://api.feiyemomo.top/"
 
-        // Re-probe at most this often. Shorter wastes battery + data,
-        // longer means we miss network switches (user leaves/returns
-        // home). 5 minutes matches the weather cache TTL — a natural
-        // cadence given how often the user is likely to switch
-        // networks in practice.
-        private const val TTL_MS = 5L * 60 * 1000
+        // Re-probe at most this often. 60 seconds ensures rapid adaptation
+        // when network environments switch or tunnel ports rotate.
+        private const val TTL_MS = 60L * 1000
 
         // LAN probe timeout. 1s is more than enough for a local network
         // (typical 10-50ms RTT). Reduced from 1.5s to speed up the
@@ -988,6 +1107,9 @@ class BaseUrlResolver(
         // (typical 1-2s, worst ~3s on Chinese cellular). Reduced from
         // 4s to minimize the total probe wall time.
         private const val REMOTE_TIMEOUT_MS = 3_000
+
+        // v1.13.11: H3C domestic tunnel probe timeout.
+        private const val H3C_TIMEOUT_MS = 2_500
 
         // Escalating startup probe delays. Each entry schedules a
         // background probe at the given offset from app launch.

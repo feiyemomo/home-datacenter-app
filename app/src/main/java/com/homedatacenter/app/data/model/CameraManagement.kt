@@ -30,7 +30,7 @@ data class UpdateCodecRequest(
 @Serializable
 data class PtzRequest(
     val command: String,
-    val speed: Double = 0.5,
+    val speed: Double = 0.25,
     @SerialName("profile_token") val profileToken: String? = null,
 )
 
@@ -54,7 +54,7 @@ data class SetPresetRequest(
 
 @Serializable
 data class GotoPresetRequest(
-    val speed: Double = 0.5,
+    val speed: Double = 0.25,
 )
 
 @Serializable

@@ -19,7 +19,7 @@ param(
 )
 
 $NAS_USER = "fnos-momo"
-$NAS_HOST = "192.168.31.235"
+$NAS_HOST = "100.90.67.71"
 $NAS_PORT = 22
 $REMOTE_RELEASES = "/vol1/docker/home-datacenter/data/releases"
 

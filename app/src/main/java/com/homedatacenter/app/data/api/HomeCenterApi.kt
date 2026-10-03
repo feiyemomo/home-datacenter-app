@@ -371,6 +371,29 @@ interface HomeCenterApi {
         @Header("Authorization") auth: String
     ): ApiResponse
 
+    @GET("api/v1/system/storage/config")
+    suspend fun getStorageConfig(
+        @Header("Authorization") auth: String
+    ): ApiResponse
+
+    @PUT("api/v1/system/storage/config")
+    suspend fun updateStorageConfig(
+        @Header("Authorization") auth: String,
+        @Body req: Map<String, Int>
+    ): ApiResponse
+
+    @POST("api/v1/system/storage/sync-archive")
+    suspend fun triggerArchiveSync(
+        @Header("Authorization") auth: String
+    ): ApiResponse
+
+    @PUT("api/v1/cameras/{id}/detect-fps")
+    suspend fun updateCameraDetectFps(
+        @Header("Authorization") auth: String,
+        @Path("id") cameraId: Long,
+        @Body req: Map<String, Int>
+    ): ApiResponse
+
     // --- Vision AI / Face Recognition ---
 
     @GET("api/v1/vision/status")

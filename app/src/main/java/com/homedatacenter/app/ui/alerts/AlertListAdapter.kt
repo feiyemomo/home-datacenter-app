@@ -76,10 +76,12 @@ class AlertListAdapter(
             binding.btnPlay.visibility = if (alert.hasClip) View.VISIBLE else View.GONE
 
             // Tap thumbnail → snapshot modal (if available) or row click fallback
-            binding.thumbnailContainer.setOnClickListener {
+            val openSnapshot = {
                 if (alert.hasSnapshot) onSnapshotClick?.invoke(alert)
                 else onRowClick?.invoke(alert)
             }
+            binding.thumbnailContainer.setOnClickListener { openSnapshot() }
+            binding.thumbnailCard.setOnClickListener { openSnapshot() }
             // "查看录像" chip → jump to camera's recordings
             binding.chipClip.setOnClickListener { onJumpCamera?.invoke(alert) }
             // Tap row body → row click handler

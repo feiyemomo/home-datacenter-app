@@ -18,7 +18,9 @@ object NotificationHelper {
 
     const val CHANNEL_SECURITY_ALERTS = "security_alerts_channel"
     const val CHANNEL_SYSTEM_ALERTS = "system_alerts_channel"
+    const val CHANNEL_KEEPALIVE = "keepalive_service_channel"
 
+    const val NOTIFICATION_ID_KEEPALIVE = 1001
     private const val NOTIFICATION_ID_SYSTEM_BASE = 2000
     private var systemNotificationCounter = 0
 
@@ -52,9 +54,43 @@ object NotificationHelper {
                 setShowBadge(false)
             }
 
+            // 3. Keepalive foreground service channel (Low priority, silent)
+            val keepaliveChannel = NotificationChannel(
+                CHANNEL_KEEPALIVE,
+                "后台服务保活与实时告警",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "保持后台安全与告警连接"
+                enableVibration(false)
+                setShowBadge(false)
+            }
+
             manager.createNotificationChannel(securityChannel)
             manager.createNotificationChannel(systemChannel)
+            manager.createNotificationChannel(keepaliveChannel)
         }
+    }
+
+    fun buildKeepAliveNotification(context: Context): android.app.Notification {
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            NOTIFICATION_ID_KEEPALIVE,
+            intent,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
+        )
+
+        return NotificationCompat.Builder(context, CHANNEL_KEEPALIVE)
+            .setSmallIcon(R.drawable.ic_camera)
+            .setContentTitle("家庭数据中心 告警监控中")
+            .setContentText("后台安全监控与实时告警连接已建立")
+            .setContentIntent(pendingIntent)
+            .setOngoing(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .build()
     }
 
     private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
@@ -121,40 +157,57 @@ object NotificationHelper {
                 var bitmap: android.graphics.Bitmap? = null
                 val baseUrl = prefs.baseUrl?.trimEnd('/')
                 val token = prefs.token
-                val snapshotUrl = if (alert.id.isNotEmpty() && !baseUrl.isNullOrEmpty()) {
-                    "$baseUrl/api/v1/alerts/${alert.id}/snapshot"
-                } else if (alert.cameraId != null && !baseUrl.isNullOrEmpty()) {
-                    "$baseUrl/api/v1/cameras/${alert.cameraId}/frame?quality=40"
-                } else null
+                if (!baseUrl.isNullOrEmpty()) {
+                    // Try thumbnail first (~6-20KB, fast & low memory, ideal for notifications),
+                    // fallback to snapshot, then camera frame.
+                    val candidateUrls = mutableListOf<String>()
+                    if (alert.id.isNotEmpty()) {
+                        candidateUrls.add("$baseUrl/api/v1/cameras/alerts/${alert.id}/thumbnail")
+                        candidateUrls.add("$baseUrl/api/v1/cameras/alerts/${alert.id}/snapshot")
+                        candidateUrls.add("$baseUrl/api/v1/alerts/${alert.id}/thumbnail")
+                    }
+                    if (alert.cameraId != null) {
+                        candidateUrls.add("$baseUrl/api/v1/cameras/${alert.cameraId}/frame?quality=30")
+                    }
 
-                if (!snapshotUrl.isNullOrEmpty()) {
-                    try {
-                        val req = okhttp3.Request.Builder()
-                            .url(snapshotUrl)
-                            .apply {
-                                if (!token.isNullOrEmpty()) {
-                                    header("Authorization", "Bearer $token")
+                    val client = okhttp3.OkHttpClient.Builder()
+                        .connectTimeout(2, java.util.concurrent.TimeUnit.SECONDS)
+                        .readTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
+                        .build()
+
+                    for (url in candidateUrls) {
+                        try {
+                            val req = okhttp3.Request.Builder()
+                                .url(url)
+                                .apply {
+                                    if (!token.isNullOrEmpty()) {
+                                        header("Authorization", "Bearer $token")
+                                    }
+                                }
+                                .build()
+                            client.newCall(req).execute().use { resp ->
+                                if (resp.isSuccessful) {
+                                    val bytes = resp.body?.bytes()
+                                    if (bytes != null && bytes.isNotEmpty()) {
+                                        val opts = android.graphics.BitmapFactory.Options().apply {
+                                            inSampleSize = 2
+                                        }
+                                        bitmap = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+                                            ?: android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                                    }
                                 }
                             }
-                            .build()
-                        val client = okhttp3.OkHttpClient.Builder()
-                            .connectTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
-                            .readTimeout(4, java.util.concurrent.TimeUnit.SECONDS)
-                            .build()
-                        client.newCall(req).execute().use { resp ->
-                            if (resp.isSuccessful) {
-                                resp.body?.byteStream()?.use { stream ->
-                                    bitmap = android.graphics.BitmapFactory.decodeStream(stream)
-                                }
-                            }
-                        }
-                    } catch (_: Exception) {}
+                            if (bitmap != null) break
+                        } catch (_: Exception) {}
+                    }
                 }
 
                 if (bitmap != null) {
+                    builder.setLargeIcon(bitmap)
                     builder.setStyle(
                         NotificationCompat.BigPictureStyle()
                             .bigPicture(bitmap)
+                            .bigLargeIcon(null as android.graphics.Bitmap?)
                             .setSummaryText(contentText)
                     )
                 }
@@ -239,12 +292,45 @@ object NotificationHelper {
         }
     }
 
-    fun showPersonRecognizedNotification(context: Context, name: String, cameraName: String) {
+    fun showPersonRecognizedNotification(
+        context: Context,
+        name: String,
+        cameraName: String,
+        isIntrusion: Boolean = false,
+        persons: List<String> = emptyList()
+    ) {
         val prefs = PrefsManager(context)
         if (!prefs.notificationsEnabled || !prefs.notifyPerson || prefs.isDndActive()) return
 
-        val title = "视觉识别通知"
-        val message = "摄像头【${cameraName.ifBlank { "安防监控" }}】识别到家庭成员【$name】"
+        val camDisplay = cameraName.ifBlank { "安防监控" }
+        val title: String
+        val message: String
+        val priority: Int
+
+        when {
+            isIntrusion -> {
+                title = "入侵告警"
+                message = "摄像头【$camDisplay】检测到人员活动（离家布防模式）"
+                priority = NotificationCompat.PRIORITY_MAX
+            }
+            name.isNotBlank() && name != "离家布防异常入侵人员" -> {
+                title = "家庭成员识别"
+                message = "摄像头【$camDisplay】识别到家庭成员【$name】"
+                priority = NotificationCompat.PRIORITY_HIGH
+            }
+            persons.isNotEmpty() -> {
+                val joined = persons.joinToString("、")
+                title = "人员检测通知"
+                message = "摄像头【$camDisplay】检测到人员：$joined"
+                priority = NotificationCompat.PRIORITY_HIGH
+            }
+            else -> {
+                title = "人员检测通知"
+                message = "摄像头【$camDisplay】发现人员活动"
+                priority = NotificationCompat.PRIORITY_DEFAULT
+            }
+        }
+
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             putExtra(EXTRA_NAVIGATE_TAB, R.id.nav_cameras)
@@ -255,14 +341,18 @@ object NotificationHelper {
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val notification = NotificationCompat.Builder(context, CHANNEL_SECURITY_ALERTS)
+        val builder = NotificationCompat.Builder(context, CHANNEL_SECURITY_ALERTS)
             .setSmallIcon(R.drawable.ic_camera)
             .setContentTitle(title)
             .setContentText(message)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setPriority(priority)
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
-            .build()
+        if (isIntrusion) {
+            builder.setCategory(NotificationCompat.CATEGORY_ALARM)
+            builder.setVibrate(longArrayOf(0, 500, 200, 500))
+        }
+        val notification = builder.build()
 
         try {
             NotificationManagerCompat.from(context).notify(9998, notification)

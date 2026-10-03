@@ -1,6 +1,7 @@
 package com.homedatacenter.app.data.api
 
 import com.homedatacenter.app.BuildConfig
+import com.homedatacenter.app.util.BaseUrlResolver
 import com.homedatacenter.app.util.RetryInterceptor
 import kotlinx.serialization.json.Json
 import okhttp3.ConnectionPool
@@ -24,53 +25,45 @@ object NetworkFactory {
         explicitNulls = false
     }
 
-    fun okHttpClient(enableLogging: Boolean = false): OkHttpClient {
-        // Connection resilience for mobile networks:
-        //   - Long connect timeout: mobile carriers' middleboxes and
-        //     Cloudflare Tunnel can take ~20-30s to establish TLS on a
-        //     cold connection. 15s sometimes gives up too early.
-        //   - retryOnConnectionFailure: re-attempts TLS/TCP failures
-        //     caused by transient carrier issues ("connection closed"
-        //     errors that don't reflect a real server problem).
-        //   - Protocols: prefer HTTP/1.1 over HTTP/2. Cloudflare Tunnel
-        //     occasionally closes HTTP/2 streams abruptly on mobile
-        //     networks, surfacing as "connection closed" in OkHttp.
-        //     Forcing HTTP/1.1 trades multiplexing for stability on
-        //     the slow, lossy mobile paths this app uses.
-        // v1.6.28: explicit ConnectionPool config so keep-alive
-        // connections are reused across API calls. Default OkHttp pool
-        // is (5, 5min) — same numbers, but setting it explicitly makes
-        // the intent visible and pins the behavior across OkHttp
-        // versions. This is the critical optimization for cellular
-        // IPv6 (~250ms RTT): the second request to the same origin
-        // reuses the warmed TCP connection and skips the handshake,
-        // cutting ~250ms off the request. Without an explicit pool,
-        // OkHttp still keeps connections alive by default, but
-        // documenting it here makes the warmup strategy in
-        // BaseUrlResolver.warmupConnection() coherent.
-        //
-        // v1.6.29: keep-alive extended from 5 min to 10 min so it
-        // EXCEEDS the BaseUrlResolver probe TTL (5 min). Previously,
-        // keep-alive (5 min) == TTL (5 min), which meant by the time
-        // the next probe ran, the warmup connection had just expired
-        // and the probe paid the full TCP handshake again. With 10 min
-        // keep-alive, the connection from the previous warmup is still
-        // alive when the next probe fires, so the probe reuses it and
-        // the displayed RTT stays at ~250ms instead of jumping back to
-        // ~500ms every 5 minutes.
+    /**
+     * Dedicated OkHttpClient for BaseUrlResolver probes.
+     * Clean, lightweight, no retry or rewrite interceptors to ensure
+     * raw, unbiased latency and reachability measurement to target URLs.
+     */
+    fun createProbeClient(): OkHttpClient {
+        return OkHttpClient.Builder()
+            .connectTimeout(5, TimeUnit.SECONDS)
+            .readTimeout(5, TimeUnit.SECONDS)
+            .writeTimeout(5, TimeUnit.SECONDS)
+            .callTimeout(8, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(false)
+            .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
+            .addInterceptor { chain ->
+                chain.proceed(
+                    chain.request().newBuilder()
+                        .header("User-Agent", USER_AGENT)
+                        .header("X-Probe-Request", "true")
+                        .build()
+                )
+            }
+            .build()
+    }
+
+    fun okHttpClient(
+        enableLogging: Boolean = false,
+        baseUrlProvider: (() -> String)? = null,
+        baseUrlResolver: BaseUrlResolver? = null,
+    ): OkHttpClient {
         val builder = OkHttpClient.Builder()
             .connectionPool(ConnectionPool(5, 10, TimeUnit.MINUTES))
-            .connectTimeout(30, TimeUnit.SECONDS)
-            .readTimeout(60, TimeUnit.SECONDS)
-            .writeTimeout(60, TimeUnit.SECONDS)
-            .callTimeout(90, TimeUnit.SECONDS)
+            .connectTimeout(5, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .writeTimeout(30, TimeUnit.SECONDS)
+            .callTimeout(45, TimeUnit.SECONDS)
             .pingInterval(30, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
             .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
-            // Unified User-Agent: .header() (not .addHeader()) overwrites
-            // OkHttp's default UA so every Retrofit request and any
-            // direct newCall() sharing this client advertises the same
-            // app identity to the backend / Cloudflare Tunnel.
+            // Unified User-Agent
             .addInterceptor { chain ->
                 chain.proceed(
                     chain.request().newBuilder()
@@ -78,14 +71,17 @@ object NetworkFactory {
                         .build()
                 )
             }
-            // RetryInterceptor: automatically retries GET requests on
-            // transient failures (5xx, timeout, DNS failure, reset).
-            // Added AFTER the User-Agent interceptor but BEFORE the
-            // logging interceptor so retries are logged.
-            .addInterceptor(RetryInterceptor())
+            // RetryInterceptor: automatically retries GET requests on transient failures.
+            // Placed BEFORE DynamicBaseUrlInterceptor so each retry attempt
+            // can be dynamically rewritten to the failover target URL.
+            .addInterceptor(RetryInterceptor(baseUrlResolver = baseUrlResolver))
 
-        // 仅 DEBUG 构建挂载日志中间件：即使调用方传 enableLogging=true，
-        // release 也绝不打印日志（BuildConfig.DEBUG 在 release 恒为 false）。
+        // DynamicBaseUrlInterceptor: dynamically rewrites requests to current active base URL
+        if (baseUrlProvider != null) {
+            builder.addInterceptor(DynamicBaseUrlInterceptor(baseUrlProvider))
+        }
+
+        // 仅 DEBUG 构建挂载日志中间件
         if (enableLogging && BuildConfig.DEBUG) {
             builder.addInterceptor(
                 HttpLoggingInterceptor().apply {

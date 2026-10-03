@@ -45,7 +45,11 @@ class HomeCenterApp : Application() {
         // page opens with minimal first-frame latency. Safe to skip
         // when the user isn't logged in yet — LoginActivity will
         // call warmWebRtc() after successful auth.
+        com.homedatacenter.app.util.NotificationHelper.createChannels(this)
         if (!container.prefsManager.token.isNullOrBlank()) {
+            if (container.prefsManager.keepAliveEnabled) {
+                com.homedatacenter.app.service.AlertKeepAliveService.start(this)
+            }
             container.warmWebRtc()
             // v1.6.36: prefetch ICE config at app startup (previously
             // deferred to DashboardFragment.onResume). On remote

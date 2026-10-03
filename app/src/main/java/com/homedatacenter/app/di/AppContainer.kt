@@ -31,34 +31,21 @@ class AppContainer(private val context: Context) {
      * refresh (tryAutoRefreshToken).
      */
     val tokenManager: TokenManager by lazy { TokenManager(prefsManager) { getApiBaseUrl() } }
-    val okHttpClient: OkHttpClient by lazy {
-        val baseClient = NetworkFactory.okHttpClient(enableLogging = true)
-        // v1.8.15: add token refresh interceptor AFTER the main
-        // builder so it wraps the User-Agent interceptor. The
-        // interceptor silently re-binds on 401 "token version
-        // mismatch" and retries the request with a fresh token.
-        baseClient.newBuilder()
-            .addInterceptor(TokenRefreshInterceptor(prefsManager, tokenManager))
-            .build()
+
+    /**
+     * Dedicated client for BaseUrlResolver to run probes directly to candidate targets
+     * without URL rewriting or application-layer retry intervention.
+     */
+    private val probeClient: OkHttpClient by lazy {
+        NetworkFactory.createProbeClient()
     }
 
     /**
-     * Picks between LAN (http://192.168.31.235/) and remote
-     * (https://api.feiyemomo.top/) at runtime by probing /health.
-     * When the device is on the home network the LAN URL is preferred
-     * because it's ~10ms TTFB vs the Cloudflare Tunnel's 1.4s+.
-     *
-     * Call [baseUrlResolver.probeLanOnStartup] once on app launch so
-     * the first API call benefits from LAN speed (if available).
-     *
-     * v1.6.26: resolver now takes the application [context] so it can
-     * persist the user's network path preference (Auto/LAN/IPv6/Tunnel)
-     * in a private SharedPreferences file ("network_path"). The
-     * preference is honored on every probe — see BaseUrlResolver for
-     * the selection logic.
+     * Picks between LAN (http://192.168.31.234:8088/), H3C domestic tunnel,
+     * IPv6 direct, and remote (https://api.feiyemomo.top/) at runtime.
      */
     val baseUrlResolver: BaseUrlResolver by lazy {
-        BaseUrlResolver(okHttpClient, context).also { resolver ->
+        BaseUrlResolver(probeClient, context).also { resolver ->
             resolver.onUrlChanged = { _ ->
                 // When the resolved URL changes, invalidate the cached
                 // Retrofit/Repository so the next call builds a new
@@ -66,6 +53,21 @@ class AppContainer(private val context: Context) {
                 resetApi()
             }
         }
+    }
+
+    val okHttpClient: OkHttpClient by lazy {
+        val baseClient = NetworkFactory.okHttpClient(
+            enableLogging = true,
+            baseUrlProvider = { getApiBaseUrl() },
+            baseUrlResolver = baseUrlResolver,
+        )
+        // v1.8.15: add token refresh interceptor AFTER the main
+        // builder so it wraps the User-Agent interceptor. The
+        // interceptor silently re-binds on 401 "token version
+        // mismatch" and retries the request with a fresh token.
+        baseClient.newBuilder()
+            .addInterceptor(TokenRefreshInterceptor(prefsManager, tokenManager))
+            .build()
     }
 
     private var currentBaseUrl: String = ""
@@ -156,15 +158,13 @@ class AppContainer(private val context: Context) {
      */
     fun warmWebRtc() {
         if (sharedWebRtcClient != null || warmJob?.isActive == true) return
-        val baseUrl = getApiBaseUrl().ifBlank { return }
-        val token = prefsManager.token ?: return
         warmJob = warmScope.launch {
             try {
                 val client = WebRtcClient(
                     context = context,
                     okHttpClient = okHttpClient,
-                    baseUrl = baseUrl,
-                    token = token,
+                    baseUrlProvider = { getApiBaseUrl() },
+                    tokenProvider = { prefsManager.token },
                 )
                 // init() must run on a thread with a Looper. We're
                 // on Dispatchers.IO here; switch to Main for the
@@ -188,19 +188,16 @@ class AppContainer(private val context: Context) {
      * calling release() on the PeerConnection (not the factory) when
      * the activity is destroyed.
      *
-     * Returns null if baseUrl or token is unavailable, or if factory
-     * init fails (e.g. WebRTC native lib load error on emulator).
+     * Returns null if factory init fails (e.g. WebRTC native lib load error on emulator).
      */
     fun getOrInitWebRtcClient(): WebRtcClient? {
         sharedWebRtcClient?.let { return it }
-        val baseUrl = getApiBaseUrl().ifBlank { return null }
-        val token = prefsManager.token ?: return null
         return try {
             val client = WebRtcClient(
                 context = context,
                 okHttpClient = okHttpClient,
-                baseUrl = baseUrl,
-                token = token,
+                baseUrlProvider = { getApiBaseUrl() },
+                tokenProvider = { prefsManager.token },
             )
             // init() must run on the main thread (EGL + PeerConnectionFactory
             // require a Looper). Since this function is called from

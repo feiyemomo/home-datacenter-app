@@ -1,19 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/rootContainer"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#B3000000"
+    android:background="@android:color/transparent"
     android:clickable="true"
     android:focusable="true">
 
     <LinearLayout
+        android:id="@+id/innerCard"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="center"
         android:layout_margin="16dp"
         android:orientation="vertical"
         android:background="@drawable/bg_dialog_glass"
+        android:clickable="true"
+        android:focusable="true"
         android:padding="0dp">
 
         <!-- Header -->
@@ -22,11 +26,12 @@
             android:layout_height="wrap_content"
             android:orientation="horizontal"
             android:gravity="center_vertical"
-            android:padding="14dp">
+            android:paddingHorizontal="14dp"
+            android:paddingVertical="12dp">
 
             <ImageView
-                android:layout_width="20dp"
-                android:layout_height="20dp"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
                 android:src="@drawable/ic_alerts"
                 app:tint="@color/warning"
                 android:layout_marginEnd="10dp" />
@@ -73,13 +78,27 @@
                     android:layout_marginTop="2dp" />
             </LinearLayout>
 
+            <!-- Save to gallery button -->
+            <ImageView
+                android:id="@+id/btnSaveSnapshot"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:src="@drawable/ic_download"
+                app:tint="@color/text_primary"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:padding="7dp"
+                android:contentDescription="保存至相册"
+                android:layout_marginEnd="6dp" />
+
             <ImageView
                 android:id="@+id/btnCloseSnapshot"
-                android:layout_width="32dp"
-                android:layout_height="32dp"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
                 android:src="@drawable/ic_close"
+                app:tint="@color/text_primary"
                 android:background="?android:attr/selectableItemBackgroundBorderless"
-                android:padding="6dp" />
+                android:padding="7dp"
+                android:contentDescription="关闭" />
         </LinearLayout>
 
         <View
@@ -87,22 +106,45 @@
             android:layout_height="1dp"
             android:background="@color/divider" />
 
-        <!-- Image area -->
+        <!-- Image area with PinchToZoom -->
         <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:minHeight="200dp"
+            android:minHeight="220dp"
             android:background="@color/camera_bg">
 
-            <ImageView
-                android:id="@+id/ivSnapshot"
+            <com.homedatacenter.app.ui.cameras.PinchToZoomFrameLayout
+                android:id="@+id/zoomContainer"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:adjustViewBounds="true"
-                android:scaleType="fitCenter"
-                android:layout_gravity="center"
-                android:maxHeight="480dp"
-                android:contentDescription="@string/alert_snapshot_title" />
+                android:layout_gravity="center">
+
+                <ImageView
+                    android:id="@+id/ivSnapshot"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:adjustViewBounds="true"
+                    android:scaleType="fitCenter"
+                    android:layout_gravity="center"
+                    android:maxHeight="520dp"
+                    android:contentDescription="@string/alert_snapshot_title" />
+
+            </com.homedatacenter.app.ui.cameras.PinchToZoomFrameLayout>
+
+            <!-- Zoom Badge overlay -->
+            <TextView
+                android:id="@+id/tvZoomBadge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="top|end"
+                android:layout_marginTop="8dp"
+                android:layout_marginEnd="8dp"
+                android:background="#99000000"
+                android:paddingHorizontal="8dp"
+                android:paddingVertical="4dp"
+                android:textColor="@android:color/white"
+                android:textSize="11sp"
+                android:visibility="gone" />
 
             <ProgressBar
                 android:id="@+id/progressSnapshot"
