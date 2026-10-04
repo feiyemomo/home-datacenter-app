@@ -70,8 +70,11 @@ class CamerasFragment : Fragment() {
         return binding.root
     }
 
+    private var camerasFadedIn = false
+
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        camerasFadedIn = false
 
         val mainActivity = activity as? MainActivity ?: return
         val baseUrl = mainActivity.container.getApiBaseUrl()
@@ -159,7 +162,10 @@ class CamerasFragment : Fragment() {
                         if (cameras != null) {
                             adapter.submitList(cameras)
                             showEmpty(cameras.isEmpty())
-                            AnimationHelper.fadeIn(binding.recyclerView, 300)
+                            if (!camerasFadedIn && cameras.isNotEmpty()) {
+                                camerasFadedIn = true
+                                AnimationHelper.fadeIn(binding.recyclerView, 300)
+                            }
                             preheatOnlineCameras(cameras)
                         }
                     }
@@ -188,11 +194,15 @@ class CamerasFragment : Fragment() {
         mainActivity.container.prefetchIceConfig()
     }
 
+    private val preheatedCameras = mutableSetOf<Long>()
+
     private fun preheatOnlineCameras(cameras: List<Camera>) {
         val mainActivity = activity as? MainActivity ?: return
         val token = mainActivity.container.prefsManager.token ?: return
+        val toPreheat = cameras.filter { it.isOnline && preheatedCameras.add(it.id) }
+        if (toPreheat.isEmpty()) return
         viewLifecycleOwner.lifecycleScope.launch {
-            cameras.filter { it.isOnline }.forEach { cam ->
+            toPreheat.forEach { cam ->
                 try {
                     mainActivity.container.getRepository().preheatCamera(token, cam.id)
                 } catch (_: Exception) {}

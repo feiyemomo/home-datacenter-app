@@ -1194,17 +1194,31 @@ class CameraDetailActivity : AppCompatActivity() {
         if (recordingsDialog?.isShowing == true || alertsDialog?.isShowing == true) {
             return
         }
-        if (!isLivePausedForDialog) return
         isLivePausedForDialog = false
         val client = webRtcClient
-        if (client != null && client.hasActiveStream()) {
+        if (client != null && client.hasActiveStream() && client.isConnected()) {
+            try {
+                binding.surfaceRenderer.release()
+            } catch (_: Exception) {}
+            try {
+                binding.surfaceRenderer.init(client.eglBase.eglBaseContext, null)
+                binding.surfaceRenderer.setMirror(false)
+                binding.surfaceRenderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT)
+                client.reattachVideoTrack(binding.surfaceRenderer)
+            } catch (e: Exception) {
+                android.util.Log.w(TAG, "WebRTC resume re-attach failed: ${e.message}")
+            }
             client.setVideoEnabled(true)
             if (audioEnabled && !webRtcMuted) {
                 client.setAudioEnabled(true)
             }
-        } else if (player != null) {
+        } else if (player != null && player?.playbackState != Player.STATE_IDLE && player?.playbackState != Player.STATE_ENDED) {
+            binding.playerView.visibility = View.VISIBLE
+            binding.surfaceRenderer.visibility = View.GONE
             player?.playWhenReady = true
         } else {
+            // Live stream was disconnected or not yet started (e.g. entered from alert card)
+            loadPreviewFrame()
             startPlayback()
         }
     }
@@ -1240,7 +1254,7 @@ class CameraDetailActivity : AppCompatActivity() {
         alertsDialog = AlertsDialog(this, cam, container).apply {
             setOnDismissListener {
                 alertsDialog = null
-                if (recordingsDialog == null && !isLivePausedForDialog && !isFinishing && !isDestroyed) {
+                if (recordingsDialog == null && !isFinishing && !isDestroyed) {
                     resumeLivePlayback()
                 }
             }
@@ -2202,13 +2216,15 @@ class CameraDetailActivity : AppCompatActivity() {
         return "${baseUrl.trimEnd('/')}/api/v1/cameras/${camera.id}/stream.mp4"
     }
 
-    private fun resolveHlsUrl(camera: Camera, preferH264: Boolean = false): String {
+    private fun resolveHlsUrl(camera: Camera, preferH264: Boolean = true): String {
         val baseUrl = container.getApiBaseUrl().orEmpty()
         val stream = camera.stream
         val hlsUrl = stream?.hlsUrl?.trim().orEmpty()
         val hlsHevcUrl = stream?.hlsHevcUrl?.trim().orEmpty()
 
-        // If not forcing H.264, try native-HEVC passthrough when supported
+        // v1.13.21: Prefer 720p H.264 HLS by default for 100% hardware decoder compatibility.
+        // 2.5K HEVC streams crash MTK/Snapdragon decoders (c2.mtk.hevc.decoder Error 0x80000000).
+        if (preferH264 && hlsUrl.isNotEmpty()) return resolveAbsoluteUrl(hlsUrl)
         if (!preferH264 && hlsHevcUrl.isNotEmpty() && DecoderSupport.canDecodeHevc()) {
             return resolveAbsoluteUrl(hlsHevcUrl)
         }

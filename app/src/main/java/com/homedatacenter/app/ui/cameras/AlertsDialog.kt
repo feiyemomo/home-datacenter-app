@@ -23,6 +23,7 @@ import com.homedatacenter.app.data.model.Alert
 import com.homedatacenter.app.data.model.AlertListData
 import com.homedatacenter.app.data.model.Camera
 import com.homedatacenter.app.di.AppContainer
+import com.homedatacenter.app.ui.alerts.AlertSnapshotDialog
 import com.homedatacenter.app.databinding.DialogAlertsBinding
 import com.homedatacenter.app.databinding.ItemAlertBinding
 import com.homedatacenter.app.util.ExoPlayerRendererFactory
@@ -37,6 +38,9 @@ import okhttp3.Request
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import androidx.fragment.app.FragmentActivity
+import com.homedatacenter.app.ui.alerts.AlertListAdapter
+import com.homedatacenter.app.ui.alerts.AlertSnapshotDialogFragment
 
 class AlertsDialog(
     context: Context,
@@ -45,7 +49,7 @@ class AlertsDialog(
 ) : Dialog(context, R.style.FullScreenDialog) {
 
     private lateinit var binding: DialogAlertsBinding
-    private lateinit var adapter: AlertAdapter
+    private lateinit var adapter: AlertListAdapter
     private val baseUrl = container.getApiBaseUrl()
     private val token = container.prefsManager.token
     private val okHttpClient = container.okHttpClient
@@ -107,12 +111,18 @@ class AlertsDialog(
         }
     }
 
+    private fun showSnapshotDialog(alert: Alert) {
+        AlertSnapshotDialog(context, alert, baseUrl, token, okHttpClient).show()
+    }
+
     private fun setupRecyclerView() {
-        adapter = AlertAdapter(
+        adapter = AlertListAdapter(
             baseUrl = baseUrl,
             token = token,
             okHttpClient = okHttpClient,
-            onPlayAlert = { alert -> playAlert(alert) }
+            onSnapshotClick = { alert -> showSnapshotDialog(alert) },
+            onJumpCamera = { alert -> playAlert(alert) },
+            onRowClick = { alert -> playAlert(alert) }
         )
         binding.recyclerView.layoutManager = LinearLayoutManager(context)
         binding.recyclerView.adapter = adapter
@@ -418,126 +428,5 @@ class AlertsDialog(
         fullscreenHelper?.release()
         fullscreenHelper = null
         super.dismiss()
-    }
-
-    class AlertAdapter(
-        private val baseUrl: String?,
-        private val token: String?,
-        private val okHttpClient: OkHttpClient?,
-        private val onPlayAlert: (Alert) -> Unit
-    ) : ListAdapter<Alert, AlertAdapter.AlertViewHolder>(DiffCallback()) {
-
-        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): AlertViewHolder {
-            val b = ItemAlertBinding.inflate(LayoutInflater.from(parent.context), parent, false)
-            return AlertViewHolder(b)
-        }
-
-        override fun onBindViewHolder(holder: AlertViewHolder, position: Int) {
-            holder.bind(getItem(position))
-        }
-
-        inner class AlertViewHolder(private val binding: ItemAlertBinding) : RecyclerView.ViewHolder(binding.root) {
-            private var thumbnailJob: Job? = null
-
-            fun bind(alert: Alert) {
-                binding.tvLabel.text = alert.label
-                binding.tvConfidence.text = "${(alert.confidence * 100).toInt()}%"
-                binding.tvCamera.text = alert.cameraName.ifEmpty { alert.cameraSlug.ifEmpty { "Unknown" } }
-
-                val date = Date((alert.startTime * 1000).toLong())
-                binding.tvTime.text = SimpleDateFormat("MM-dd HH:mm:ss", Locale.getDefault()).format(date)
-
-                val zones = alert.zones
-                binding.tvZones.text = if (zones.isNotEmpty()) zones.joinToString(", ") else "—"
-
-                // Thumbnail: try base64 first, then URL endpoint
-                loadThumbnail(alert)
-
-                binding.btnPlay.setOnClickListener {
-                    if (alert.hasClip) onPlayAlert(alert)
-                }
-                if (!alert.hasClip) {
-                    binding.btnPlay.visibility = View.GONE
-                }
-            }
-
-            private fun loadThumbnail(alert: Alert) {
-                // Try base64 thumbnail first
-                if (alert.thumbnail.isNotEmpty()) {
-                    try {
-                        val bytes = Base64.decode(alert.thumbnail, Base64.DEFAULT)
-                        // v1.5.9: downsample base64 thumbnails the
-                        // same way as URL-fetched ones — alerts can
-                        // ship 1080p JPEGs in the base64 field, which
-                        // costs ~8 MB each in memory and stutters the
-                        // list scroll. inSampleSize=4 + RGB_565 gives
-                        // the same 8x memory reduction as the camera
-                        // list path.
-                        val opts = BitmapFactory.Options().apply {
-                            inSampleSize = 4
-                            inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
-                        }
-                        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
-                        if (bitmap != null) {
-                            binding.ivThumbnail.setImageBitmap(bitmap)
-                            return
-                        }
-                    } catch (_: Exception) {
-                    }
-                }
-
-                // Fall back to URL endpoint
-                val url = buildThumbnailUrl(alert.id)
-                if (url.isEmpty()) return
-
-                binding.progressThumbnail.visibility = View.VISIBLE
-                thumbnailJob?.cancel()
-                thumbnailJob = CoroutineScope(Dispatchers.IO).launch {
-                    try {
-                        val client = okHttpClient ?: OkHttpClient()
-                        val req = Request.Builder().url(url).apply {
-                            if (!token.isNullOrEmpty()) addHeader("Authorization", "Bearer $token")
-                        }.build()
-                        // v1.5.9: same downsampling as the base64 path
-                        // and CameraAdapter — keeps the alert list
-                        // scroll smooth even with 50 alert thumbnails.
-                        val opts = BitmapFactory.Options().apply {
-                            inSampleSize = 4
-                            inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
-                        }
-                        val bitmap = client.newCall(req).execute().use { resp ->
-                            if (!resp.isSuccessful) {
-                                android.util.Log.w("AlertsDialog", "Thumbnail HTTP ${resp.code} for $url")
-                                return@use null
-                            }
-                            resp.body?.byteStream()?.use {
-                                BitmapFactory.decodeStream(it, null, opts)
-                            }
-                        }
-                        withContext(Dispatchers.Main) {
-                            binding.progressThumbnail.visibility = View.GONE
-                            if (bitmap != null) {
-                                binding.ivThumbnail.setImageBitmap(bitmap)
-                            }
-                        }
-                    } catch (_: Exception) {
-                        withContext(Dispatchers.Main) {
-                            binding.progressThumbnail.visibility = View.GONE
-                        }
-                    }
-                }
-            }
-
-            private fun buildThumbnailUrl(alertId: String): String {
-                if (baseUrl.isNullOrBlank()) return ""
-                val base = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
-                return "${base}api/v1/cameras/alerts/$alertId/thumbnail"
-            }
-        }
-
-        class DiffCallback : DiffUtil.ItemCallback<Alert>() {
-            override fun areItemsTheSame(oldItem: Alert, newItem: Alert) = oldItem.id == newItem.id
-            override fun areContentsTheSame(oldItem: Alert, newItem: Alert) = oldItem == newItem
-        }
     }
 }

@@ -129,7 +129,7 @@ fun CameraCard(
         shape = RoundedCornerShape(22.dp),
         colors = CardDefaults.cardColors(containerColor = cardBackground),
         border = androidx.compose.foundation.BorderStroke(1.2.dp, cardBorder),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
         // v1.6.4 rev6: horizontal layout — bigger thumbnail on the
         // left, slim text column on the right. Height comes from
@@ -153,10 +153,13 @@ fun CameraCard(
                     .clip(RoundedCornerShape(14.dp))
                     .background(Color.Black),
             ) {
+                val imageBitmap = androidx.compose.runtime.remember(thumbnail) {
+                    thumbnail?.asImageBitmap()
+                }
                 when {
-                    thumbnail != null -> {
+                    imageBitmap != null -> {
                         Image(
-                            bitmap = thumbnail.asImageBitmap(),
+                            bitmap = imageBitmap,
                             contentDescription = "${camera.name} preview",
                             modifier = Modifier.fillMaxSize(),
                             contentScale = ContentScale.Crop,

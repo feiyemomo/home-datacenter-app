@@ -160,18 +160,48 @@ class AlertSnapshotDialogFragment : DialogFragment() {
                 val req = Request.Builder().url(url).apply {
                     if (!token.isNullOrEmpty()) addHeader("Authorization", "Bearer $token")
                 }.build()
-                val bitmap = withContext(Dispatchers.IO) {
-                    client.newCall(req).execute().use { resp ->
-                        if (!resp.isSuccessful) return@use null
-                        resp.body?.byteStream()?.use {
-                            val opts = BitmapFactory.Options().apply {
-                                inPreferredConfig = android.graphics.Bitmap.Config.ARGB_8888
-                                inScaled = false
-                            }
-                            BitmapFactory.decodeStream(it, null, opts)
+                var bitmap = withContext(Dispatchers.IO) {
+                    try {
+                        client.newCall(req).execute().use { resp ->
+                            if (resp.isSuccessful) {
+                                resp.body?.byteStream()?.use {
+                                    val opts = BitmapFactory.Options().apply {
+                                        inPreferredConfig = android.graphics.Bitmap.Config.ARGB_8888
+                                        inScaled = false
+                                    }
+                                    BitmapFactory.decodeStream(it, null, opts)
+                                }
+                            } else null
                         }
+                    } catch (_: Exception) { null }
+                }
+
+                // Fallback 1: alert's embedded base64 thumbnail
+                if (bitmap == null && alert.thumbnail.isNotEmpty()) {
+                    try {
+                        val bytes = android.util.Base64.decode(alert.thumbnail, android.util.Base64.DEFAULT)
+                        bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    } catch (_: Exception) {}
+                }
+
+                // Fallback 2: alert thumbnail endpoint
+                if (bitmap == null && !baseUrl.isNullOrBlank()) {
+                    val base = if (baseUrl!!.endsWith("/")) baseUrl!! else "$baseUrl/"
+                    val thumbUrl = "${base}api/v1/cameras/alerts/${alert.id}/thumbnail"
+                    bitmap = withContext(Dispatchers.IO) {
+                        try {
+                            val thumbReq = Request.Builder().url(thumbUrl).apply {
+                                if (!token.isNullOrEmpty()) addHeader("Authorization", "Bearer $token")
+                            }.build()
+                            client.newCall(thumbReq).execute().use { resp ->
+                                if (resp.isSuccessful) {
+                                    resp.body?.byteStream()?.use { BitmapFactory.decodeStream(it) }
+                                } else null
+                            }
+                        } catch (_: Exception) { null }
                     }
                 }
+
                 val curBinding = _binding ?: return@launch
                 if (bitmap != null) {
                     loadedBitmap = bitmap
@@ -329,5 +359,186 @@ class AlertSnapshotDialogFragment : DialogFragment() {
                 this.okHttpClient = okHttpClient
             }
         }
+    }
+}
+
+/**
+ * Standalone Dialog version of snapshot preview, safe to display from any Context or Dialog.
+ */
+class AlertSnapshotDialog(
+    context: android.content.Context,
+    private val alert: Alert,
+    private val baseUrl: String?,
+    private val token: String?,
+    private val okHttpClient: OkHttpClient?
+) : Dialog(context, R.style.SnapshotDialogTheme) {
+
+    private val binding = DialogAlertSnapshotBinding.inflate(LayoutInflater.from(context))
+    private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Main.immediate)
+    private var loadedBitmap: android.graphics.Bitmap? = null
+
+    init {
+        requestWindowFeature(Window.FEATURE_NO_TITLE)
+        setContentView(binding.root)
+        window?.apply {
+            setBackgroundDrawableResource(android.R.color.transparent)
+            clearFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        }
+
+        binding.tvSnapshotLabel.text = formatLabel(alert.label)
+        binding.chipSnapshotConfidence.text = "${(alert.confidence * 100).toInt()}%"
+
+        val camera = alert.cameraName.ifEmpty {
+            alert.cameraSlug.ifEmpty { context.getString(R.string.live_detection_camera_unknown) }
+        }
+        val zones = if (alert.zones.isNotEmpty()) alert.zones.joinToString(", ") else "—"
+        val date = Date((alert.startTime * 1000).toLong())
+        val timeStr = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(date)
+        binding.tvSnapshotMeta.text = "$camera · $zones · $timeStr"
+
+        binding.btnCloseSnapshot.setOnClickListener { dismiss() }
+        binding.btnSaveSnapshot.setOnClickListener { saveSnapshotToGallery() }
+        binding.rootContainer.setOnClickListener { dismiss() }
+        binding.innerCard.setOnClickListener { /* prevent dismissal when tapping card */ }
+
+        binding.zoomContainer.onZoomChanged = { scale ->
+            if (scale > 1.01f) {
+                binding.tvZoomBadge.visibility = View.VISIBLE
+                binding.tvZoomBadge.text = String.format(Locale.US, "%.1fx 双击复位", scale)
+            } else {
+                binding.tvZoomBadge.visibility = View.GONE
+            }
+        }
+
+        loadSnapshot()
+    }
+
+    private fun loadSnapshot() {
+        val url = buildSnapshotUrl(alert.id)
+        binding.progressSnapshot.visibility = View.VISIBLE
+        binding.tvSnapshotError.visibility = View.GONE
+
+        scope.launch {
+            try {
+                val client = okHttpClient ?: OkHttpClient()
+                var bitmap = withContext(Dispatchers.IO) {
+                    if (url.isNotEmpty()) {
+                        try {
+                            val req = Request.Builder().url(url).apply {
+                                if (!token.isNullOrEmpty()) addHeader("Authorization", "Bearer $token")
+                            }.build()
+                            client.newCall(req).execute().use { resp ->
+                                if (resp.isSuccessful) {
+                                    resp.body?.byteStream()?.use {
+                                        BitmapFactory.decodeStream(it)
+                                    }
+                                } else null
+                            }
+                        } catch (_: Exception) { null }
+                    } else null
+                }
+
+                // Fallback 1: embedded base64 thumbnail
+                if (bitmap == null && alert.thumbnail.isNotEmpty()) {
+                    try {
+                        val bytes = android.util.Base64.decode(alert.thumbnail, android.util.Base64.DEFAULT)
+                        bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    } catch (_: Exception) {}
+                }
+
+                // Fallback 2: thumbnail endpoint
+                if (bitmap == null && !baseUrl.isNullOrBlank()) {
+                    val base = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
+                    val thumbUrl = "${base}api/v1/cameras/alerts/${alert.id}/thumbnail"
+                    bitmap = withContext(Dispatchers.IO) {
+                        try {
+                            val thumbReq = Request.Builder().url(thumbUrl).apply {
+                                if (!token.isNullOrEmpty()) addHeader("Authorization", "Bearer $token")
+                            }.build()
+                            client.newCall(thumbReq).execute().use { resp ->
+                                if (resp.isSuccessful) {
+                                    resp.body?.byteStream()?.use { BitmapFactory.decodeStream(it) }
+                                } else null
+                            }
+                        } catch (_: Exception) { null }
+                    }
+                }
+
+                if (bitmap != null) {
+                    loadedBitmap = bitmap
+                    binding.ivSnapshot.setImageBitmap(bitmap)
+                } else {
+                    binding.tvSnapshotError.visibility = View.VISIBLE
+                    binding.tvSnapshotError.text = context.getString(R.string.weather_failed)
+                }
+            } catch (e: Exception) {
+                binding.tvSnapshotError.visibility = View.VISIBLE
+                binding.tvSnapshotError.text = e.message ?: context.getString(R.string.error)
+            } finally {
+                binding.progressSnapshot.visibility = View.GONE
+            }
+        }
+    }
+
+    private fun saveSnapshotToGallery() {
+        val bitmap = loadedBitmap ?: run {
+            android.widget.Toast.makeText(context, "图片尚未加载完成", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        val ctx = context
+        scope.launch(Dispatchers.IO) {
+            try {
+                val filename = "Snapshot_${alert.cameraSlug}_${System.currentTimeMillis()}.jpg"
+                val values = android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, filename)
+                    put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                        put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, android.os.Environment.DIRECTORY_PICTURES + "/HomeSecurity")
+                        put(android.provider.MediaStore.Images.Media.IS_PENDING, 1)
+                    }
+                }
+                val uri = ctx.contentResolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                if (uri != null) {
+                    ctx.contentResolver.openOutputStream(uri)?.use { out ->
+                        bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, out)
+                    }
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                        values.clear()
+                        values.put(android.provider.MediaStore.Images.Media.IS_PENDING, 0)
+                        ctx.contentResolver.update(uri, values, null, null)
+                    }
+                    withContext(Dispatchers.Main) {
+                        android.widget.Toast.makeText(ctx, "抓拍大图已保存至系统相册！", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(ctx, "保存失败: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    private fun buildSnapshotUrl(alertId: String): String {
+        if (baseUrl.isNullOrBlank()) return ""
+        val base = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
+        return "${base}api/v1/cameras/alerts/$alertId/snapshot?quality=100"
+    }
+
+    private fun formatLabel(label: String): String {
+        val res = when (label.lowercase(Locale.getDefault())) {
+            "person" -> R.string.detection_label_person
+            "car" -> R.string.detection_label_car
+            "truck" -> R.string.detection_label_truck
+            "bus" -> R.string.detection_label_bus
+            "bicycle" -> R.string.detection_label_bicycle
+            "motorcycle" -> R.string.detection_label_motorcycle
+            "dog" -> R.string.detection_label_dog
+            "cat" -> R.string.detection_label_cat
+            "bird" -> R.string.detection_label_bird
+            else -> 0
+        }
+        return if (res != 0) context.getString(res) else label
     }
 }

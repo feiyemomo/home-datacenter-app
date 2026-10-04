@@ -1,9 +1,9 @@
-﻿# Home Datacenter App
+# Home Datacenter App
 
 家庭数据中心 Android 客户端 — 一个用 **Kotlin + Jetpack Compose + ExoPlayer + WebRTC** 实现的家庭 NVR / IoT 控制台，配合 [home-datacenter](https://github.com/feiyemomo/home-datacenter) 后端使用，提供摄像头预览、WebRTC/MP4/HLS 直播（含音频）、录像回放、报警查看、设备状态、天气信息、局域网/远程自动切换和实时 WebSocket 推送。
 
 > 服务端项目：<https://github.com/feiyemomo/home-datacenter>
-> 当前版本：**v1.13.18**锛坴ersionCode 173）
+> 当前版本：**v1.13.27**（versionCode 182）
 
 ---
 
@@ -36,7 +36,7 @@
 | Compile SDK | 36 |
 | Java / Kotlin | 17 / 2.0 |
 | AGP | 9.2.1 |
-| 当前版本 | 1.13.20 (versionCode 175) |
+| 当前版本 | 1.13.27 (versionCode 182) |
 | 默认服务器 | `https://api.feiyemomo.top/`（远程） / `http://192.168.31.235:8088/`（局域网，自动探测并持久化） |
 
 App 通过 `(user_id, access_key)` 换取 JWT 后访问 `home-datacenter` 的 REST API 与 WebSocket。**BaseUrlResolver** 在启动时通过后台守护线程异步探测局域网 `http://192.168.31.235:8088/` 是否可达（TTFB ~10ms vs Cloudflare Tunnel 1.4s+），可达则切到局域网，否则走远程 Cloudflare Tunnel。冷启动会优先恢复上次有效网络路径，使家庭 Wi-Fi 场景下首个请求即命中内网。启动调度采用指数退避重试（1.5s → 4s → 9s → 16s），覆盖真机「WiFi connected but not validated」窗口；同时附加 TCP socket 直连探测作为 OkHttp cleartext 拒绝时的兜底。NetworkChangeMonitor 注册 ConnectivityManager.NetworkCallback，在 WiFi/移动网络切换时立即触发 re-probe，无需等 5 分钟 TTL。摄像头直播走 go2rtc 暴露的 MP4（主）+ HLS（备），后端根据摄像头 `capabilities.audio` 在 go2rtc 流 URL 上自动追加 `#audio=aac` 启用音频转码，前端通过 ExoPlayer `volume` 控制静音/取消静音。
@@ -592,6 +592,13 @@ newPlayer.setAudioAttributes(
 ---
 
 ### 最新版本详情
+
+### v1.13.27 (versionCode 182) — 摄像头报警卡片缩略图全屏放大查看、录像秒开与直播回退黑屏修复 (2026-10)
+- **报警记录卡片缩略图点击放大**：重构 `AlertListAdapter` 点击事件分流，无论后端是否标记 `hasSnapshot`，点击缩略图区域（卡片/图片/播放叠加标）100% 触发大图查看；封装顶层独立的 `AlertSnapshotDialog`，杜绝 DialogFragment 被全屏宿主 Dialog 遮挡的层级缺陷。
+- **抓拍大图多级自动降级与相册导出**：高清大图加载支持原图 (`/snapshot?quality=100`) $\to$ Base64 缩略图 $\to$ `/thumbnail` 接口三重降级；支持手势捏合双击缩放与右上角一键保存至系统相册。
+- **报警记录与摄像头 Tab 卡片样式统一**：摄像头详情弹出的报警记录卡片采用与主 Tab 统一的暖琥珀液态玻璃卡片与圆角规范。
+- **录像播放极速秒开**：结合服务端 `-c copy` 直拼接模式与客户端 `codec=copy` 参数，消除非关键 seek 抖动，录像加载延迟降至 ~0.15s 秒开。
+- **回退直播黑屏根治**：修复由报警页或录像页关闭返回直播时，底层 ExoPlayer / WebRTC 渲染通道偶发中断未唤醒的缺陷。
 
 ### v1.13.2 (versionCode 157) — 版本更新内容全量透传呈现、通知策略精简与退出登录隐蔽化 (2026-09)
 - **版本更新内容全量透传呈现**：设置页更新卡片新增更新日志专区与更新确认弹窗，检测到新版本时自动展开呈现详细特性列表，已是最新版本时亦支持一键展开查看当前版本变更；无论在线更新还是已安装状态均可清晰阅读更新说明。

@@ -1,4 +1,4 @@
-﻿import java.util.Properties
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
@@ -18,8 +18,8 @@ android {
         applicationId = "com.homedatacenter.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = 175
-        versionName = "1.13.20"
+        versionCode = 182
+        versionName = "1.13.27"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -167,6 +167,8 @@ dependencies {
     // files aligned to 16 KB. API surface stays compatible
     // (PeerConnectionFactory + PeerConnection.Observer + SurfaceViewRenderer).
     implementation(libs.stream.webrtc.android)
+    // v1.13.22: ProfileInstaller triggers AOT compilation for Baseline Profiles on install
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
 
     testImplementation(libs.junit)
     // org.json is bundled with android.jar at runtime but absent on the

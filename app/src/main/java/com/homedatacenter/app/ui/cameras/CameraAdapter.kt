@@ -64,14 +64,8 @@ class CameraAdapter(
         return CameraViewHolder(binding)
     }
 
-    private var lastAnimatedPosition = -1
-
     override fun onBindViewHolder(holder: CameraViewHolder, position: Int) {
         holder.bind(getItem(position))
-        if (position > lastAnimatedPosition) {
-            AnimationHelper.slideInBottom(holder.itemView, 80L)
-            lastAnimatedPosition = position
-        }
     }
 
     override fun onViewRecycled(holder: CameraViewHolder) {
@@ -100,7 +94,7 @@ class CameraAdapter(
 
         init {
             binding.composeView.setViewCompositionStrategy(
-                ViewCompositionStrategy.DisposeOnDetachedFromWindowOrReleasedFromPool,
+                ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed,
             )
             binding.composeView.setContent {
                 MaterialTheme {
@@ -120,16 +114,17 @@ class CameraAdapter(
 
         fun bind(camera: Camera) {
             val cameraChanged = boundCamera?.id != camera.id
+            val metadataChanged = boundCamera?.status != camera.status ||
+                    boundCamera?.name != camera.name ||
+                    boundCamera?.codec != camera.codec
             boundCamera = camera
-            currentCamera = camera
+            if (cameraChanged || metadataChanged || currentCamera == null) {
+                currentCamera = camera
+            }
             if (cameraChanged) {
                 thumbnailJob?.cancel()
                 thumbnailError = false
-                // Check cache first — if we have a cached snapshot
-                // for this camera, show it immediately and skip the
-                // HTTP fetch. This makes scroll-back instant instead
-                // of re-downloading every thumbnail on each bind.
-                val cached = thumbnailCache[camera.id]
+                val cached = synchronized(thumbnailCache) { thumbnailCache[camera.id] }
                 if (cached != null) {
                     thumbnail = cached
                     thumbnailLoading = false

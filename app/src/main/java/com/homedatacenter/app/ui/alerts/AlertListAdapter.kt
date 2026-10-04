@@ -44,6 +44,21 @@ class AlertListAdapter(
     private val onRowClick: ((Alert) -> Unit)? = null,
 ) : ListAdapter<Alert, AlertListAdapter.AlertViewHolder>(DiffCallback()) {
 
+    companion object {
+        // v1.13.23: Shared LRU cache for alert thumbnails (up to 64 items ~2-3MB).
+        // Eliminates repeated Base64 / JPEG decoding on scroll and renders instantly.
+        private val alertThumbnailCache = object : LinkedHashMap<String, android.graphics.Bitmap>(64, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, android.graphics.Bitmap>?): Boolean {
+                return size > 64
+            }
+        }
+    }
+
+    override fun onViewRecycled(holder: AlertViewHolder) {
+        holder.recycle()
+        super.onViewRecycled(holder)
+    }
+
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): AlertViewHolder {
         val b = ItemAlertBinding.inflate(LayoutInflater.from(parent.context), parent, false)
         return AlertViewHolder(b)
@@ -54,10 +69,18 @@ class AlertListAdapter(
     }
 
     inner class AlertViewHolder(private val binding: ItemAlertBinding) : RecyclerView.ViewHolder(binding.root) {
-        private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         private var thumbnailJob: Job? = null
+        private var boundAlertId: String? = null
+
+        fun recycle() {
+            thumbnailJob?.cancel()
+            thumbnailJob = null
+            boundAlertId = null
+        }
 
         fun bind(alert: Alert) {
+            boundAlertId = alert.id
             binding.tvLabel.text = formatLabel(alert.label)
             binding.tvConfidence.text = "${(alert.confidence * 100).toInt()}%"
             binding.tvCamera.text = alert.cameraName.ifEmpty {
@@ -75,13 +98,14 @@ class AlertListAdapter(
             // Play overlay on the thumbnail: shown when a clip is available.
             binding.btnPlay.visibility = if (alert.hasClip) View.VISIBLE else View.GONE
 
-            // Tap thumbnail → snapshot modal (if available) or row click fallback
+            // Tap thumbnail → always open snapshot modal
             val openSnapshot = {
-                if (alert.hasSnapshot) onSnapshotClick?.invoke(alert)
-                else onRowClick?.invoke(alert)
+                onSnapshotClick?.invoke(alert)
             }
             binding.thumbnailContainer.setOnClickListener { openSnapshot() }
             binding.thumbnailCard.setOnClickListener { openSnapshot() }
+            binding.ivThumbnail.setOnClickListener { openSnapshot() }
+            binding.btnPlay.setOnClickListener { openSnapshot() }
             // "查看录像" chip → jump to camera's recordings
             binding.chipClip.setOnClickListener { onJumpCamera?.invoke(alert) }
             // Tap row body → row click handler
@@ -91,40 +115,69 @@ class AlertListAdapter(
         }
 
         private fun loadThumbnail(alert: Alert) {
-            if (alert.thumbnail.isNotEmpty()) {
-                try {
-                    val bytes = Base64.decode(alert.thumbnail, Base64.DEFAULT)
-                    val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                    if (bitmap != null) {
-                        binding.ivThumbnail.setImageBitmap(bitmap)
-                        return
-                    }
-                } catch (_: Exception) {
-                }
+            thumbnailJob?.cancel()
+
+            // 1. Instant cache hit check (0ms UI thread cost)
+            val cached = synchronized(alertThumbnailCache) { alertThumbnailCache[alert.id] }
+            if (cached != null) {
+                binding.progressThumbnail.visibility = View.GONE
+                binding.ivThumbnail.setImageBitmap(cached)
+                return
             }
 
+            binding.ivThumbnail.setImageDrawable(null)
+
+            // 2. Base64 thumbnail async decode (Dispatchers.Default off main thread)
+            if (alert.thumbnail.isNotEmpty()) {
+                binding.progressThumbnail.visibility = View.VISIBLE
+                thumbnailJob = scope.launch {
+                    val bitmap = withContext(Dispatchers.Default) {
+                        try {
+                            val bytes = Base64.decode(alert.thumbnail, Base64.DEFAULT)
+                            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                        } catch (_: Exception) {
+                            null
+                        }
+                    }
+                    if (boundAlertId == alert.id) {
+                        binding.progressThumbnail.visibility = View.GONE
+                        if (bitmap != null) {
+                            synchronized(alertThumbnailCache) { alertThumbnailCache[alert.id] = bitmap }
+                            binding.ivThumbnail.setImageBitmap(bitmap)
+                        }
+                    }
+                }
+                return
+            }
+
+            // 3. Network fetch fallback (Dispatchers.IO)
             val url = buildThumbnailUrl(alert.id)
-            if (url.isEmpty()) return
+            if (url.isEmpty()) {
+                binding.progressThumbnail.visibility = View.GONE
+                return
+            }
 
             binding.progressThumbnail.visibility = View.VISIBLE
-            thumbnailJob?.cancel()
             thumbnailJob = scope.launch {
-                try {
-                    val client = okHttpClient ?: OkHttpClient()
-                    val req = Request.Builder().url(url).apply {
-                        if (!token.isNullOrEmpty()) addHeader("Authorization", "Bearer $token")
-                    }.build()
-                    val bitmap = client.newCall(req).execute().use { resp ->
-                        if (!resp.isSuccessful) return@use null
-                        resp.body?.byteStream()?.use { BitmapFactory.decodeStream(it) }
+                val bitmap = withContext(Dispatchers.IO) {
+                    try {
+                        val client = okHttpClient ?: OkHttpClient()
+                        val req = Request.Builder().url(url).apply {
+                            if (!token.isNullOrEmpty()) addHeader("Authorization", "Bearer $token")
+                        }.build()
+                        client.newCall(req).execute().use { resp ->
+                            if (!resp.isSuccessful) return@use null
+                            resp.body?.byteStream()?.use { BitmapFactory.decodeStream(it) }
+                        }
+                    } catch (_: Exception) {
+                        null
                     }
-                    withContext(Dispatchers.Main) {
-                        binding.progressThumbnail.visibility = View.GONE
-                        if (bitmap != null) binding.ivThumbnail.setImageBitmap(bitmap)
-                    }
-                } catch (_: Exception) {
-                    withContext(Dispatchers.Main) {
-                        binding.progressThumbnail.visibility = View.GONE
+                }
+                if (boundAlertId == alert.id) {
+                    binding.progressThumbnail.visibility = View.GONE
+                    if (bitmap != null) {
+                        synchronized(alertThumbnailCache) { alertThumbnailCache[alert.id] = bitmap }
+                        binding.ivThumbnail.setImageBitmap(bitmap)
                     }
                 }
             }

@@ -884,8 +884,12 @@ class RecordingsDialog(
                     "Alert-seek direct: seekToMs=$seekToMs adjusted=$adjustedSeekMs -> window=$startWindow pos=$startPos")
             }
 
-            this@RecordingsDialog.pendingAlertSeekWindow = startWindow
-            this@RecordingsDialog.pendingAlertSeekPos = startPos
+            // Sync initial seekbar position before player prepares
+            if (startWindow > 0 || startPos > 0L) {
+                val targetProgress = (if (startWindow in clipStartOffsets.indices) clipStartOffsets[startWindow] else 0L) + startPos
+                binding.daySeekBar.progress = targetProgress.toInt()
+                binding.tvDayPosition.text = formatDayTime(targetProgress)
+            }
 
             // setMediaSources is more efficient than setMediaItems
             // when each item shares the same MediaSource factory.
@@ -897,18 +901,8 @@ class RecordingsDialog(
                     binding.progressPlayer.visibility = if (state == Player.STATE_BUFFERING) View.VISIBLE else View.GONE
                     if (state == Player.STATE_READY) {
                         recordingRetryCount = 0
-                        if (pendingAlertSeekPos > 0L) {
-                            val win = pendingAlertSeekWindow
-                            val pos = pendingAlertSeekPos
-                            pendingAlertSeekPos = 0L
-                            pendingAlertSeekWindow = 0
-                            val targetProgress = (if (win in clipStartOffsets.indices) clipStartOffsets[win] else 0L) + pos
-                            binding.daySeekBar.progress = targetProgress.toInt()
-                            binding.tvDayPosition.text = formatDayTime(targetProgress)
-                            android.util.Log.d("RecordingsDialog",
-                                "Executing deferred alert seek on STATE_READY: window=$win pos=$pos targetProgress=$targetProgress")
-                            seekTo(win, pos)
-                        }
+                        pendingAlertSeekPos = 0L
+                        pendingAlertSeekWindow = 0
                     }
                 }
                 override fun onPlayerError(error: PlaybackException) {
@@ -1692,7 +1686,7 @@ class RecordingsDialog(
         // transcoder passthrough) and fall back to /file (full-clip
         // transcode) once per playback session if it fails.
         val path = if (useStreamSource) "stream" else "file"
-        return "${base}api/v1/cameras/${camera.id}/recordings/$recId/$path?quality=$currentQuality"
+        return "${base}api/v1/cameras/${camera.id}/recordings/$recId/$path?quality=$currentQuality&codec=copy"
     }
 
     fun onBackPressedCustom(): Boolean {
