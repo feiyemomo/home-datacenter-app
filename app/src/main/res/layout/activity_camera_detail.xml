@@ -159,148 +159,7 @@
                 android:visibility="gone"
                 tools:ignore="HardcodedText" />
 
-            <!-- Player Sound / Volume & Amplifier Control Panel -->
-            <LinearLayout
-                android:id="@+id/panelVolumeControl"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_gravity="bottom"
-                android:layout_marginBottom="48dp"
-                android:layout_marginHorizontal="10dp"
-                android:orientation="vertical"
-                android:background="@drawable/bg_glass_dark_panel"
-                android:paddingHorizontal="14dp"
-                android:paddingVertical="10dp"
-                android:elevation="6dp"
-                android:visibility="gone">
 
-                <!-- Header: title + volume percentage readout -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:layout_marginBottom="4dp">
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="🔊 播放器音量与功放增强"
-                        android:textColor="@android:color/white"
-                        android:textSize="12sp"
-                        android:textStyle="bold" />
-
-                    <TextView
-                        android:id="@+id/tvVolumePercent"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="100% (标准)"
-                        android:textColor="#4ADE80"
-                        android:textSize="12sp"
-                        android:textStyle="bold" />
-                </LinearLayout>
-
-                <!-- Slider row: quick mute icon + seekbar (0-300%) + boost indicator -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical">
-
-                    <ImageView
-                        android:id="@+id/ivVolumeMuteQuick"
-                        android:layout_width="22dp"
-                        android:layout_height="22dp"
-                        android:src="@drawable/ic_volume_off"
-                        app:tint="#B0B8C4"
-                        android:contentDescription="静音" />
-
-                    <SeekBar
-                        android:id="@+id/sbVolumeSlider"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:max="300"
-                        android:progress="100"
-                        android:progressTint="#4ADE80"
-                        android:thumbTint="#FFFFFF"
-                        android:layout_marginHorizontal="6dp" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="300%"
-                        android:textColor="#F59E0B"
-                        android:textSize="11sp"
-                        android:textStyle="bold" />
-                </LinearLayout>
-
-                <!-- Preset quick chips -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:layout_marginTop="6dp"
-                    android:gravity="center">
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnVolPresetMute"
-                        style="@style/Widget.Material3.Button.TextButton"
-                        android:layout_width="0dp"
-                        android:layout_height="32dp"
-                        android:layout_weight="1"
-                        android:minWidth="0dp"
-                        android:minHeight="0dp"
-                        android:padding="0dp"
-                        android:text="静音"
-                        android:textSize="11sp"
-                        android:textColor="#E2E8F0"
-                        app:cornerRadius="6dp" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnVolPreset100"
-                        style="@style/Widget.Material3.Button.TextButton"
-                        android:layout_width="0dp"
-                        android:layout_height="32dp"
-                        android:layout_weight="1"
-                        android:minWidth="0dp"
-                        android:minHeight="0dp"
-                        android:padding="0dp"
-                        android:text="100%"
-                        android:textSize="11sp"
-                        android:textColor="#E2E8F0"
-                        app:cornerRadius="6dp" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnVolPreset200"
-                        style="@style/Widget.Material3.Button.TextButton"
-                        android:layout_width="0dp"
-                        android:layout_height="32dp"
-                        android:layout_weight="1"
-                        android:minWidth="0dp"
-                        android:minHeight="0dp"
-                        android:padding="0dp"
-                        android:text="200%功放"
-                        android:textSize="11sp"
-                        android:textColor="#4ADE80"
-                        app:cornerRadius="6dp" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnVolPreset300"
-                        style="@style/Widget.Material3.Button.TextButton"
-                        android:layout_width="0dp"
-                        android:layout_height="32dp"
-                        android:layout_weight="1"
-                        android:minWidth="0dp"
-                        android:minHeight="0dp"
-                        android:padding="0dp"
-                        android:text="300%强力"
-                        android:textSize="11sp"
-                        android:textColor="#F59E0B"
-                        app:cornerRadius="6dp" />
-                </LinearLayout>
-            </LinearLayout>
 
             <!-- v1.5.8: WebRTC control overlay. When WebRTC is the
                  active renderer, the ExoPlayer controller (pause /
@@ -437,6 +296,27 @@
                     android:textSize="13sp"
                     android:textStyle="bold"
                     app:icon="@drawable/ic_refresh"
+                    app:iconSize="18dp"
+                    app:iconPadding="4dp"
+                    app:iconGravity="textStart"
+                    app:cornerRadius="12dp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnAudioPickup"
+                    style="@style/Widget.Material3.Button.TonalButton"
+                    android:layout_width="0dp"
+                    android:layout_weight="1"
+                    android:layout_height="44dp"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginEnd="4dp"
+                    android:paddingHorizontal="4dp"
+                    android:paddingVertical="0dp"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:text="拾音"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    app:icon="@drawable/ic_volume_on"
                     app:iconSize="18dp"
                     app:iconPadding="4dp"
                     app:iconGravity="textStart"
@@ -735,35 +615,36 @@
                     android:text="@string/camera_share_title"
                     android:visibility="gone" />
 
+                <!-- Audio pickup switch: visible to all users -->
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/switchAudio"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/camera_audio_enable"
+                    android:textColor="@color/text_primary" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="56dp"
+                    android:layout_marginTop="-2dp"
+                    android:text="@string/camera_audio_summary"
+                    android:textSize="11sp"
+                    android:textColor="@color/text_hint" />
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/divider"
+                    android:layout_marginTop="12dp"
+                    android:layout_marginBottom="12dp" />
+
                 <LinearLayout
                     android:id="@+id/groupAdminControls"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
                     android:visibility="gone">
-
-                    <com.google.android.material.materialswitch.MaterialSwitch
-                        android:id="@+id/switchAudio"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="@string/camera_audio_enable"
-                        android:textColor="@color/text_primary" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="56dp"
-                        android:layout_marginTop="-2dp"
-                        android:text="@string/camera_audio_summary"
-                        android:textSize="11sp"
-                        android:textColor="@color/text_hint" />
-
-                    <View
-                        android:layout_width="match_parent"
-                        android:layout_height="1dp"
-                        android:background="@color/divider"
-                        android:layout_marginTop="12dp"
-                        android:layout_marginBottom="12dp" />
 
                     <com.google.android.material.materialswitch.MaterialSwitch
                         android:id="@+id/switchRecording"

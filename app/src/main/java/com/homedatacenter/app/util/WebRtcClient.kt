@@ -115,9 +115,6 @@ class WebRtcClient(
     @Volatile
     private var isTalkingBack: Boolean = false
     @Volatile
-    private var playbackGain: Float = 1.0f // 1.0 = 100%, 2.0 = 200%, 3.0 = 300%
-    fun getPlaybackGain(): Float = playbackGain
-    @Volatile
     var talkbackMicGain: Float = 5.0f // 5.0x software amplifier for camera speaker
     private var audioDeviceModule: JavaAudioDeviceModule? = null
     // v1.7.2: latch the user's mute preference so that audio tracks
@@ -288,20 +285,6 @@ class WebRtcClient(
         }
     }
 
-    /**
-     * Sets playback gain multiplier (0.0 to 3.0).
-     * 1.0 = standard volume, 2.0 = 200% amplifier, 3.0 = 300% max software boost.
-     * 0.0 = mute.
-     */
-    fun setPlaybackGain(gain: Float) {
-        val clamped = gain.coerceIn(0.0f, 3.0f)
-        playbackGain = clamped
-        if (clamped <= 0.0f) {
-            setAudioEnabled(false)
-        } else {
-            setAudioEnabled(true)
-        }
-    }
 
     /**
      * v1.13.0: Prepares or gets the local microphone audio track and attaches it to the transceiver.
@@ -514,29 +497,6 @@ class WebRtcClient(
                     }
                 })
 
-                // 2. Playback render amplifier (Camera stream listening on phone, 0% ~ 300%)
-                setRenderPreProcessing(object : ExternalAudioProcessingFactory.AudioProcessing {
-                    override fun initialize(sampleRateHz: Int, numChannels: Int) {}
-                    override fun reset(newRate: Int) {}
-                    override fun process(numBands: Int, numFrames: Int, buffer: ByteBuffer) {
-                        val gain = playbackGain
-                        if (gain == 1.0f) return
-                        val originalOrder = buffer.order()
-                        val shortBuf = buffer.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
-                        val count = shortBuf.remaining()
-                        for (i in 0 until count) {
-                            val sample = shortBuf.get(i).toFloat()
-                            val amplified = (sample * gain).toInt()
-                            val clamped = when {
-                                amplified > Short.MAX_VALUE -> Short.MAX_VALUE
-                                amplified < Short.MIN_VALUE -> Short.MIN_VALUE
-                                else -> amplified.toShort()
-                            }
-                            shortBuf.put(i, clamped)
-                        }
-                        buffer.order(originalOrder)
-                    }
-                })
             }
         } catch (e: Throwable) {
             Log.w(TAG, "ExternalAudioProcessingFactory initialization skipped: ${e.message}")
