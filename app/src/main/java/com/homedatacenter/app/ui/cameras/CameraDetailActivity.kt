@@ -251,6 +251,7 @@ class CameraDetailActivity : AppCompatActivity() {
             finish()
             return
         }
+        audioEnabled = camera?.hasAudio ?: true
 
         setupHeader()
         setupVideo()
@@ -945,20 +946,44 @@ class CameraDetailActivity : AppCompatActivity() {
     private fun updateAudio(enabled: Boolean) {
         val cam = camera ?: return
         val token = container.prefsManager.token ?: return
+
+        // 1. Immediately apply to local audio state so the user experiences zero lag
+        audioEnabled = enabled
+        try {
+            webRtcClient?.setAudioEnabled(enabled && !webRtcMuted)
+        } catch (_: Exception) {}
+        try {
+            player?.volume = if (enabled && !webRtcMuted) 1.0f else 0.0f
+        } catch (_: Exception) {}
+        updateAudioPickupUi(enabled)
+        binding.switchAudio.isChecked = enabled
+        updateWebRtcControlButtons()
+
         lifecycleScope.launch {
             try {
                 binding.btnAudioPickup.isEnabled = false
                 container.getRepository().updateCameraAudio(token, cam.id, enabled)
                 camera = cam.copy(capabilities = cam.capabilities + ("audio" to enabled))
-                updateAudioPickupUi(enabled)
-                binding.switchAudio.isChecked = enabled
                 toast(if (enabled) "已开启摄像头拾音" else "已关闭摄像头拾音")
-                // Reload stream so audio track add/remove takes effect
+                // Force tear down previous WebRTC connection and reload stream
+                try {
+                    webRtcClient?.stopPlayoutImmediately()
+                    webRtcClient?.release()
+                } catch (_: Exception) {}
+                webRtcInProgress = false
                 startPlayback()
             } catch (e: Exception) {
                 toast("拾音切换失败: ${e.message}")
+                audioEnabled = cam.hasAudio
+                try {
+                    webRtcClient?.setAudioEnabled(cam.hasAudio && !webRtcMuted)
+                } catch (_: Exception) {}
+                try {
+                    player?.volume = if (cam.hasAudio && !webRtcMuted) 1.0f else 0.0f
+                } catch (_: Exception) {}
                 updateAudioPickupUi(cam.hasAudio)
                 binding.switchAudio.isChecked = cam.hasAudio
+                updateWebRtcControlButtons()
             } finally {
                 binding.btnAudioPickup.isEnabled = true
             }
@@ -1028,9 +1053,11 @@ class CameraDetailActivity : AppCompatActivity() {
             try {
                 val fresh = container.getRepository().getCamera(token, cam.id)
                 camera = fresh
+                audioEnabled = fresh.hasAudio
                 setupHeader()
                 updateAudioPickupUi(fresh.hasAudio)
                 binding.switchAudio.isChecked = fresh.hasAudio
+                updateWebRtcControlButtons()
             } catch (_: Exception) {
                 // Network failure: keep showing the old state.
             }
@@ -1340,9 +1367,13 @@ class CameraDetailActivity : AppCompatActivity() {
         }
 
         binding.btnWebRtcMute.setOnClickListener {
+            if (!audioEnabled) {
+                toast("当前摄像头未开启拾音，请先开启拾音")
+                return@setOnClickListener
+            }
             webRtcMuted = !webRtcMuted
             try {
-                webRtcClient?.setAudioEnabled(!webRtcMuted)
+                webRtcClient?.setAudioEnabled(audioEnabled && !webRtcMuted)
             } catch (_: Exception) {}
             try {
                 player?.volume = if (webRtcMuted) 0f else 1f
@@ -1357,13 +1388,14 @@ class CameraDetailActivity : AppCompatActivity() {
         binding.btnWebRtcQuality.text = if (currentLiveQuality == "1080p") "1080P" else "720P"
         binding.btnWebRtcQuality.setOnClickListener { v ->
             val popup = android.widget.PopupMenu(this, v)
-            popup.menu.add(0, 720, 0, "720P (默认/高清)")
-            popup.menu.add(0, 1080, 1, "1080P (超清/原画)")
+            popup.menu.add(0, 720, 0, "720P (默认/流畅)")
+            popup.menu.add(0, 1080, 1, "1080P (原画/超清)")
             popup.setOnMenuItemClickListener { item ->
                 val newQ = if (item.itemId == 1080) "1080p" else "720p"
                 if (newQ != currentLiveQuality) {
                     currentLiveQuality = newQ
                     binding.btnWebRtcQuality.text = if (newQ == "1080p") "1080P" else "720P"
+                    binding.progressVideo.visibility = View.VISIBLE
                     try {
                         webRtcClient?.stopPlayoutImmediately()
                         webRtcClient?.release()
@@ -1385,8 +1417,9 @@ class CameraDetailActivity : AppCompatActivity() {
         binding.btnWebRtcPause.setIconResource(
             if (webRtcPaused) R.drawable.ic_play_circle else R.drawable.ic_pause
         )
+        val isMuted = !audioEnabled || webRtcMuted
         binding.btnWebRtcMute.setIconResource(
-            if (webRtcMuted) R.drawable.ic_volume_off else R.drawable.ic_volume_on
+            if (isMuted) R.drawable.ic_volume_off else R.drawable.ic_volume_on
         )
     }
 
@@ -1765,6 +1798,7 @@ class CameraDetailActivity : AppCompatActivity() {
             }
             android.util.Log.d(TAG, "WebRTC ICE servers: ${iceServers.size} (directPath=$isDirectPath)")
 
+            client.setAudioEnabled(audioEnabled && !webRtcMuted)
             client.startStream(
                 cameraId = cam.id,
                 surfaceRenderer = binding.surfaceRenderer,
@@ -1806,7 +1840,7 @@ class CameraDetailActivity : AppCompatActivity() {
                         // page during the fallback window.
                         updateStreamStrategy("WebRTC")
                         updatePipParams()
-                        client.setAudioEnabled(!webRtcMuted)
+                        client.setAudioEnabled(audioEnabled && !webRtcMuted)
                         updateWebRtcControlButtons()
                     }
 
@@ -2012,7 +2046,7 @@ class CameraDetailActivity : AppCompatActivity() {
         newPlayer.apply {
             setMediaSource(mediaSource)
             playWhenReady = false
-            volume = if (audioEnabled) 1.0f else 0.0f
+            volume = if (audioEnabled && !webRtcMuted) 1.0f else 0.0f
             addListener(object : Player.Listener {
                 override fun onPlaybackStateChanged(state: Int) {
                     // Only update UI once this player has been promoted
@@ -2159,7 +2193,7 @@ class CameraDetailActivity : AppCompatActivity() {
         newPlayer.apply {
             setMediaSource(mediaSource)
             playWhenReady = true
-            volume = if (audioEnabled) 1.0f else 0.0f
+            volume = if (audioEnabled && !webRtcMuted) 1.0f else 0.0f
             addListener(object : Player.Listener {
                 override fun onPlaybackStateChanged(state: Int) {
                     binding.progressVideo.visibility =

@@ -920,15 +920,14 @@ class WebRtcClient(
         }
         prepareJob = null
 
-        // v1.6.35: check for a pre-negotiated PeerConnection. If
-        // prepareOffer completed for this cameraId, reuse its PC +
-        // local SDP and skip straight to POSTing the offer — this
-        // saves the 800ms LAN / 5s remote ICE gathering phase.
+        // v1.6.35: check for a pre-negotiated PeerConnection. Only reuse for 720p (the default
+        // quality precomputed at startup). For 1080p, negotiate a fresh PeerConnection.
         val preparedPcLocal = preparedPc
         val preparedSdpLocal = preparedSdp
         val usePrepared = preparedPcLocal != null &&
             preparedSdpLocal != null &&
-            preparedCameraId == cameraId
+            preparedCameraId == cameraId &&
+            quality == "720p"
 
         // Tear down any previous active PeerConnection so we can
         // start fresh on a reload. removeSink detaches the previous
@@ -936,6 +935,10 @@ class WebRtcClient(
         videoTrack?.removeSink(surfaceRenderer)
         videoTrack = null
         if (!usePrepared) {
+            preparedPc?.let { try { it.dispose() } catch (_: Exception) {} }
+            preparedPc = null
+            preparedSdp = null
+            preparedCameraId = -1L
             peerConnection?.let { it.dispose() }
             peerConnection = null
         } else {
