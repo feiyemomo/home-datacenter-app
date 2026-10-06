@@ -359,35 +359,43 @@ class BaseUrlResolver(
 
     private fun fetchH3cUrl(): String? {
         val fastClient = client.newBuilder()
-            .callTimeout(8_000, TimeUnit.MILLISECONDS)
-            .connectTimeout(5_000, TimeUnit.MILLISECONDS)
-            .readTimeout(5_000, TimeUnit.MILLISECONDS)
+            .callTimeout(4_000, TimeUnit.MILLISECONDS)
+            .connectTimeout(3_000, TimeUnit.MILLISECONDS)
+            .readTimeout(3_000, TimeUnit.MILLISECONDS)
             .build()
-        val req = Request.Builder()
-            .url("${REMOTE_URL.trimEnd('/')}/fast-status")
-            .header("X-Probe-Request", "true")
-            .get()
-            .build()
-        return try {
-            fastClient.newCall(req).execute().use { resp ->
-                if (resp.isSuccessful) {
-                    val body = resp.body?.string() ?: return null
-                    val json = org.json.JSONObject(body)
-                    if (json.optString("status") == "online") {
-                        val addr = json.optString("externalAddr")
-                        if (addr.isNotBlank()) {
-                            val normalized = if (addr.endsWith("/")) addr else "$addr/"
-                            prefs.edit().putString(KEY_H3C_URL, normalized).apply()
-                            android.util.Log.i(TAG, "Discovered H3C Domestic Gateway: $normalized")
-                            normalized
-                        } else null
-                    } else null
-                } else null
+        val cached = getCachedH3cUrl()
+        val urlsToTry = listOfNotNull(
+            cached?.takeIf { it.isNotBlank() }?.let { "${it.trimEnd('/')}/fast-status" },
+            "${REMOTE_URL.trimEnd('/')}/fast-status",
+            "https://dashboard.feiyemomo.top/fast-status"
+        ).distinct()
+        for (u in urlsToTry) {
+            val req = Request.Builder()
+                .url(u)
+                .header("X-Probe-Request", "true")
+                .get()
+                .build()
+            try {
+                fastClient.newCall(req).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        val body = resp.body?.string() ?: return@use
+                        val json = org.json.JSONObject(body)
+                        if (json.optString("status") == "online") {
+                            val addr = json.optString("externalAddr")
+                            if (addr.isNotBlank()) {
+                                val normalized = if (addr.endsWith("/")) addr else "$addr/"
+                                prefs.edit().putString(KEY_H3C_URL, normalized).apply()
+                                android.util.Log.i(TAG, "Discovered H3C Domestic Gateway via $u: $normalized")
+                                return normalized
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.w(TAG, "fetchH3cUrl via $u failed: ${e.message}")
             }
-        } catch (e: Exception) {
-            android.util.Log.w(TAG, "fetchH3cUrl failed: ${e.message}")
-            null
         }
+        return null
     }
 
     /**
@@ -461,7 +469,7 @@ class BaseUrlResolver(
     /**
      * v1.6.23 / v1.13.11: returns true if the resolved URL is a direct or high-speed domestic path.
      */
-    fun isDirectPath(): Boolean = resolved == effectiveLanUrl || isIpv6Direct()
+    fun isDirectPath(): Boolean = resolved == effectiveLanUrl || isIpv6Direct() || isH3cFast()
 
     /**
      * v1.6.23 / v1.13.11: immediate fallback for NetworkChangeMonitor.onLost().

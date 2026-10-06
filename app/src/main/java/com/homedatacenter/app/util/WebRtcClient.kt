@@ -1091,8 +1091,8 @@ class WebRtcClient(
         // (host-candidate ICE completes in <500ms).
         watchdogJob?.cancel()
         if (!connectedOrFailed) {
-            // Fast failover watchdog: 4.0s on LAN, 7.0s on remote
-            val connectTimeoutMs = if (isLan) 4_000L else 7_000L
+            // Fast failover watchdog: 3.5s on LAN/H3C Direct, 4.5s on remote tunnel
+            val connectTimeoutMs = if (isLan) 3_500L else 4_500L
             watchdogJob = scope.launch {
                 delay(connectTimeoutMs)
                 if (!connectedOrFailed && activeListener === listener) {

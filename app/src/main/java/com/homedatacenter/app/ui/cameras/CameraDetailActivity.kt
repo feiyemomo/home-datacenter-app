@@ -1923,14 +1923,8 @@ class CameraDetailActivity : AppCompatActivity() {
                         }
                         android.util.Log.w(TAG, "WebRTC failed: $reason — falling back to fresh ExoPlayer")
 
-                        // v1.13.18: If failure was due to ICE disconnect or tunnel rotation, immediately notify resolver
-                        if (reason.contains("ICE disconnected") || reason.contains("ICE failed")) {
-                            val resolver = container.baseUrlResolver
-                            val activeH3c = resolver.getCachedH3cUrl()
-                            if (!activeH3c.isNullOrBlank()) {
-                                resolver.notifyUrlFailed(activeH3c)
-                            }
-                        }
+                        // WebRTC ICE failure does NOT mean the H3C HTTP tunnel is broken (carriers often block UDP P2P).
+                        // Keep the fast HTTP path intact so ExoPlayer MP4 fallback plays instantly.
 
                         // Seamless failover: keep surfaceRenderer visible displaying the last frame
                         // until ExoPlayer is prepared and buffers first frame (STATE_READY)
@@ -2369,7 +2363,8 @@ class CameraDetailActivity : AppCompatActivity() {
         // stream via ProgressiveMediaSource.
         val baseUrl = container.getApiBaseUrl().orEmpty()
         if (baseUrl.isBlank()) return ""
-        return "${baseUrl.trimEnd('/')}/api/v1/cameras/${camera.id}/stream.mp4"
+        val qParam = if (currentLiveQuality == "1080p") "?quality=1080p" else ""
+        return "${baseUrl.trimEnd('/')}/api/v1/cameras/${camera.id}/stream.mp4$qParam"
     }
 
     private fun resolveHlsUrl(camera: Camera, preferH264: Boolean = true): String {
@@ -2378,17 +2373,16 @@ class CameraDetailActivity : AppCompatActivity() {
         val hlsUrl = stream?.hlsUrl?.trim().orEmpty()
         val hlsHevcUrl = stream?.hlsHevcUrl?.trim().orEmpty()
 
-        // v1.13.21: Prefer 720p H.264 HLS by default for 100% hardware decoder compatibility.
-        // 2.5K HEVC streams crash MTK/Snapdragon decoders (c2.mtk.hevc.decoder Error 0x80000000).
-        if (preferH264 && hlsUrl.isNotEmpty()) return resolveAbsoluteUrl(hlsUrl)
+        // Strip &mp4= so ExoPlayer uses standard MPEG-TS segments rather than short-lived LL-HLS init.mp4 sessions
+        if (preferH264 && hlsUrl.isNotEmpty()) return resolveAbsoluteUrl(hlsUrl).replace("&mp4=", "")
         if (!preferH264 && hlsHevcUrl.isNotEmpty() && DecoderSupport.canDecodeHevc()) {
-            return resolveAbsoluteUrl(hlsHevcUrl)
+            return resolveAbsoluteUrl(hlsHevcUrl).replace("&mp4=", "")
         }
-        if (hlsUrl.isNotEmpty()) return resolveAbsoluteUrl(hlsUrl)
+        if (hlsUrl.isNotEmpty()) return resolveAbsoluteUrl(hlsUrl).replace("&mp4=", "")
 
         val streamName = stream?.streamName?.trim().orEmpty()
         if (streamName.isEmpty() || baseUrl.isBlank()) return ""
-        return "${baseUrl.trimEnd('/')}/api/stream.m3u8?src=${Uri.encode(streamName)}&mp4="
+        return "${baseUrl.trimEnd('/')}/api/stream.m3u8?src=${Uri.encode(streamName)}"
     }
 
     private fun resolveAbsoluteUrl(url: String): String {
