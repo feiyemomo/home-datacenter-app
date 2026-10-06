@@ -674,6 +674,7 @@ class RecordingsDialog(
                         .build(),
                     true
                 )
+                volume = if (camera.hasAudio) 1.0f else 0.0f
                 val dataSourceFactory = DefaultHttpDataSource.Factory().apply {
                     setUserAgent(NetworkFactory.USER_AGENT)
                     setConnectTimeoutMs(15000)
@@ -838,6 +839,7 @@ class RecordingsDialog(
                     .build(),
                 /* handleAudioFocus = */ true,
             )
+            volume = if (camera.hasAudio) 1.0f else 0.0f
             val dataSourceFactory = DefaultHttpDataSource.Factory().apply {
                 setUserAgent(NetworkFactory.USER_AGENT)
                 setConnectTimeoutMs(15000)

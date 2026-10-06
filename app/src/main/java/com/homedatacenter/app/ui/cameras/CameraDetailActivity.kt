@@ -522,7 +522,7 @@ class CameraDetailActivity : AppCompatActivity() {
             binding.surfaceRenderer.layoutParams = rendererLp
 
             if (binding.surfaceRenderer.visibility == View.VISIBLE) {
-                binding.webRtcControls.visibility = View.VISIBLE
+                showWebRtcControls(autoHide = true)
             }
 
             binding.videoContainer.requestLayout()
@@ -532,6 +532,7 @@ class CameraDetailActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
+        hideWebRtcControls(animate = false)
         // If in PiP mode, the floating window is still actively playing and visible
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInPictureInPictureMode && !isFinishing) {
             return
@@ -608,6 +609,7 @@ class CameraDetailActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        hideControlsHandler.removeCallbacks(hideControlsRunnable)
         streamRetryJob?.cancel()
         streamRetryJob = null
         webRtcClient?.stopPlayoutImmediately()
@@ -628,6 +630,7 @@ class CameraDetailActivity : AppCompatActivity() {
      * the PeerConnection can survive across activity lifecycle.
      */
     private fun releaseExoPlayerOnly() {
+        hideWebRtcControls(animate = false)
         val old = player
         player = null
         binding.playerView.player = null
@@ -1182,6 +1185,11 @@ class CameraDetailActivity : AppCompatActivity() {
                 binding.tvZoomBadge.visibility = View.GONE
             }
         }
+        binding.pinchZoomContainer.onSingleTap = {
+            if (binding.surfaceRenderer.visibility == View.VISIBLE) {
+                toggleWebRtcControls()
+            }
+        }
     }
 
     @android.annotation.SuppressLint("ClickableViewAccessibility")
@@ -1352,6 +1360,50 @@ class CameraDetailActivity : AppCompatActivity() {
      * Fullscreen: delegates to the shared PlayerFullscreenHelper via
      * the `fullscreenButton` parameter (wired in setupVideo).
      */
+    private val hideControlsHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val hideControlsRunnable = Runnable {
+        hideWebRtcControls()
+    }
+
+    private fun showWebRtcControls(autoHide: Boolean = true) {
+        hideControlsHandler.removeCallbacks(hideControlsRunnable)
+        if (binding.webRtcControls.visibility != View.VISIBLE || binding.webRtcControls.alpha < 1f) {
+            binding.webRtcControls.visibility = View.VISIBLE
+            binding.webRtcControls.animate()
+                .alpha(1f)
+                .setDuration(180)
+                .start()
+        }
+        if (autoHide && !webRtcPaused) {
+            hideControlsHandler.postDelayed(hideControlsRunnable, 4000)
+        }
+    }
+
+    private fun hideWebRtcControls(animate: Boolean = true) {
+        hideControlsHandler.removeCallbacks(hideControlsRunnable)
+        if (binding.webRtcControls.visibility != View.VISIBLE) return
+        if (animate) {
+            binding.webRtcControls.animate()
+                .alpha(0f)
+                .setDuration(220)
+                .withEndAction {
+                    binding.webRtcControls.visibility = View.GONE
+                }
+                .start()
+        } else {
+            binding.webRtcControls.visibility = View.GONE
+            binding.webRtcControls.alpha = 0f
+        }
+    }
+
+    private fun toggleWebRtcControls() {
+        if (binding.webRtcControls.visibility == View.VISIBLE && binding.webRtcControls.alpha > 0.5f) {
+            hideWebRtcControls()
+        } else {
+            showWebRtcControls(autoHide = true)
+        }
+    }
+
     private fun setupWebRtcControls() {
         webRtcMuted = false
 
@@ -1364,9 +1416,15 @@ class CameraDetailActivity : AppCompatActivity() {
                 player?.playWhenReady = !webRtcPaused
             } catch (_: Exception) {}
             updateWebRtcControlButtons()
+            if (webRtcPaused) {
+                hideControlsHandler.removeCallbacks(hideControlsRunnable)
+            } else {
+                showWebRtcControls(autoHide = true)
+            }
         }
 
         binding.btnWebRtcMute.setOnClickListener {
+            showWebRtcControls(autoHide = true)
             if (!audioEnabled) {
                 toast("当前摄像头未开启拾音，请先开启拾音")
                 return@setOnClickListener
@@ -1383,10 +1441,12 @@ class CameraDetailActivity : AppCompatActivity() {
         }
 
         binding.btnWebRtcPip.setOnClickListener {
+            hideWebRtcControls(animate = false)
             enterPipMode()
         }
         binding.btnWebRtcQuality.text = if (currentLiveQuality == "1080p") "1080P" else "720P"
         binding.btnWebRtcQuality.setOnClickListener { v ->
+            showWebRtcControls(autoHide = false)
             val popup = android.widget.PopupMenu(this, v)
             popup.menu.add(0, 720, 0, "720P (默认/流畅)")
             popup.menu.add(0, 1080, 1, "1080P (原画/超清)")
@@ -1405,12 +1465,17 @@ class CameraDetailActivity : AppCompatActivity() {
                         startPlayback()
                     }, 150)
                 }
+                showWebRtcControls(autoHide = true)
                 true
+            }
+            popup.setOnDismissListener {
+                showWebRtcControls(autoHide = true)
             }
             popup.show()
         }
 
         updateWebRtcControlButtons()
+        showWebRtcControls(autoHide = true)
     }
 
     private fun updateWebRtcControlButtons() {
@@ -1748,7 +1813,7 @@ class CameraDetailActivity : AppCompatActivity() {
         // so the user has parity with ExoPlayer's controller.
         binding.playerView.visibility = View.GONE
         binding.surfaceRenderer.visibility = View.VISIBLE
-        binding.webRtcControls.visibility = View.VISIBLE
+        showWebRtcControls(autoHide = true)
         binding.btnWebRtcFullscreen.visibility = View.VISIBLE
         binding.progressVideo.visibility = View.VISIBLE
         binding.tvVideoError.visibility = View.GONE
@@ -1842,6 +1907,7 @@ class CameraDetailActivity : AppCompatActivity() {
                         updatePipParams()
                         client.setAudioEnabled(audioEnabled && !webRtcMuted)
                         updateWebRtcControlButtons()
+                        showWebRtcControls(autoHide = true)
                     }
 
                     override fun onError(reason: String) {

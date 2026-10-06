@@ -32,6 +32,7 @@ class PinchToZoomFrameLayout @JvmOverloads constructor(
     private var targetView: View? = null
 
     var onZoomChanged: ((scale: Float) -> Unit)? = null
+    var onSingleTap: (() -> Unit)? = null
 
     private val scaleGestureDetector = ScaleGestureDetector(
         context,
@@ -62,6 +63,11 @@ class PinchToZoomFrameLayout @JvmOverloads constructor(
     private val gestureDetector = GestureDetector(
         context,
         object : GestureDetector.SimpleOnGestureListener() {
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                onSingleTap?.invoke()
+                return true
+            }
+
             override fun onScroll(
                 e1: MotionEvent?,
                 e2: MotionEvent,
