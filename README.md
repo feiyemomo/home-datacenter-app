@@ -3,7 +3,7 @@
 家庭数据中心 Android 客户端 — 一个用 **Kotlin + Jetpack Compose + ExoPlayer + WebRTC** 实现的家庭 NVR / IoT 控制台，配合 [home-datacenter](https://github.com/feiyemomo/home-datacenter) 后端使用，提供摄像头预览、WebRTC/MP4/HLS 直播（含音频）、录像回放、报警查看、设备状态、天气信息、局域网/远程自动切换和实时 WebSocket 推送。
 
 > 服务端项目：<https://github.com/feiyemomo/home-datacenter>
-> 当前版本：**v1.13.30**（versionCode 185）
+> 当前版本：**v1.14.0**（versionCode 186）
 
 ---
 
@@ -36,7 +36,7 @@
 | Compile SDK | 36 |
 | Java / Kotlin | 17 / 2.0 |
 | AGP | 9.2.1 |
-| 当前版本 | 1.13.30 (versionCode 185) |
+| 当前版本 | 1.14.0 (versionCode 186) |
 | 默认服务器 | `https://api.feiyemomo.top/`（远程） / `http://192.168.31.235:8088/`（局域网，自动探测并持久化） |
 
 App 通过 `(user_id, access_key)` 换取 JWT 后访问 `home-datacenter` 的 REST API 与 WebSocket。**BaseUrlResolver** 在启动时通过后台守护线程异步探测局域网 `http://192.168.31.235:8088/` 是否可达（TTFB ~10ms vs Cloudflare Tunnel 1.4s+），可达则切到局域网，否则走远程 Cloudflare Tunnel。冷启动会优先恢复上次有效网络路径，使家庭 Wi-Fi 场景下首个请求即命中内网。启动调度采用指数退避重试（1.5s → 4s → 9s → 16s），覆盖真机「WiFi connected but not validated」窗口；同时附加 TCP socket 直连探测作为 OkHttp cleartext 拒绝时的兜底。NetworkChangeMonitor 注册 ConnectivityManager.NetworkCallback，在 WiFi/移动网络切换时立即触发 re-probe，无需等 5 分钟 TTL。摄像头直播走 go2rtc 暴露的 MP4（主）+ HLS（备），后端根据摄像头 `capabilities.audio` 在 go2rtc 流 URL 上自动追加 `#audio=aac` 启用音频转码，前端通过 ExoPlayer `volume` 控制静音/取消静音。
@@ -592,6 +592,14 @@ newPlayer.setAudioAttributes(
 ---
 
 ### 最新版本详情
+
+### v1.14.0 (versionCode 186) — 直播页紧凑控制栏、对讲软硬件音量功放、撤防免打扰AI阻断、录像拾音彻底切除与可隐藏WebRTC播放栏 (2026-10)
+- **直播页紧凑控制栏与操作条重构**：将直播页重新加载、双向对讲等功能重构为一排紧凑排列，采用精简文本/图标设计，大幅提升操作便捷度与美观度。
+- **双向对讲软硬件音量功放**：针对摄像头外放声音过小的问题，引入客户端 5x 软件增益音频放大算法（配合防破音峰值限幅保护），并联动 Hikvision ISAPI 硬件功放音量拉满（100），彻底解决对讲声音低沉问题。
+- **撤防免打扰状态联动 AI 检测与分析阻断**：撤防免打扰状态下直接阻断 Frigate / Vision AI 检测与事件推送，彻底消除撤防期间不必要的后台分析与功耗。
+- **摄像头一键开关拾音功能**：将复杂的播放器音量滑块重构为面向所有普通用户的“一键开关拾音”按钮，联动 ISAPI 物理静音、go2rtc 与 Frigate 录像流音频剔除（`-an`），彻底解决关闭拾音后录像和回放仍有声音的隐私隐患。
+- **1080p WebRTC 高清流卡顿优化**：升级抖动缓冲策略（async 3000ms），切换清晰度时即时断开旧连接重建流通道，杜绝卡顿与马赛克。
+- **WebRTC 播放器控制栏隐藏与轻触唤出**：全屏/半屏播放栏支持轻触唤出/隐藏及 4 秒无操作自动淡出，提供无遮挡沉浸式监控体验。
 
 ### v1.13.27 (versionCode 182) — 摄像头报警卡片缩略图全屏放大查看、录像秒开与直播回退黑屏修复 (2026-10)
 - **报警记录卡片缩略图点击放大**：重构 `AlertListAdapter` 点击事件分流，无论后端是否标记 `hasSnapshot`，点击缩略图区域（卡片/图片/播放叠加标）100% 触发大图查看；封装顶层独立的 `AlertSnapshotDialog`，杜绝 DialogFragment 被全屏宿主 Dialog 遮挡的层级缺陷。
