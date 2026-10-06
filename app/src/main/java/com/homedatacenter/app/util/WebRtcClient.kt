@@ -283,25 +283,45 @@ class WebRtcClient(
     /**
      * v1.13.0: Prepares or gets the local microphone audio track and attaches it to the transceiver.
      */
-    private fun ensureLocalAudioTrack(transceiver: RtpTransceiver) {
+    private fun ensureLocalAudioTrack(transceiver: RtpTransceiver): Boolean {
         val pcFactory = factory ?: run {
             Log.w(TAG, "ensureLocalAudioTrack: factory is null")
-            return
+            return false
         }
-        if (localAudioTrack == null) {
-            val constraints = MediaConstraints().apply {
-                mandatory.add(MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
-                mandatory.add(MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
-                mandatory.add(MediaConstraints.KeyValuePair("googHighpassFilter", "true"))
-                mandatory.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
+        if (androidx.core.content.ContextCompat.checkSelfPermission(
+                context,
+                android.Manifest.permission.RECORD_AUDIO
+            ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            Log.d(TAG, "ensureLocalAudioTrack: RECORD_AUDIO permission not granted yet")
+            return false
+        }
+        return try {
+            if (localAudioTrack == null || localAudioSource == null) {
+                val constraints = MediaConstraints().apply {
+                    mandatory.add(MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
+                    mandatory.add(MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
+                    mandatory.add(MediaConstraints.KeyValuePair("googHighpassFilter", "true"))
+                    mandatory.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
+                }
+                val src = pcFactory.createAudioSource(constraints)
+                localAudioSource = src
+                val track = pcFactory.createAudioTrack("ARDAMSa0_mic", src)
+                track.setEnabled(false) // Muted until user explicitly speaks
+                localAudioTrack = track
             }
-            val src = pcFactory.createAudioSource(constraints)
-            localAudioSource = src
-            val track = pcFactory.createAudioTrack("ARDAMSa0_mic", src)
-            track.setEnabled(false) // Muted until user explicitly speaks
-            localAudioTrack = track
-            transceiver.sender.setTrack(track, true)
-            Log.i(TAG, "ensureLocalAudioTrack: local audio track attached to transceiver (muted)")
+            val track = localAudioTrack ?: return false
+            if (transceiver.sender.track() != track) {
+                transceiver.sender.setTrack(track, true)
+                Log.i(TAG, "ensureLocalAudioTrack: local audio track attached to transceiver sender")
+            }
+            if (transceiver.direction != RtpTransceiver.RtpTransceiverDirection.SEND_RECV) {
+                transceiver.direction = RtpTransceiver.RtpTransceiverDirection.SEND_RECV
+            }
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "ensureLocalAudioTrack failed: ${e.message}", e)
+            false
         }
     }
 
@@ -322,7 +342,10 @@ class WebRtcClient(
         audioTransceiver = transceiver
 
         return try {
-            ensureLocalAudioTrack(transceiver)
+            if (!ensureLocalAudioTrack(transceiver)) {
+                Log.w(TAG, "startTalkback: ensureLocalAudioTrack returned false")
+                return false
+            }
             localAudioTrack?.setEnabled(true)
             isTalkingBack = true
             Log.i(TAG, "Talkback started (mic unmuted)")

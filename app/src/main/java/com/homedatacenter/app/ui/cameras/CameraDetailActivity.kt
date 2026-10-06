@@ -1158,14 +1158,38 @@ class CameraDetailActivity : AppCompatActivity() {
                         recordAudioLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
                         return@setOnTouchListener true
                     }
-                    v.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
-                    binding.btnTalkback.text = "松开 结束"
-                    binding.btnTalkback.setIconResource(R.drawable.ic_mic)
-                    binding.tvTalkbackHint.text = "正在向摄像机讲话..."
-                    binding.tvTalkbackHint.setTextColor(resources.getColor(R.color.online, theme))
-                    val success = webRtcClient?.startTalkback() ?: false
-                    if (!success) {
-                        android.widget.Toast.makeText(this, "对讲启动失败，请检查摄像头网络连接", android.widget.Toast.LENGTH_SHORT).show()
+
+                    val client = webRtcClient
+                    if (client == null || !client.isConnected()) {
+                        val isExoPlaying = player != null && (player?.playbackState == Player.STATE_READY || player?.isPlaying == true)
+                        if (isExoPlaying) {
+                            android.widget.Toast.makeText(
+                                this,
+                                "语音对讲需WebRTC实时连接(当前为备用播放器)，正在尝试连接...",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                            if (!webRtcInProgress) {
+                                startPlayback()
+                            }
+                        } else {
+                            android.widget.Toast.makeText(
+                                this,
+                                "对讲启动失败：视频流未就绪或网络不稳定，请稍候",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                        return@setOnTouchListener true
+                    }
+
+                    val success = client.startTalkback()
+                    if (success) {
+                        v.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                        binding.btnTalkback.text = "松开 结束"
+                        binding.btnTalkback.setIconResource(R.drawable.ic_mic)
+                        binding.tvTalkbackHint.text = "正在向摄像机讲话..."
+                        binding.tvTalkbackHint.setTextColor(resources.getColor(R.color.online, theme))
+                    } else {
+                        android.widget.Toast.makeText(this, "对讲启动失败：麦克风或音频通道初始化异常", android.widget.Toast.LENGTH_SHORT).show()
                     }
                     true
                 }
