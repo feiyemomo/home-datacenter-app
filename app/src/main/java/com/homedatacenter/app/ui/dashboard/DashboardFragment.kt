@@ -701,6 +701,9 @@ class DashboardFragment : Fragment() {
             }
             message.topic == "camera.motion" -> showLiveDetection(message)
             message.topic == "camera.fall_detected" -> {
+                if (viewModel.securityGuard.value?.isDisarmed == true) return
+                val isMuted = message.payload?.get("muted")?.toString()?.toBooleanStrictOrNull() == true
+                if (isMuted) return
                 val camSlug = message.payload?.get("camera_slug")?.toString()?.replace("\"", "") ?: ""
                 val camName = message.payload?.get("camera_name")?.toString()?.replace("\"", "") ?: camSlug
                 context?.let { ctx ->
@@ -708,6 +711,9 @@ class DashboardFragment : Fragment() {
                 }
             }
             message.topic == "camera.person_recognized" -> {
+                if (viewModel.securityGuard.value?.isDisarmed == true) return
+                val isMuted = message.payload?.get("muted")?.toString()?.toBooleanStrictOrNull() == true
+                if (isMuted) return
                 val name = message.payload?.get("name")?.toString()?.replace("\"", "") ?: "家庭成员"
                 val camName = message.payload?.get("camera_name")?.toString()?.replace("\"", "") ?: ""
                 context?.let { ctx ->
@@ -822,6 +828,14 @@ class DashboardFragment : Fragment() {
             hasSnapshot = payload["has_snapshot"]?.jsonPrimitive?.booleanOrNull ?: false,
         )
 
+        // Check if muted / disarmed (撤防免打扰)
+        val isMuted = payload["muted"]?.jsonPrimitive?.booleanOrNull == true ||
+                      viewModel.securityGuard.value?.isDisarmed == true
+        if (isMuted) {
+            // In disarmed mode (撤防免打扰), completely suppress banner, heads-up notifications, and list prepend
+            return
+        }
+
         binding.tvLiveAlertLabel.text = formatLabel(alert.label)
         binding.tvLiveAlertConfidence.text = "${(alert.confidence * 100).toInt()}%"
         binding.tvLiveAlertCamera.text = buildString {
@@ -846,12 +860,9 @@ class DashboardFragment : Fragment() {
             lastLiveAlert?.let { jumpToCamerasWithAlert(it) }
         }
 
-        // Post system-level heads-up notification for security detection if not muted (disarmed mode)
-        val isMuted = payload["muted"]?.jsonPrimitive?.booleanOrNull == true
-        if (!isMuted) {
-            context?.let { ctx ->
-                NotificationHelper.showSecurityAlertNotification(ctx, alert)
-            }
+        // Post system-level heads-up notification for security detection
+        context?.let { ctx ->
+            NotificationHelper.showSecurityAlertNotification(ctx, alert)
         }
 
         // Prepend to the alerts list (deduplicated)

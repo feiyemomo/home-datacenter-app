@@ -147,12 +147,17 @@ class AlertKeepAliveService : Service() {
                     }
                 }
                 "camera.fall_detected" -> {
-                    val camSlug = message.payload?.get("camera_slug")?.toString()?.replace("\"", "") ?: ""
-                    val camName = message.payload?.get("camera_name")?.toString()?.replace("\"", "") ?: camSlug
+                    val payload = message.payload ?: return
+                    val isMuted = payload["muted"]?.jsonPrimitive?.booleanOrNull == true
+                    if (isMuted) return
+                    val camSlug = payload["camera_slug"]?.jsonPrimitive?.contentOrNull ?: ""
+                    val camName = payload["camera_name"]?.jsonPrimitive?.contentOrNull ?: camSlug
                     NotificationHelper.showFallAlertNotification(applicationContext, camSlug, camName)
                 }
                 "camera.person_recognized" -> {
                     val payload = message.payload ?: return
+                    val isMuted = payload["muted"]?.jsonPrimitive?.booleanOrNull == true
+                    if (isMuted) return
                     val isIntrusion = payload["is_intrusion"]?.jsonPrimitive?.booleanOrNull == true
                     val camName = payload["camera_name"]?.jsonPrimitive?.contentOrNull ?: ""
                     val personsArray = payload["persons"]?.let { el ->

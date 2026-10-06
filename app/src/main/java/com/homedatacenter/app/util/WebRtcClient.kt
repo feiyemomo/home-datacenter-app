@@ -32,6 +32,9 @@ import org.webrtc.SessionDescription
 import org.webrtc.SurfaceViewRenderer
 import org.webrtc.VideoTrack
 import org.webrtc.audio.JavaAudioDeviceModule
+import org.webrtc.ExternalAudioProcessingFactory
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -315,6 +318,7 @@ class WebRtcClient(
                 val constraints = MediaConstraints().apply {
                     optional.add(MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
                     optional.add(MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
+                    optional.add(MediaConstraints.KeyValuePair("googAutoGainControl2", "true"))
                     optional.add(MediaConstraints.KeyValuePair("googHighpassFilter", "true"))
                     optional.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
                 }
@@ -387,9 +391,10 @@ class WebRtcClient(
             }
             val audioManager = context.getSystemService(android.content.Context.AUDIO_SERVICE) as? android.media.AudioManager
             audioManager?.mode = android.media.AudioManager.MODE_IN_COMMUNICATION
+            audioManager?.isSpeakerphoneOn = true
             localAudioTrack?.setEnabled(true)
             isTalkingBack = true
-            Log.i(TAG, "Talkback started (mic unmuted)")
+            Log.i(TAG, "Talkback started (mic unmuted, speakerphoneOn=true)")
             null
         } catch (e: Exception) {
             Log.e(TAG, "startTalkback failed: ${e.message}", e)
@@ -405,6 +410,7 @@ class WebRtcClient(
         try {
             localAudioTrack?.setEnabled(false)
             val audioManager = context.getSystemService(android.content.Context.AUDIO_SERVICE) as? android.media.AudioManager
+            audioManager?.isSpeakerphoneOn = false
             audioManager?.mode = android.media.AudioManager.MODE_NORMAL
             Log.i(TAG, "Talkback stopped (mic muted)")
         } catch (e: Exception) {
@@ -457,11 +463,50 @@ class WebRtcClient(
         // falling back to software decode.
         val videoEncoder = DefaultVideoEncoderFactory(eglBase.eglBaseContext, true, true)
         val videoDecoder = DefaultVideoDecoderFactory(eglBase.eglBaseContext)
-        factory = PeerConnectionFactory.builder()
+
+        val audioProcessingFactory = try {
+            ExternalAudioProcessingFactory().apply {
+                setCapturePostProcessing(object : ExternalAudioProcessingFactory.AudioProcessing {
+                    override fun initialize(sampleRateHz: Int, numChannels: Int) {}
+                    override fun reset(newRate: Int) {}
+                    override fun process(numBands: Int, numFrames: Int, buffer: ByteBuffer) {
+                        // Software amplifier: 3.0x gain boost for camera speaker
+                        val gain = 3.0f
+                        val originalOrder = buffer.order()
+                        val shortBuf = buffer.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
+                        val count = shortBuf.remaining()
+                        for (i in 0 until count) {
+                            val sample = shortBuf.get(i)
+                            val amplified = (sample * gain).toInt()
+                            val clamped = when {
+                                amplified > Short.MAX_VALUE -> Short.MAX_VALUE
+                                amplified < Short.MIN_VALUE -> Short.MIN_VALUE
+                                else -> amplified.toShort()
+                            }
+                            shortBuf.put(i, clamped)
+                        }
+                        buffer.order(originalOrder)
+                    }
+                })
+            }
+        } catch (e: Throwable) {
+            Log.w(TAG, "ExternalAudioProcessingFactory initialization skipped: ${e.message}")
+            null
+        }
+
+        val pcBuilder = PeerConnectionFactory.builder()
             .setAudioDeviceModule(audioDevice)
             .setVideoEncoderFactory(videoEncoder)
             .setVideoDecoderFactory(videoDecoder)
-            .createPeerConnectionFactory()
+        if (audioProcessingFactory != null) {
+            try {
+                pcBuilder.setAudioProcessingFactory(audioProcessingFactory)
+                Log.i(TAG, "WebRTC Mic Software Amplifier (3.0x gain) attached successfully")
+            } catch (e: Throwable) {
+                Log.w(TAG, "setAudioProcessingFactory failed: ${e.message}")
+            }
+        }
+        factory = pcBuilder.createPeerConnectionFactory()
     }
 
     /**

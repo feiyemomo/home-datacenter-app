@@ -1079,7 +1079,7 @@ class CameraDetailActivity : AppCompatActivity() {
             hideOnFullscreen = listOf(
                 binding.toolbar,
                 binding.actionButtonsRow,
-                binding.cardTalkback,
+                binding.tvTalkbackHint,
                 binding.tvPtzSectionTitle,
                 binding.cardPtz,
                 binding.tvPresetsSectionTitle,
@@ -1143,10 +1143,13 @@ class CameraDetailActivity : AppCompatActivity() {
     private fun setupTalkback() {
         val cam = camera ?: return
         if (!cam.hasTwoWayAudio) {
-            binding.cardTalkback.visibility = View.GONE
+            binding.btnTalkback.visibility = View.GONE
+            binding.tvTalkbackHint.visibility = View.GONE
             return
         }
-        binding.cardTalkback.visibility = View.VISIBLE
+        binding.btnTalkback.visibility = View.VISIBLE
+        binding.tvTalkbackHint.visibility = View.VISIBLE
+        binding.tvTalkbackHint.text = "按住「对讲」向摄像机喊话"
 
         binding.btnTalkback.setOnTouchListener { v, event ->
             when (event.action) {
@@ -1185,7 +1188,7 @@ class CameraDetailActivity : AppCompatActivity() {
                     val err = client.startTalkback()
                     if (err == null) {
                         v.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
-                        binding.btnTalkback.text = "松开 结束"
+                        binding.btnTalkback.text = "松开"
                         binding.btnTalkback.setIconResource(R.drawable.ic_mic)
                         binding.tvTalkbackHint.text = "正在向摄像机讲话..."
                         binding.tvTalkbackHint.setTextColor(resources.getColor(R.color.online, theme))
@@ -1196,8 +1199,8 @@ class CameraDetailActivity : AppCompatActivity() {
                 }
                 android.view.MotionEvent.ACTION_UP,
                 android.view.MotionEvent.ACTION_CANCEL -> {
-                    binding.btnTalkback.text = "按住 对讲"
-                    binding.tvTalkbackHint.text = "按住说话，松开发送到摄像机"
+                    binding.btnTalkback.text = "对讲"
+                    binding.tvTalkbackHint.text = "按住「对讲」向摄像机喊话"
                     binding.tvTalkbackHint.setTextColor(resources.getColor(R.color.text_hint, theme))
                     webRtcClient?.stopTalkback()
                     true
