@@ -114,6 +114,7 @@ class CameraDetailActivity : AppCompatActivity() {
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) {
+            webRtcClient?.warmLocalAudioTrack()
             android.widget.Toast.makeText(this, "麦克风权限已获取，请长按开始对讲", android.widget.Toast.LENGTH_SHORT).show()
         } else {
             android.widget.Toast.makeText(this, "需开启麦克风权限以使用语音对讲功能", android.widget.Toast.LENGTH_SHORT).show()
@@ -1181,15 +1182,15 @@ class CameraDetailActivity : AppCompatActivity() {
                         return@setOnTouchListener true
                     }
 
-                    val success = client.startTalkback()
-                    if (success) {
+                    val err = client.startTalkback()
+                    if (err == null) {
                         v.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
                         binding.btnTalkback.text = "松开 结束"
                         binding.btnTalkback.setIconResource(R.drawable.ic_mic)
                         binding.tvTalkbackHint.text = "正在向摄像机讲话..."
                         binding.tvTalkbackHint.setTextColor(resources.getColor(R.color.online, theme))
                     } else {
-                        android.widget.Toast.makeText(this, "对讲启动失败：麦克风或音频通道初始化异常", android.widget.Toast.LENGTH_SHORT).show()
+                        android.widget.Toast.makeText(this, "对讲启动失败：$err", android.widget.Toast.LENGTH_SHORT).show()
                     }
                     true
                 }

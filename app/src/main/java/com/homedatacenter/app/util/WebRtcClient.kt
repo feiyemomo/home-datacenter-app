@@ -283,10 +283,10 @@ class WebRtcClient(
     /**
      * v1.13.0: Prepares or gets the local microphone audio track and attaches it to the transceiver.
      */
-    private fun ensureLocalAudioTrack(transceiver: RtpTransceiver): Boolean {
+    private fun ensureLocalAudioTrack(transceiver: RtpTransceiver): String? {
         val pcFactory = factory ?: run {
             Log.w(TAG, "ensureLocalAudioTrack: factory is null")
-            return false
+            return "WebRTC底层引擎未初始化"
         }
         if (androidx.core.content.ContextCompat.checkSelfPermission(
                 context,
@@ -294,65 +294,106 @@ class WebRtcClient(
             ) != android.content.pm.PackageManager.PERMISSION_GRANTED
         ) {
             Log.d(TAG, "ensureLocalAudioTrack: RECORD_AUDIO permission not granted yet")
-            return false
+            return "未授予麦克风录音权限"
         }
         return try {
+            // Check if existing track or source has ended or been disposed by native WebRTC
+            val isDisposed = try {
+                val t = localAudioTrack
+                t == null || t.state() == MediaStreamTrack.State.ENDED
+            } catch (_: Throwable) {
+                true
+            }
+            if (isDisposed) {
+                try { localAudioTrack?.dispose() } catch (_: Throwable) {}
+                localAudioTrack = null
+                try { localAudioSource?.dispose() } catch (_: Throwable) {}
+                localAudioSource = null
+            }
+
             if (localAudioTrack == null || localAudioSource == null) {
                 val constraints = MediaConstraints().apply {
-                    mandatory.add(MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
-                    mandatory.add(MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
-                    mandatory.add(MediaConstraints.KeyValuePair("googHighpassFilter", "true"))
-                    mandatory.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
+                    optional.add(MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
+                    optional.add(MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
+                    optional.add(MediaConstraints.KeyValuePair("googHighpassFilter", "true"))
+                    optional.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
                 }
-                val src = pcFactory.createAudioSource(constraints)
+                val src = try {
+                    pcFactory.createAudioSource(constraints)
+                } catch (e: Exception) {
+                    Log.w(TAG, "createAudioSource with constraints failed: ${e.message}, fallback to empty constraints")
+                    pcFactory.createAudioSource(MediaConstraints())
+                }
                 localAudioSource = src
                 val track = pcFactory.createAudioTrack("ARDAMSa0_mic", src)
                 track.setEnabled(false) // Muted until user explicitly speaks
                 localAudioTrack = track
             }
-            val track = localAudioTrack ?: return false
-            if (transceiver.sender.track() != track) {
-                transceiver.sender.setTrack(track, true)
-                Log.i(TAG, "ensureLocalAudioTrack: local audio track attached to transceiver sender")
+            val track = localAudioTrack ?: return "音频音轨创建失败"
+            val sender = transceiver.sender ?: return "音频发送通道不存在"
+            val currentTrack = try {
+                sender.track()
+            } catch (_: Throwable) {
+                null
             }
-            if (transceiver.direction != RtpTransceiver.RtpTransceiverDirection.SEND_RECV) {
-                transceiver.direction = RtpTransceiver.RtpTransceiverDirection.SEND_RECV
+            if (currentTrack != track) {
+                val ok = sender.setTrack(track, false)
+                Log.i(TAG, "ensureLocalAudioTrack: local audio track attached to transceiver sender, ok=$ok")
             }
-            true
-        } catch (e: Exception) {
+            runCatching {
+                if (transceiver.direction != RtpTransceiver.RtpTransceiverDirection.SEND_RECV) {
+                    transceiver.direction = RtpTransceiver.RtpTransceiverDirection.SEND_RECV
+                }
+            }
+            null
+        } catch (e: Throwable) {
             Log.e(TAG, "ensureLocalAudioTrack failed: ${e.message}", e)
-            false
+            "音频通道异常: ${e.javaClass.simpleName}(${e.message})"
         }
     }
 
     /**
-     * Captures audio from the device microphone and sends it to the camera backchannel.
+     * Pre-warms local audio track and binds to transceiver if permissions are granted.
      */
-    fun startTalkback(): Boolean {
+    fun warmLocalAudioTrack() {
+        val transceiver = audioTransceiver ?: peerConnection?.transceivers?.find {
+            it.mediaType == MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO
+        } ?: return
+        ensureLocalAudioTrack(transceiver)
+    }
+
+    /**
+     * Captures audio from the device microphone and sends it to the camera backchannel.
+     * Returns null on success, or an error description string on failure.
+     */
+    fun startTalkback(): String? {
         val pc = peerConnection ?: run {
             Log.w(TAG, "startTalkback: peerConnection is null")
-            return false
+            return "视频流未就绪或已断开"
         }
         val transceiver = audioTransceiver
             ?: pc.transceivers.find { it.mediaType == MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO }
             ?: run {
                 Log.w(TAG, "startTalkback: audioTransceiver not found")
-                return false
+                return "未找到摄像机音频通道"
             }
         audioTransceiver = transceiver
 
         return try {
-            if (!ensureLocalAudioTrack(transceiver)) {
-                Log.w(TAG, "startTalkback: ensureLocalAudioTrack returned false")
-                return false
+            val err = ensureLocalAudioTrack(transceiver)
+            if (err != null) {
+                Log.w(TAG, "startTalkback: ensureLocalAudioTrack error: $err")
+                return err
             }
+            val audioManager = context.getSystemService(android.content.Context.AUDIO_SERVICE) as? android.media.AudioManager
+            audioManager?.mode = android.media.AudioManager.MODE_IN_COMMUNICATION
             localAudioTrack?.setEnabled(true)
             isTalkingBack = true
             Log.i(TAG, "Talkback started (mic unmuted)")
-            true
+            null
         } catch (e: Exception) {
             Log.e(TAG, "startTalkback failed: ${e.message}", e)
-            false
+            "对讲启动异常: ${e.javaClass.simpleName}(${e.message})"
         }
     }
 
@@ -363,6 +404,8 @@ class WebRtcClient(
         isTalkingBack = false
         try {
             localAudioTrack?.setEnabled(false)
+            val audioManager = context.getSystemService(android.content.Context.AUDIO_SERVICE) as? android.media.AudioManager
+            audioManager?.mode = android.media.AudioManager.MODE_NORMAL
             Log.i(TAG, "Talkback stopped (mic muted)")
         } catch (e: Exception) {
             Log.w(TAG, "stopTalkback failed: ${e.message}")
@@ -402,8 +445,8 @@ class WebRtcClient(
                 .createInitializationOptions()
         )
         val audioDevice = JavaAudioDeviceModule.builder(context)
-            .setUseHardwareAcousticEchoCanceler(true)
-            .setUseHardwareNoiseSuppressor(true)
+            .setUseHardwareAcousticEchoCanceler(JavaAudioDeviceModule.isBuiltInAcousticEchoCancelerSupported())
+            .setUseHardwareNoiseSuppressor(JavaAudioDeviceModule.isBuiltInNoiseSuppressorSupported())
             .setUseStereoInput(false)
             .setUseStereoOutput(false)
             .createAudioDeviceModule()
@@ -543,9 +586,6 @@ class WebRtcClient(
                 MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO,
                 RtpTransceiver.RtpTransceiverInit(audioDirection)
             )
-            if (enableTwoWayAudio && audioTransceiver != null) {
-                ensureLocalAudioTrack(audioTransceiver!!)
-            }
 
             val constraints = MediaConstraints().apply {
                 mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
@@ -899,9 +939,6 @@ class WebRtcClient(
                 MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO,
                 RtpTransceiver.RtpTransceiverInit(audioDirection)
             )
-            if (enableTwoWayAudio && audioTransceiver != null) {
-                ensureLocalAudioTrack(audioTransceiver!!)
-            }
 
             val constraints = MediaConstraints().apply {
                 mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
@@ -1182,14 +1219,14 @@ class WebRtcClient(
         stopTalkback()
         try {
             localAudioTrack?.let {
-                audioTransceiver?.sender?.setTrack(null, true)
+                try { audioTransceiver?.sender?.setTrack(null, false) } catch (_: Throwable) {}
                 it.dispose()
             }
-        } catch (_: Exception) {}
+        } catch (_: Throwable) {}
         localAudioTrack = null
         try {
             localAudioSource?.dispose()
-        } catch (_: Exception) {}
+        } catch (_: Throwable) {}
         localAudioSource = null
         audioTransceiver = null
 
