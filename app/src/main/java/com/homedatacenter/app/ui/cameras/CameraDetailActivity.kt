@@ -134,6 +134,9 @@ class CameraDetailActivity : AppCompatActivity() {
     // PeerConnection stays alive so resume is instant.
     private var webRtcPaused = false
     private var webRtcMuted = false
+    private var currentVolumePercent = 100
+    private var lastNonZeroVolume = 100
+    private var hideVolumePanelRunnable: Runnable? = null
     // v1.13.8: live stream quality (defaults to 720p per user requirement)
     private var currentLiveQuality = "720p"
     // Cached ICE config from /api/v1/cameras/ice — fetched once
@@ -409,6 +412,7 @@ class CameraDetailActivity : AppCompatActivity() {
             binding.videoContainer.background = null
             binding.toolbar.visibility = View.GONE
             binding.webRtcControls.visibility = View.GONE
+            binding.panelVolumeControl.visibility = View.GONE
             binding.tvStreamStrategy.visibility = View.GONE
             binding.tvHlsNotice.visibility = View.GONE
             binding.tvVideoError.visibility = View.GONE
@@ -644,6 +648,7 @@ class CameraDetailActivity : AppCompatActivity() {
         // Hide WebRTC-only overlays so they don't linger during reload.
         binding.btnWebRtcFullscreen.visibility = View.GONE
         binding.webRtcControls.visibility = View.GONE
+        binding.panelVolumeControl.visibility = View.GONE
     }
 
     private fun setupHeader() {
@@ -1190,7 +1195,7 @@ class CameraDetailActivity : AppCompatActivity() {
                         v.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
                         binding.btnTalkback.text = "松开"
                         binding.btnTalkback.setIconResource(R.drawable.ic_mic)
-                        binding.tvTalkbackHint.text = "正在向摄像机讲话..."
+                        binding.tvTalkbackHint.text = "正在向摄像机讲话 (已开启5x功放)..."
                         binding.tvTalkbackHint.setTextColor(resources.getColor(R.color.online, theme))
                     } else {
                         android.widget.Toast.makeText(this, "对讲启动失败：$err", android.widget.Toast.LENGTH_SHORT).show()
@@ -1307,7 +1312,81 @@ class CameraDetailActivity : AppCompatActivity() {
      * Fullscreen: delegates to the shared PlayerFullscreenHelper via
      * the `fullscreenButton` parameter (wired in setupVideo).
      */
+    private fun scheduleHideVolumePanel() {
+        hideVolumePanelRunnable?.let { binding.root.removeCallbacks(it) }
+        val r = Runnable {
+            binding.panelVolumeControl.visibility = View.GONE
+        }
+        hideVolumePanelRunnable = r
+        binding.root.postDelayed(r, 4000)
+    }
+
+    private fun applyVolume(percent: Int, showFeedbackToast: Boolean = false) {
+        val clamped = percent.coerceIn(0, 300)
+        currentVolumePercent = clamped
+        if (clamped > 0) {
+            lastNonZeroVolume = clamped
+            webRtcMuted = false
+        } else {
+            webRtcMuted = true
+        }
+
+        binding.sbVolumeSlider.progress = clamped
+
+        val text = when {
+            clamped == 0 -> "0% (已静音)"
+            clamped in 1..100 -> "$clamped% (标准)"
+            clamped in 101..200 -> "$clamped% (功放增强 ${String.format(java.util.Locale.US, "%.1fx", clamped / 100f)})"
+            else -> "$clamped% (强力功放 ${String.format(java.util.Locale.US, "%.1fx", clamped / 100f)})"
+        }
+        binding.tvVolumePercent.text = text
+        binding.tvVolumePercent.setTextColor(
+            if (clamped == 0) 0xFF94A3B8.toInt()
+            else if (clamped <= 200) 0xFF4ADE80.toInt()
+            else 0xFFF59E0B.toInt()
+        )
+
+        // WebRTC volume & software gain amplifier
+        val gain = clamped / 100f
+        try {
+            webRtcClient?.setPlaybackGain(gain)
+            webRtcClient?.setAudioEnabled(!webRtcMuted)
+        } catch (_: Exception) {}
+
+        // ExoPlayer volume fallback
+        try {
+            player?.volume = gain.coerceAtMost(1.0f)
+        } catch (_: Exception) {}
+
+        updateWebRtcControlButtons()
+
+        // Persist preference
+        try {
+            getPreferences(android.content.Context.MODE_PRIVATE).edit()
+                .putInt("camera_player_volume", clamped)
+                .apply()
+        } catch (_: Exception) {}
+
+        if (showFeedbackToast) {
+            android.widget.Toast.makeText(this, "监听音量: $text", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
     private fun setupWebRtcControls() {
+        // Load persisted player volume
+        val savedVol = try {
+            getPreferences(android.content.Context.MODE_PRIVATE).getInt("camera_player_volume", 100)
+        } catch (_: Exception) {
+            100
+        }
+        currentVolumePercent = savedVol
+        if (savedVol > 0) {
+            lastNonZeroVolume = savedVol
+            webRtcMuted = false
+        } else {
+            webRtcMuted = true
+        }
+
         binding.btnWebRtcPause.setOnClickListener {
             webRtcPaused = !webRtcPaused
             try {
@@ -1318,13 +1397,78 @@ class CameraDetailActivity : AppCompatActivity() {
             } catch (_: Exception) {}
             updateWebRtcControlButtons()
         }
+
+        // Tap on mute button toggles volume panel or toggles mute
         binding.btnWebRtcMute.setOnClickListener {
-            webRtcMuted = !webRtcMuted
-            try {
-                webRtcClient?.setAudioEnabled(!webRtcMuted)
-            } catch (_: Exception) {}
-            updateWebRtcControlButtons()
+            if (binding.panelVolumeControl.visibility == View.VISIBLE) {
+                // If already visible, toggle mute/unmute
+                if (!webRtcMuted) {
+                    applyVolume(0)
+                } else {
+                    applyVolume(lastNonZeroVolume)
+                }
+                scheduleHideVolumePanel()
+            } else {
+                // Open panel and un-mute if was muted
+                if (webRtcMuted) {
+                    applyVolume(lastNonZeroVolume)
+                }
+                binding.panelVolumeControl.visibility = View.VISIBLE
+                scheduleHideVolumePanel()
+            }
         }
+
+        // Long press for immediate mute/unmute toggle without opening panel
+        binding.btnWebRtcMute.setOnLongClickListener {
+            if (webRtcMuted) {
+                applyVolume(lastNonZeroVolume, showFeedbackToast = true)
+            } else {
+                applyVolume(0, showFeedbackToast = true)
+            }
+            binding.panelVolumeControl.visibility = View.GONE
+            true
+        }
+
+        // Quick mute icon in panel
+        binding.ivVolumeMuteQuick.setOnClickListener {
+            applyVolume(0)
+            scheduleHideVolumePanel()
+        }
+
+        // SeekBar change listener
+        binding.sbVolumeSlider.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
+                if (fromUser) {
+                    applyVolume(progress)
+                    scheduleHideVolumePanel()
+                }
+            }
+            override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) {
+                hideVolumePanelRunnable?.let { binding.root.removeCallbacks(it) }
+            }
+            override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {
+                scheduleHideVolumePanel()
+            }
+        })
+
+        // Preset chips
+        binding.btnVolPresetMute.setOnClickListener {
+            applyVolume(0)
+            scheduleHideVolumePanel()
+        }
+        binding.btnVolPreset100.setOnClickListener {
+            applyVolume(100)
+            scheduleHideVolumePanel()
+        }
+        binding.btnVolPreset200.setOnClickListener {
+            applyVolume(200)
+            scheduleHideVolumePanel()
+        }
+        binding.btnVolPreset300.setOnClickListener {
+            applyVolume(300)
+            scheduleHideVolumePanel()
+        }
+
         binding.btnWebRtcPip.setOnClickListener {
             enterPipMode()
         }
@@ -1351,6 +1495,8 @@ class CameraDetailActivity : AppCompatActivity() {
             }
             popup.show()
         }
+
+        applyVolume(currentVolumePercent)
     }
 
     private fun updateWebRtcControlButtons() {
@@ -1691,10 +1837,9 @@ class CameraDetailActivity : AppCompatActivity() {
         binding.btnWebRtcFullscreen.visibility = View.VISIBLE
         binding.progressVideo.visibility = View.VISIBLE
         binding.tvVideoError.visibility = View.GONE
-        // Initial state: not paused, not muted.
+        // Initial state: not paused, apply saved volume/amplifier level.
         webRtcPaused = false
-        webRtcMuted = false
-        updateWebRtcControlButtons()
+        applyVolume(currentVolumePercent)
 
         // Fetch ICE config (cached after first call). The list may
         // be empty on LAN — host candidates are enough there.
@@ -1779,7 +1924,8 @@ class CameraDetailActivity : AppCompatActivity() {
                         // page during the fallback window.
                         updateStreamStrategy("WebRTC")
                         updatePipParams()
-                        android.util.Log.d(TAG, "WebRTC connected")
+                        applyVolume(currentVolumePercent)
+                        android.util.Log.d(TAG, "WebRTC connected, applied volume: $currentVolumePercent%")
                     }
 
                     override fun onError(reason: String) {
@@ -1807,6 +1953,7 @@ class CameraDetailActivity : AppCompatActivity() {
                         // Seamless failover: keep surfaceRenderer visible displaying the last frame
                         // until ExoPlayer is prepared and buffers first frame (STATE_READY)
                         binding.webRtcControls.visibility = View.GONE
+                        binding.panelVolumeControl.visibility = View.GONE
                         binding.btnWebRtcFullscreen.visibility = View.GONE
                         binding.playerView.visibility = View.VISIBLE
                         binding.progressVideo.visibility = View.VISIBLE
@@ -1847,6 +1994,7 @@ class CameraDetailActivity : AppCompatActivity() {
             binding.playerView.visibility = View.VISIBLE
             binding.surfaceRenderer.visibility = View.GONE
             binding.webRtcControls.visibility = View.GONE
+            binding.panelVolumeControl.visibility = View.GONE
             binding.btnWebRtcFullscreen.visibility = View.GONE
             // v1.5.9: no transport could be selected — hide the
             // badge so it doesn't show a stale "加载中" next to

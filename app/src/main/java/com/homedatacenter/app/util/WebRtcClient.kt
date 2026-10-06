@@ -114,6 +114,11 @@ class WebRtcClient(
     private var localAudioTrack: AudioTrack? = null
     @Volatile
     private var isTalkingBack: Boolean = false
+    @Volatile
+    private var playbackGain: Float = 1.0f // 1.0 = 100%, 2.0 = 200%, 3.0 = 300%
+    fun getPlaybackGain(): Float = playbackGain
+    @Volatile
+    var talkbackMicGain: Float = 5.0f // 5.0x software amplifier for camera speaker
     private var audioDeviceModule: JavaAudioDeviceModule? = null
     // v1.7.2: latch the user's mute preference so that audio tracks
     // arriving AFTER a reconnect / renegotiation honour it. Without
@@ -284,6 +289,21 @@ class WebRtcClient(
     }
 
     /**
+     * Sets playback gain multiplier (0.0 to 3.0).
+     * 1.0 = standard volume, 2.0 = 200% amplifier, 3.0 = 300% max software boost.
+     * 0.0 = mute.
+     */
+    fun setPlaybackGain(gain: Float) {
+        val clamped = gain.coerceIn(0.0f, 3.0f)
+        playbackGain = clamped
+        if (clamped <= 0.0f) {
+            setAudioEnabled(false)
+        } else {
+            setAudioEnabled(true)
+        }
+    }
+
+    /**
      * v1.13.0: Prepares or gets the local microphone audio track and attaches it to the transceiver.
      */
     private fun ensureLocalAudioTrack(transceiver: RtpTransceiver): String? {
@@ -316,11 +336,11 @@ class WebRtcClient(
 
             if (localAudioTrack == null || localAudioSource == null) {
                 val constraints = MediaConstraints().apply {
-                    optional.add(MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
-                    optional.add(MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
-                    optional.add(MediaConstraints.KeyValuePair("googAutoGainControl2", "true"))
+                    // Disable VoIP AGC and NS so our 5.0x amplifier isn't squashed down or filtered
+                    optional.add(MediaConstraints.KeyValuePair("googEchoCancellation", "false"))
+                    optional.add(MediaConstraints.KeyValuePair("googAutoGainControl", "false"))
                     optional.add(MediaConstraints.KeyValuePair("googHighpassFilter", "true"))
-                    optional.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
+                    optional.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "false"))
                 }
                 val src = try {
                     pcFactory.createAudioSource(constraints)
@@ -390,11 +410,10 @@ class WebRtcClient(
                 return err
             }
             val audioManager = context.getSystemService(android.content.Context.AUDIO_SERVICE) as? android.media.AudioManager
-            audioManager?.mode = android.media.AudioManager.MODE_IN_COMMUNICATION
-            audioManager?.isSpeakerphoneOn = true
+            audioManager?.mode = android.media.AudioManager.MODE_NORMAL
             localAudioTrack?.setEnabled(true)
             isTalkingBack = true
-            Log.i(TAG, "Talkback started (mic unmuted, speakerphoneOn=true)")
+            Log.i(TAG, "Talkback started (mic unmuted, 5.0x amplifier active, mode=NORMAL)")
             null
         } catch (e: Exception) {
             Log.e(TAG, "startTalkback failed: ${e.message}", e)
@@ -410,7 +429,6 @@ class WebRtcClient(
         try {
             localAudioTrack?.setEnabled(false)
             val audioManager = context.getSystemService(android.content.Context.AUDIO_SERVICE) as? android.media.AudioManager
-            audioManager?.isSpeakerphoneOn = false
             audioManager?.mode = android.media.AudioManager.MODE_NORMAL
             Log.i(TAG, "Talkback stopped (mic muted)")
         } catch (e: Exception) {
@@ -451,8 +469,9 @@ class WebRtcClient(
                 .createInitializationOptions()
         )
         val audioDevice = JavaAudioDeviceModule.builder(context)
-            .setUseHardwareAcousticEchoCanceler(JavaAudioDeviceModule.isBuiltInAcousticEchoCancelerSupported())
-            .setUseHardwareNoiseSuppressor(JavaAudioDeviceModule.isBuiltInNoiseSuppressorSupported())
+            .setAudioSource(android.media.MediaRecorder.AudioSource.MIC)
+            .setUseHardwareAcousticEchoCanceler(false)
+            .setUseHardwareNoiseSuppressor(false)
             .setUseStereoInput(false)
             .setUseStereoOutput(false)
             .createAudioDeviceModule()
@@ -466,17 +485,47 @@ class WebRtcClient(
 
         val audioProcessingFactory = try {
             ExternalAudioProcessingFactory().apply {
+                // In WebRTC C++ APM, bypass flags default to true! We MUST explicitly disable bypass!
+                setBypassFlagForCapturePost(false)
+                setBypassFlagForRenderPre(false)
+
+                // 1. Microphone capture amplifier (Talkback to camera speaker)
                 setCapturePostProcessing(object : ExternalAudioProcessingFactory.AudioProcessing {
                     override fun initialize(sampleRateHz: Int, numChannels: Int) {}
                     override fun reset(newRate: Int) {}
                     override fun process(numBands: Int, numFrames: Int, buffer: ByteBuffer) {
-                        // Software amplifier: 3.0x gain boost for camera speaker
-                        val gain = 3.0f
+                        if (!isTalkingBack) return
+                        val gain = talkbackMicGain
+                        if (gain <= 1.0f) return
                         val originalOrder = buffer.order()
                         val shortBuf = buffer.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
                         val count = shortBuf.remaining()
                         for (i in 0 until count) {
-                            val sample = shortBuf.get(i)
+                            val sample = shortBuf.get(i).toFloat()
+                            val amplified = (sample * gain).toInt()
+                            val clamped = when {
+                                amplified > Short.MAX_VALUE -> Short.MAX_VALUE
+                                amplified < Short.MIN_VALUE -> Short.MIN_VALUE
+                                else -> amplified.toShort()
+                            }
+                            shortBuf.put(i, clamped)
+                        }
+                        buffer.order(originalOrder)
+                    }
+                })
+
+                // 2. Playback render amplifier (Camera stream listening on phone, 0% ~ 300%)
+                setRenderPreProcessing(object : ExternalAudioProcessingFactory.AudioProcessing {
+                    override fun initialize(sampleRateHz: Int, numChannels: Int) {}
+                    override fun reset(newRate: Int) {}
+                    override fun process(numBands: Int, numFrames: Int, buffer: ByteBuffer) {
+                        val gain = playbackGain
+                        if (gain == 1.0f) return
+                        val originalOrder = buffer.order()
+                        val shortBuf = buffer.order(ByteOrder.LITTLE_ENDIAN).asShortBuffer()
+                        val count = shortBuf.remaining()
+                        for (i in 0 until count) {
+                            val sample = shortBuf.get(i).toFloat()
                             val amplified = (sample * gain).toInt()
                             val clamped = when {
                                 amplified > Short.MAX_VALUE -> Short.MAX_VALUE
@@ -501,7 +550,7 @@ class WebRtcClient(
         if (audioProcessingFactory != null) {
             try {
                 pcBuilder.setAudioProcessingFactory(audioProcessingFactory)
-                Log.i(TAG, "WebRTC Mic Software Amplifier (3.0x gain) attached successfully")
+                Log.i(TAG, "WebRTC Software Audio Processors (Mic & Playback) attached successfully")
             } catch (e: Throwable) {
                 Log.w(TAG, "setAudioProcessingFactory failed: ${e.message}")
             }
