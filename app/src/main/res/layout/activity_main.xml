@@ -24,6 +24,27 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
 
+    <!-- v1.14.2: offline banner shown when every path to the NAS is
+         unreachable. Tapping it forces an immediate re-probe. -->
+    <TextView
+        android:id="@+id/offline_banner"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:background="#E6D32F2F"
+        android:elevation="10dp"
+        android:gravity="center"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp"
+        android:text="无法连接到家庭服务器，正在自动重试…（点击立即重试）"
+        android:textColor="#FFFFFF"
+        android:textSize="13sp"
+        android:visibility="gone"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
     <!-- Floating capsule navigation bar.
          Inset 16dp from left/right and 12dp from bottom + 8dp top
          gap so the bar floats above the content and casts a soft

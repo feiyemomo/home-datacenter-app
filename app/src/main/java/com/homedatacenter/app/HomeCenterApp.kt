@@ -30,6 +30,14 @@ class HomeCenterApp : Application() {
         }
         // Initialize NetworkMonitor for UI state
         NetworkMonitor.getInstance(this)
+        // v1.14.2: when the server invalidates the login, stop the
+        // keep-alive service so it doesn't keep retrying with dead auth.
+        container.authInvalidHandler.onInvalidated = {
+            try {
+                com.homedatacenter.app.service.AlertKeepAliveService.stop(this)
+            } catch (_: Exception) {
+            }
+        }
         // Synchronously probe the LAN (NAS) URL only when the user
         // hasn't set a manual baseUrl override. probeLanOnStartup
         // now runs on background daemon threads (no main-thread

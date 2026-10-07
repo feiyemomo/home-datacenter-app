@@ -44,6 +44,9 @@ class TokenRefreshInterceptor(
     // TODO: replace with the authoritative codes once the backend confirms
     // the values behind "token version mismatch" / "invalid token".
     private val tokenInvalidCodes: Set<Int> = emptySet(),
+    // v1.14.2: invoked when a 401 means the login itself is gone
+    // (device deleted/revoked). Never invoked for network failures.
+    private val onFatalAuth: ((String) -> Unit)? = null,
 ) : Interceptor {
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -57,6 +60,17 @@ class TokenRefreshInterceptor(
 
         // Read the response body to check the error message.
         val bodyString = response.body?.string() ?: return response
+
+        // v1.14.2: device/user deleted or revoked -> re-login required.
+        // Only for authenticated requests (the login bind call itself
+        // carries no Authorization header and must just show its error).
+        val hadAuth = !originalRequest.header("Authorization").isNullOrBlank()
+        val message = parseRoot(bodyString)?.get("message")?.jsonPrimitive?.content
+        if (hadAuth && message != null && message in AuthInvalidHandler.FATAL_401_MESSAGES) {
+            try { onFatalAuth?.invoke(message) } catch (_: Exception) {}
+            return respondWithReattachedBody(response, bodyString)
+        }
+
         val shouldRetry = isTokenRefreshNeeded(bodyString)
 
         if (!shouldRetry) {

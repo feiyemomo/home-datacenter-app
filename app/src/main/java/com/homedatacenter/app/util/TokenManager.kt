@@ -51,9 +51,23 @@ class TokenManager(
      */
     fun refreshToken(userId: Long, accessKey: String): String? = try {
         performBind(userId, accessKey)
+    } catch (e: AuthRejectedException) {
+        // v1.14.2: the server answered and rejected the credentials
+        // (HTTP 401) - the account/device is gone. Network failures
+        // fall through to the generic branch and never log out.
+        android.util.Log.w(TAG, "bind rejected by server: ${e.message}")
+        try { onAuthRejected?.invoke("bind rejected: ${e.message}") } catch (_: Exception) {}
+        null
     } catch (_: Exception) {
         null
     }
+
+    /** v1.14.2: invoked when re-bind is rejected with HTTP 401 (set by AppContainer). */
+    @Volatile
+    var onAuthRejected: ((String) -> Unit)? = null
+
+    /** v1.14.2: thrown only when the server actually returned HTTP 401 for bind. */
+    class AuthRejectedException(message: String) : RuntimeException(message)
 
     /**
      * Exchanges the current valid JWT for a fresh JWT via POST /api/v1/auth/refresh.
@@ -167,6 +181,9 @@ class TokenManager(
         val response = bindClient.newCall(request).execute()
         val body = response.body?.string() ?: throw RuntimeException("empty bind response")
 
+        if (response.code == 401) {
+            throw AuthRejectedException("bind 401 body=$body")
+        }
         if (!response.isSuccessful) {
             throw RuntimeException("bind failed: code=${response.code} body=$body")
         }

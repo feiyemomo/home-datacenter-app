@@ -91,9 +91,30 @@ class MainActivity : AppCompatActivity() {
         checkNotificationPermission()
         handleIntentNavigation(intent)
         ensureWebSocketConnected()
+
+        // v1.14.2: offline banner driven by BaseUrlResolver reachability.
+        binding.offlineBanner.setOnClickListener {
+            container.baseUrlResolver.forceProbe()
+        }
+        container.baseUrlResolver.addReachabilityListener(reachabilityListener)
+        updateOfflineBanner(container.baseUrlResolver.serverReachable)
+    }
+
+    // v1.14.2: called from probe threads; marshal to UI.
+    private val reachabilityListener: (Boolean) -> Unit = { reachable ->
+        runOnUiThread { updateOfflineBanner(reachable) }
+    }
+
+    private fun updateOfflineBanner(reachable: Boolean) {
+        if (isFinishing || isDestroyed) return
+        binding.offlineBanner.visibility =
+            if (reachable) android.view.View.GONE else android.view.View.VISIBLE
     }
 
     override fun onDestroy() {
+        if (::container.isInitialized) {
+            container.baseUrlResolver.removeReachabilityListener(reachabilityListener)
+        }
         super.onDestroy()
     }
 

@@ -268,6 +268,68 @@ class BaseUrlResolver(
      */
     var onUrlChanged: ((String) -> Unit)? = null
 
+    // --- v1.14.2: server reachability (NAS offline handling) ---
+    //
+    // After a full probe where EVERY path (LAN / H3C / IPv6 / Tunnel)
+    // is dead we flip [serverReachable] to false, notify listeners
+    // (MainActivity shows an offline banner) and schedule a re-probe
+    // with exponential backoff (5s → 10s → 20s → 40s → 60s cap).
+    // The first successful probe flips it back to true and resets the
+    // backoff, so the app recovers automatically once the NAS is back.
+    @Volatile
+    var serverReachable: Boolean = true
+        private set
+
+    @Volatile
+    private var offlineFailures: Int = 0
+
+    private val reachabilityListeners =
+        java.util.concurrent.CopyOnWriteArrayList<(Boolean) -> Unit>()
+
+    private val backoffHandler by lazy {
+        android.os.Handler(android.os.Looper.getMainLooper())
+    }
+    private val backoffRunnable = Runnable {
+        if (!serverReachable) {
+            android.util.Log.i(TAG, "offline backoff: re-probing (failures=$offlineFailures)")
+            forceProbe()
+        }
+    }
+
+    /** Listener receives true when the server becomes reachable again, false when all paths fail. Called on background threads. */
+    fun addReachabilityListener(listener: (Boolean) -> Unit) {
+        reachabilityListeners.add(listener)
+    }
+
+    fun removeReachabilityListener(listener: (Boolean) -> Unit) {
+        reachabilityListeners.remove(listener)
+    }
+
+    /** Current backoff delay before the next automatic re-probe while offline. */
+    fun offlineRetryDelayMs(): Long {
+        val n = offlineFailures.coerceIn(1, 5)
+        return min(OFFLINE_BACKOFF_BASE_MS shl (n - 1), OFFLINE_BACKOFF_MAX_MS)
+    }
+
+    private fun markReachable(reachable: Boolean) {
+        val changed = serverReachable != reachable
+        serverReachable = reachable
+        if (reachable) {
+            offlineFailures = 0
+            backoffHandler.removeCallbacks(backoffRunnable)
+        } else {
+            offlineFailures = (offlineFailures + 1).coerceAtMost(100)
+            backoffHandler.removeCallbacks(backoffRunnable)
+            backoffHandler.postDelayed(backoffRunnable, offlineRetryDelayMs())
+        }
+        if (changed) {
+            android.util.Log.i(TAG, "server reachability → $reachable")
+            for (l in reachabilityListeners) {
+                try { l(reachable) } catch (_: Exception) {}
+            }
+        }
+    }
+
     /**
      * Returns the currently resolved base URL. Fast — never blocks.
      * Kicks off an async re-probe if the cache is older than [TTL_MS].
@@ -684,6 +746,7 @@ class BaseUrlResolver(
                 )
                 lastRttMs = remoteResult.rttMs
                 applyResolved(REMOTE_URL)
+                markReachable(remoteResult.alive)
                 return
             }
 
@@ -799,6 +862,7 @@ class BaseUrlResolver(
                         )
                         lastRttMs = chosenRtt
                         applyResolved(directChosen)
+                        markReachable(true)
                     } else {
                         // Fallback: direct paths dead, wait for Tunnel.
                         val remoteResult = remoteDeferred.await()
@@ -813,9 +877,12 @@ class BaseUrlResolver(
                         lastRttMs = remoteResult.rttMs
                         if (remoteResult.alive) {
                             applyResolved(REMOTE_URL)
+                            markReachable(true)
                         } else {
                             val fallback = if (resolved == effectiveLanUrl || lanResult.rttMs >= 0) effectiveLanUrl else REMOTE_URL
                             applyResolved(fallback)
+                            // v1.14.2: every path dead -> offline state + backoff re-probe.
+                            markReachable(false)
                         }
                     }
                 }
@@ -1094,6 +1161,10 @@ class BaseUrlResolver(
         // Re-probe at most this often. 60 seconds ensures rapid adaptation
         // when network environments switch or tunnel ports rotate.
         private const val TTL_MS = 60L * 1000
+
+        // v1.14.2: offline re-probe backoff (5s, 10s, 20s, 40s, 60s cap).
+        private const val OFFLINE_BACKOFF_BASE_MS = 5_000L
+        private const val OFFLINE_BACKOFF_MAX_MS = 60_000L
 
         // LAN probe timeout. 1s is more than enough for a local network
         // (typical 10-50ms RTT). Reduced from 1.5s to speed up the

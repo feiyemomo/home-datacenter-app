@@ -30,7 +30,20 @@ class AppContainer(private val context: Context) {
      * TokenRefreshInterceptor (401 recovery) and the monthly silent
      * refresh (tryAutoRefreshToken).
      */
-    val tokenManager: TokenManager by lazy { TokenManager(prefsManager) { getApiBaseUrl() } }
+    val tokenManager: TokenManager by lazy {
+        TokenManager(prefsManager) { getApiBaseUrl() }.also { tm ->
+            // v1.14.2: re-bind rejected with HTTP 401 -> account gone.
+            tm.onAuthRejected = { reason -> authInvalidHandler.onAuthInvalid(reason) }
+        }
+    }
+
+    /**
+     * v1.14.2: clears auth + routes to LoginActivity when the server says
+     * the device/user no longer exists. Never triggered by network errors.
+     */
+    val authInvalidHandler: com.homedatacenter.app.util.AuthInvalidHandler by lazy {
+        com.homedatacenter.app.util.AuthInvalidHandler(context.applicationContext, prefsManager)
+    }
 
     /**
      * Dedicated client for BaseUrlResolver to run probes directly to candidate targets
@@ -66,7 +79,13 @@ class AppContainer(private val context: Context) {
         // interceptor silently re-binds on 401 "token version
         // mismatch" and retries the request with a fresh token.
         baseClient.newBuilder()
-            .addInterceptor(TokenRefreshInterceptor(prefsManager, tokenManager))
+            .addInterceptor(
+                TokenRefreshInterceptor(
+                    prefsManager,
+                    tokenManager,
+                    onFatalAuth = { reason -> authInvalidHandler.onAuthInvalid(reason) },
+                )
+            )
             .build()
     }
 

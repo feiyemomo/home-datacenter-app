@@ -28,7 +28,14 @@ class LoginActivity : AppCompatActivity() {
             return
         }
 
+        // v1.14.2: arrived here because the server invalidated the login.
+        intent?.getStringExtra(EXTRA_AUTH_INVALID_MESSAGE)?.let { showError(it) }
+
         binding.btnLogin.setOnClickListener { attemptLogin() }
+    }
+
+    companion object {
+        const val EXTRA_AUTH_INVALID_MESSAGE = "extra_auth_invalid_message"
     }
 
     private fun attemptLogin() {
@@ -59,6 +66,8 @@ class LoginActivity : AppCompatActivity() {
                 // automatically when the server rotates the token.
                 container.prefsManager.accessKey = accessKey
                 container.prefsManager.lastTokenRefreshTime = System.currentTimeMillis()
+                // v1.14.2: re-arm auth-invalid handling for the new login.
+                container.authInvalidHandler.reset()
                 try {
                     val user = container.getRepository().getMe(token)
                     container.prefsManager.saveUserInfo(user.name, user.isAdmin)
