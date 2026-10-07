@@ -306,10 +306,7 @@ class BaseUrlResolver(
     }
 
     /** Current backoff delay before the next automatic re-probe while offline. */
-    fun offlineRetryDelayMs(): Long {
-        val n = offlineFailures.coerceIn(1, 5)
-        return min(OFFLINE_BACKOFF_BASE_MS shl (n - 1), OFFLINE_BACKOFF_MAX_MS)
-    }
+    fun offlineRetryDelayMs(): Long = offlineBackoffDelayMs(offlineFailures)
 
     private fun markReachable(reachable: Boolean) {
         val changed = serverReachable != reachable
@@ -1165,6 +1162,16 @@ class BaseUrlResolver(
         // v1.14.2: offline re-probe backoff (5s, 10s, 20s, 40s, 60s cap).
         private const val OFFLINE_BACKOFF_BASE_MS = 5_000L
         private const val OFFLINE_BACKOFF_MAX_MS = 60_000L
+
+        /**
+         * v1.14.3: pure backoff schedule for offline re-probes, unit tested.
+         * failures <= 1 -> 5s, 2 -> 10s, 3 -> 20s, 4 -> 40s, >= 5 -> 60s cap.
+         */
+        @JvmStatic
+        fun offlineBackoffDelayMs(failures: Int): Long {
+            val n = failures.coerceIn(1, 5)
+            return minOf(OFFLINE_BACKOFF_BASE_MS shl (n - 1), OFFLINE_BACKOFF_MAX_MS)
+        }
 
         // LAN probe timeout. 1s is more than enough for a local network
         // (typical 10-50ms RTT). Reduced from 1.5s to speed up the

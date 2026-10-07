@@ -1,0 +1,3 @@
+﻿1. 摄像头直播接入 Android 原生画中画（PiP）浮窗播放；
+2. WebRTC 连接快速熔断与平滑降级；
+3. 系统级安防目标侦测与存储配额告警通知（Heads-Up Notifications）。

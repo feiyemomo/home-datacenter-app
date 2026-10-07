@@ -1,0 +1,10 @@
+﻿Home Datacenter Android v1.9.1
+
+本次为框架清理版本，聚焦预加载机制实效（v1.9.0 审计结论落地）：
+
+• 移除死预取 devices.list（DashboardFragment）：缓存无任何读取方，且设备页已于 v1.9.0 移除
+• 移除冗余预取 cameras.ice（CamerasFragment/PrefetchManager）：真正生效的 ICE 预取是 AppContainer.prefetchIceConfig()，此分支写入的缓存无人读取
+• SplashActivity 新增 onDestroy() 取消 prefetchScope：避免旋转/重建时重复预取
+• 版本号 128 / 1.9.1
+
+验证：assembleDebug ✓ · testDebugUnitTest ✓ · assembleRelease(R8) ✓

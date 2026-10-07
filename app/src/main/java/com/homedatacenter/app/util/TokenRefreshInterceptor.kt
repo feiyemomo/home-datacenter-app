@@ -65,9 +65,9 @@ class TokenRefreshInterceptor(
         // Only for authenticated requests (the login bind call itself
         // carries no Authorization header and must just show its error).
         val hadAuth = !originalRequest.header("Authorization").isNullOrBlank()
-        val message = parseRoot(bodyString)?.get("message")?.jsonPrimitive?.content
-        if (hadAuth && message != null && message in AuthInvalidHandler.FATAL_401_MESSAGES) {
-            try { onFatalAuth?.invoke(message) } catch (_: Exception) {}
+        if (hadAuth && isFatalAuth(bodyString)) {
+            val reason = parseRoot(bodyString)?.get("message")?.jsonPrimitive?.content ?: "fatal 401"
+            try { onFatalAuth?.invoke(reason) } catch (_: Exception) {}
             return respondWithReattachedBody(response, bodyString)
         }
 
@@ -123,21 +123,72 @@ class TokenRefreshInterceptor(
      */
     private fun isTokenRefreshNeeded(body: String): Boolean {
         val root = parseRoot(body) ?: return false
-
-        // 1) Prefer the business `code` field.
+        // Legacy hook: root `code` in caller-supplied set.
         val code = root["code"]?.jsonPrimitive?.content?.toIntOrNull()
         if (code != null && code in tokenInvalidCodes) return true
-
-        // 2) Fall back to the legacy message-text matching (backward compat).
-        val message = root["message"]?.jsonPrimitive?.content
-        return message == "token version mismatch" || message == "invalid token"
+        return classify(body) == AuthErrorKind.RECOVERABLE
     }
 
-    private fun parseRoot(body: String): JsonObject? {
-        return try {
-            json.parseToJsonElement(body).jsonObject
+    private fun isFatalAuth(body: String): Boolean = classify(body) == AuthErrorKind.FATAL
+
+    private fun parseRoot(body: String): JsonObject? = parseRootStatic(body)
+
+    /** v1.14.3: how a 401 body should be handled by the client. */
+    enum class AuthErrorKind { RECOVERABLE, FATAL, TRANSIENT, UNKNOWN }
+
+    companion object {
+        // Stable backend error codes (services/api/internal/utils/errcodes.go).
+        const val ERR_AUTH_MISSING = 40101
+        const val ERR_AUTH_TOKEN_INVALID = 40102
+        const val ERR_AUTH_DEVICE_NOT_FOUND = 40103
+        const val ERR_AUTH_DEVICE_REVOKED = 40104
+        const val ERR_AUTH_TOKEN_VERSION_MISMATCH = 40105
+        const val ERR_AUTH_DEVICE_LOOKUP_FAILED = 40106
+        const val ERR_AUTH_INVALID_CREDENTIALS = 40107
+        const val ERR_AUTH_USER_NOT_FOUND = 40108
+
+        private val RECOVERABLE_CODES = setOf(ERR_AUTH_TOKEN_INVALID, ERR_AUTH_TOKEN_VERSION_MISMATCH)
+        private val FATAL_CODES = setOf(
+            ERR_AUTH_MISSING, ERR_AUTH_DEVICE_NOT_FOUND, ERR_AUTH_DEVICE_REVOKED,
+            ERR_AUTH_INVALID_CREDENTIALS, ERR_AUTH_USER_NOT_FOUND,
+        )
+        private val TRANSIENT_CODES = setOf(ERR_AUTH_DEVICE_LOOKUP_FAILED)
+
+        private val staticJson = Json { ignoreUnknownKeys = true }
+
+        internal fun parseRootStatic(body: String): JsonObject? = try {
+            staticJson.parseToJsonElement(body).jsonObject
         } catch (_: Exception) {
             null
+        }
+
+        /**
+         * Classifies a 401 body. Prefers the stable `error_code`; falls
+         * back to legacy `message` text for older backends.
+         * Pure function - unit tested.
+         */
+        fun classify(body: String): AuthErrorKind {
+            val root = parseRootStatic(body) ?: return AuthErrorKind.UNKNOWN
+            val errorCode = try {
+                root["error_code"]?.jsonPrimitive?.content?.toIntOrNull()
+            } catch (_: Exception) { null }
+            if (errorCode != null) {
+                return when (errorCode) {
+                    in RECOVERABLE_CODES -> AuthErrorKind.RECOVERABLE
+                    in FATAL_CODES -> AuthErrorKind.FATAL
+                    in TRANSIENT_CODES -> AuthErrorKind.TRANSIENT
+                    else -> AuthErrorKind.UNKNOWN
+                }
+            }
+            val message = try {
+                root["message"]?.jsonPrimitive?.content
+            } catch (_: Exception) { null } ?: return AuthErrorKind.UNKNOWN
+            return when {
+                message == "token version mismatch" || message == "invalid token" -> AuthErrorKind.RECOVERABLE
+                message in AuthInvalidHandler.FATAL_401_MESSAGES -> AuthErrorKind.FATAL
+                message == "device lookup failed" -> AuthErrorKind.TRANSIENT
+                else -> AuthErrorKind.UNKNOWN
+            }
         }
     }
 }

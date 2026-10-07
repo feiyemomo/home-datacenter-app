@@ -1,0 +1,10 @@
+v1.9.0 框架与安全加固
+- 网络安全：不再信任用户自装的根证书（封堵抓包/MITM）；移除 Manifest 冗余的明文声明；LAN 明文白名单改为具体主机/IP（192.168.31.235 / 192.168.31.234 / nas.feiyemomo.top / localhost / 127.0.0.1），保留 LAN、IPv6 直连与「自定义 LAN URL」所需的明文通道
+- 构建：Release 开启 R8 混淆/资源收缩，新增 keep 规则（kotlinx.serialization / Retrofit / OkHttp / WebRTC / BuildConfig）；ExoPlayer 与 WebRTC 依赖移入版本目录
+- 登出：清除 access_key 与续签时间戳，登出后不再发生静默续签
+- HTTP 日志：日志中间件仅 DEBUG 构建挂载，Release 不再打印请求日志
+- 网络健壮性：RetryInterceptor 在 5xx 重试耗尽后返回最后一个 Response（调用方能读到真实 5xx 而非 IOException），退避改为可注入函数；TokenRefreshInterceptor 优先按业务 code 匹配、回退文案匹配（待后端确认 code）
+- 修复：摄像头「分享」与「注册」对话框的协程随对话框销毁自动取消（消除泄漏/竞态）
+- 清理：移除不可达的「设备管理」孤儿 UI 代码（DevicesFragment / RegisterDeviceDialog / DeviceAdapter 及布局），保留 device 的 API/数据层
+- 测试：新增 ApkInstaller / ApiResponse / Camera 纯 JVM 单元测试
+- 文档：同步版本号与底部导航（主页 / 摄像头 / 日志 / 用户管理 / 设置）

@@ -65,6 +65,14 @@ class AlertKeepAliveService : Service() {
     }
 
     override fun onDestroy() {
+        if (reachabilityRegistered) {
+            try {
+                (application as? HomeCenterApp)?.container?.baseUrlResolver
+                    ?.removeReachabilityListener(reachabilityListener)
+            } catch (_: Exception) {
+            }
+            reachabilityRegistered = false
+        }
         webSocket?.disconnect()
         webSocket = null
         super.onDestroy()
@@ -125,9 +133,26 @@ class AlertKeepAliveService : Service() {
             onConnectionFailed = { failedWsUrl ->
                 val failedHttpUrl = failedWsUrl.replace("ws://", "http://").replace("wss://", "https://")
                 container.baseUrlResolver.notifyUrlFailed(failedHttpUrl)
-            }
+            },
+            isServerReachable = { container.baseUrlResolver.serverReachable }
         )
+        if (!reachabilityRegistered) {
+            container.baseUrlResolver.addReachabilityListener(reachabilityListener)
+            reachabilityRegistered = true
+        }
         webSocket?.connect()
+    }
+
+    // v1.14.3: resume the WS immediately when the NAS becomes reachable again.
+    @Volatile private var reachabilityRegistered = false
+    private val reachabilityListener: (Boolean) -> Unit = { reachable ->
+        if (reachable) {
+            mainHandler.post {
+                try { webSocket?.reconnectNow() } catch (e: Exception) {
+                    Log.w(TAG, "reconnectNow failed: ${e.message}")
+                }
+            }
+        }
     }
 
     private fun handleGlobalNotification(message: WsMessage) {

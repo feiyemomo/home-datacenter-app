@@ -1,0 +1,7 @@
+[v1.13.30]
+1. 彻底修复对讲报错 MediaStreamTrack has been disposed 问题：
+   - 解决 WebRTC 原生层在流切换或重连释放旧 PeerConnection 时连带 dispose 本地音频轨的问题
+   - 音频 Track 绑定时设置 takeOwnership=false，杜绝原生底层非预期释放
+   - 增加本地音轨活性自愈机制，检测到音轨被释放时自动重新创建并重新绑定
+2. 优化对讲启动时序，防止未初始化/销毁音轨引起的 IllegalStateException
+3. 优化麦克风硬件回声消除与降噪能力自适应检测

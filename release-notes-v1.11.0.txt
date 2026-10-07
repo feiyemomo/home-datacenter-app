@@ -1,0 +1,1 @@
+﻿feat: Security Guard Mode, Automations & Host Storage Dashboard

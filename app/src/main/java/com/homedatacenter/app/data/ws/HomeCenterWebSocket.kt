@@ -33,6 +33,9 @@ class HomeCenterWebSocket(
     private val heartbeatIntervalMs: Long = 30_000L,
     private val wsUrlProvider: (() -> String)? = null,
     private val onConnectionFailed: ((String) -> Unit)? = null,
+    // v1.14.3: when this returns false, the reconnect loop pauses
+    // until reconnectNow() is called on recovery.
+    private val isServerReachable: (() -> Boolean)? = null,
 ) {
 
     @Volatile private var webSocket: WebSocket? = null
@@ -114,9 +117,37 @@ class HomeCenterWebSocket(
         reconnectJob = null
     }
 
+    /**
+     * v1.14.3: server came back (BaseUrlResolver reachability → true).
+     * Drop any pending backoff and reconnect immediately.
+     */
+    fun reconnectNow() {
+        if (!shouldReconnect) return
+        if (isConnected) return
+        reconnectJob?.cancel()
+        reconnectJob = null
+        reconnectAttempt = 0
+        pausedForOffline = false
+        webSocket?.cancel()
+        webSocket = null
+        Log.i(TAG, "reconnectNow: server reachable again")
+        connect()
+    }
+
+    @Volatile private var pausedForOffline: Boolean = false
+
     private fun scheduleReconnect() {
         if (!shouldReconnect) return
         if (reconnectJob?.isActive == true) return
+
+        // v1.14.3: while every path to the NAS is known dead, stop the
+        // reconnect loop entirely; reconnectNow() resumes it as soon as
+        // the resolver's backoff probe finds the server again.
+        if (isServerReachable?.invoke() == false) {
+            if (!pausedForOffline) Log.i(TAG, "server unreachable; pausing reconnect until it recovers")
+            pausedForOffline = true
+            return
+        }
 
         reconnectAttempt += 1
         val delayMs = (1L shl (reconnectAttempt - 1).coerceAtMost(5)) * 1000L

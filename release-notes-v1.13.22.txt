@@ -1,0 +1,5 @@
+【v1.13.22 Debug 测试版更新说明】
+1. [冷启动加速] 引入 Android Baseline Profile 基线配置文件与 ProfileInstaller，关键核心类预编译，冷启动速度大幅提升；
+2. [流媒体首帧] 海康摄像机与 go2rtc 硬件转码全面优化为 1s GOP (-g 25, GovLength=25)，关键帧等待耗时减半；
+3. [画面秒开] WebRTC 与 HLS 播放首帧到达即刻解码渲染，彻底解决院子摄像头卡顿与黑屏问题；
+4. [解码兼容] 默认选用高兼容 720P H.264 通道，杜绝特定机型 MediaCodec 崩溃。

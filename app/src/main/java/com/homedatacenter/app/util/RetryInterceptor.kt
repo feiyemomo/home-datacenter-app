@@ -47,7 +47,13 @@ class RetryInterceptor(
 
         var lastResponse: Response? = null
 
-        for (attempt in 0 until maxRetries) {
+        // v1.14.3: when every path to the NAS is known dead, fail fast
+        // (single attempt, no backoff sleeps). The resolver's own backoff
+        // probe handles recovery; retrying here only burns battery and
+        // blocks UI loaders for ~2.8s per request.
+        val attempts = if (baseUrlResolver?.serverReachable == false) 1 else maxRetries
+
+        for (attempt in 0 until attempts) {
             if (attempt > 0) {
                 // Exponential backoff: 400ms, 800ms, 1600ms
                 val delayMs = (1L shl (attempt - 1)) * 400L
@@ -68,7 +74,7 @@ class RetryInterceptor(
 
                 // Only retry on 5xx server errors
                 if (response.code in 500..599) {
-                    if (attempt == maxRetries - 1) {
+                    if (attempt == attempts - 1) {
                         // Last attempt: keep the 5xx response open so the
                         // caller (e.g. HomeCenterRepository) can read the
                         // real server status through ApiResponse instead of
@@ -90,7 +96,7 @@ class RetryInterceptor(
             } catch (e: Exception) {
                 val shouldRetry = e is IOException  // includes SocketTimeoutException, UnknownHostException, etc.
 
-                if (shouldRetry && attempt < maxRetries - 1) {
+                if (shouldRetry && attempt < attempts - 1) {
                     Log.w(TAG, "Attempt #${attempt + 1} for ${request.url.encodedPath} failed: ${e.javaClass.simpleName}: ${e.message}")
                     // Notify baseUrlResolver on first failure so failover happens before next attempt
                     if (attempt == 0) {

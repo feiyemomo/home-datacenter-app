@@ -1,0 +1,6 @@
+【v1.13.25 摄像头Tab卡顿深度根治正式版】
+1. [GPU 渲染减负] 移除 Compose 摄像头卡片半透明投影（elevation 置零），消灭离屏渲染与过度绘制混合开销；
+2. [滑动掉帧根治] 彻底移除列表 bind 时的强制属性位移动画（slideInBottom），滑动列表不再触发全屏重测重绘；
+3. [重组开销优化] 引入 remember(thumbnail) 缓存 ImageBitmap，杜绝每一帧重复分配图像对象；
+4. [网络风暴切断] 摄像头在线预热加入缓存防重集合，避免切换 Tab 时反复并发 6+ 次 HTTP 请求打满网络；
+5. [Baseline Profile 完整生效] 官方 Release 包嵌入 DEX AOT 基线配置文件与 R8 极致代码收缩，冷启动与滑动丝滑流畅。

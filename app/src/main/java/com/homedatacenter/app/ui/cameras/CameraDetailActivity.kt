@@ -264,6 +264,14 @@ class CameraDetailActivity : AppCompatActivity() {
 
         loadPresets()
 
+        // v1.14.3: NAS offline handling on the live page — notify the user
+        // when every path dies, and restart playback as soon as it recovers.
+        container.baseUrlResolver.addReachabilityListener(reachabilityListener)
+        if (!container.baseUrlResolver.serverReachable) {
+            wasOffline = true
+            Toast.makeText(this, "无法连接到家庭服务器，正在自动重试…", Toast.LENGTH_LONG).show()
+        }
+
         // v1.5.13: revert the v1.5.12 RECORD_AUDIO permission
         // request. WebRTC recvonly doesn't call AudioRecord.startRecording()
         // so RECORD_AUDIO isn't required; only MODIFY_AUDIO_SETTINGS
@@ -607,7 +615,28 @@ class CameraDetailActivity : AppCompatActivity() {
         }
     }
 
+    // v1.14.3: called from probe threads; marshal to UI.
+    private var wasOffline = false
+    private val reachabilityListener: (Boolean) -> Unit = { reachable ->
+        runOnUiThread {
+            if (isFinishing || isDestroyed) return@runOnUiThread
+            if (!reachable) {
+                wasOffline = true
+                Toast.makeText(this, "无法连接到家庭服务器，正在自动重试…", Toast.LENGTH_LONG).show()
+            } else if (wasOffline) {
+                wasOffline = false
+                Toast.makeText(this, "已重新连接到家庭服务器", Toast.LENGTH_SHORT).show()
+                if (!isPlaybackActive() && !isLivePausedForDialog) {
+                    try { startPlayback() } catch (_: Exception) {}
+                }
+            }
+        }
+    }
+
     override fun onDestroy() {
+        if (::container.isInitialized) {
+            container.baseUrlResolver.removeReachabilityListener(reachabilityListener)
+        }
         super.onDestroy()
         hideControlsHandler.removeCallbacks(hideControlsRunnable)
         streamRetryJob?.cancel()
