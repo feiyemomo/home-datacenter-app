@@ -1102,8 +1102,11 @@ class WebRtcClient(
         // (host-candidate ICE completes in <500ms).
         watchdogJob?.cancel()
         if (!connectedOrFailed) {
-            // Fast failover watchdog: 3.5s on LAN/H3C Direct, 4.5s on remote tunnel
-            val connectTimeoutMs = if (isLan) 3_500L else 4_500L
+            // v1.14.2: restore the v1.14.0 budgets (4s LAN, 7s remote). v1.14.1's
+            // 3.5s/4.5s was shorter than a typical TCP-relay ICE check over the H3C
+            // tunnel (DTLS + first keyframe over TCP often lands at 4-6s), so live
+            // view fell back to MP4 even when WebRTC would have connected.
+            val connectTimeoutMs = if (isLan) 4_000L else 7_000L
             watchdogJob = scope.launch {
                 delay(connectTimeoutMs)
                 if (!connectedOrFailed && activeListener === listener) {

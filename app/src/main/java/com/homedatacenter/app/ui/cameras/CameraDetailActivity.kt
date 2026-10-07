@@ -1740,7 +1740,11 @@ class CameraDetailActivity : AppCompatActivity() {
                 // round-trip that would needlessly delay prepareOffer.
                 // isDirectPath() is a pure field comparison against
                 // `resolved` (no network probe), so it never blocks.
-                val isDirectPath = container.baseUrlResolver.isDirectPath()
+                // v1.14.2: must match startWebRtcStream — the H3C fast path is a
+                // TCP relay, not a direct WebRTC media path. Using isDirectPath()
+                // here (which includes isH3cFast()) pre-built a LAN-tuned PC
+                // (TCP ICE disabled, no STUN) that startStream then consumed.
+                val isDirectPath = container.baseUrlResolver.let { it.isLan() || it.isIpv6Direct() }
 
                 // Only fetch ICE config on non-direct (Tunnel) paths.
                 // On direct paths the fetch is unnecessary work since
@@ -1850,7 +1854,15 @@ class CameraDetailActivity : AppCompatActivity() {
             // is reachable directly over IPv6 (no NAT), so host
             // candidates are sufficient. isDirectPath() is true for
             // both LAN and IPv6 direct.
-            val isDirectPath = container.baseUrlResolver.isDirectPath()
+            // v1.14.2: the H3C fast path is an HTTP/TCP tunnel to a public relay, NOT a
+            // direct path for WebRTC media. v1.14.1 started treating it as "LAN"
+            // (resolver.isDirectPath() now includes isH3cFast()), which disabled TCP ICE
+            // candidates, dropped STUN and shortened the watchdog to 3.5s, so over H3C
+            // the only usable media candidate (the TCP tunnel 154.8.195.220:xxxxx) could
+            // never be paired and live view kept falling back to MP4. Only real LAN /
+            // IPv6 direct get the LAN WebRTC tuning.
+            val resolverForIce = container.baseUrlResolver
+            val isDirectPath = resolverForIce.isLan() || resolverForIce.isIpv6Direct()
             val iceServers = if (isDirectPath) {
                 emptyList()
             } else {
