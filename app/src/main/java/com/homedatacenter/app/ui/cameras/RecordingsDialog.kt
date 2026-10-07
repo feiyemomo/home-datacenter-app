@@ -674,7 +674,9 @@ class RecordingsDialog(
                         .build(),
                     true
                 )
-                volume = if (camera.hasAudio) 1.0f else 0.0f
+                // Recordings carry their own audio state (silent if recorded with
+                // pickup off); don't mute clips that were recorded with sound.
+                volume = 1.0f
                 val dataSourceFactory = DefaultHttpDataSource.Factory().apply {
                     setUserAgent(NetworkFactory.USER_AGENT)
                     setConnectTimeoutMs(15000)
@@ -839,7 +841,8 @@ class RecordingsDialog(
                     .build(),
                 /* handleAudioFocus = */ true,
             )
-            volume = if (camera.hasAudio) 1.0f else 0.0f
+            // Recordings carry their own audio state; never force-mute them.
+            volume = 1.0f
             val dataSourceFactory = DefaultHttpDataSource.Factory().apply {
                 setUserAgent(NetworkFactory.USER_AGENT)
                 setConnectTimeoutMs(15000)

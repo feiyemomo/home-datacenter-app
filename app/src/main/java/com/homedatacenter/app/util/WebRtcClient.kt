@@ -714,13 +714,24 @@ class WebRtcClient(
                 list
             }
         }
+        // Tailscale / overlay (100.64.0.0/10) base URL: the NAS runs tailscaled in
+        // userspace-networking mode, where inbound UDP to the overlay IP is not
+        // reliably forwarded to go2rtc. Keep TCP candidates enabled so ICE can fall
+        // back to TCP 8555 over the tailnet even when the path counts as "LAN".
+        val overlayBase = try {
+            val host = java.net.URI(baseUrlProvider().trim()).host ?: ""
+            val parts = host.split('.')
+            parts.size == 4 && parts[0] == "100" && (parts[1].toIntOrNull() ?: -1) in 64..127
+        } catch (_: Exception) {
+            false
+        }
         return PeerConnection.RTCConfiguration(filteredServers).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             // v1.13.19: GATHER_CONTINUALLY allows dynamic candidate adaptation during
             // network handovers and transient NAT re-mapping, preventing video freeze.
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
             iceConnectionReceivingTimeout = 4000
-            tcpCandidatePolicy = if (isLan) {
+            tcpCandidatePolicy = if (isLan && !overlayBase) {
                 PeerConnection.TcpCandidatePolicy.DISABLED
             } else {
                 PeerConnection.TcpCandidatePolicy.ENABLED
