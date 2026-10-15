@@ -417,4 +417,33 @@ interface HomeCenterApi {
         @Header("Authorization") auth: String,
         @Path("name") name: String
     ): ApiResponse
+
+    // --- Intrusion Defense & Security Center ---
+
+    @GET("api/v1/security/overview")
+    suspend fun getDefenseOverview(
+        @Header("Authorization") auth: String
+    ): ApiResponse
+
+    @GET("api/v1/security/banned")
+    suspend fun getBannedIPs(
+        @Header("Authorization") auth: String
+    ): ApiResponse
+
+    @POST("api/v1/security/ban")
+    suspend fun manualBan(
+        @Header("Authorization") auth: String,
+        @Body req: com.homedatacenter.app.data.model.ManualBanRequest
+    ): ApiResponse
+
+    @DELETE("api/v1/security/ban/{ip}")
+    suspend fun manualUnban(
+        @Header("Authorization") auth: String,
+        @Path("ip") ip: String
+    ): ApiResponse
+
+    @POST("api/v1/security/test-alert")
+    suspend fun testAlertEmail(
+        @Header("Authorization") auth: String
+    ): ApiResponse
 }

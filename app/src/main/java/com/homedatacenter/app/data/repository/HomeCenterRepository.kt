@@ -647,6 +647,38 @@ class HomeCenterRepository(
         ensureSuccess(resp)
     }
 
+    // --- Intrusion Defense & Security Center ---
+
+    suspend fun getDefenseOverview(token: String): com.homedatacenter.app.data.model.DefenseOverview {
+        val resp = api.getDefenseOverview(bearer(token))
+        ensureSuccess(resp)
+        return resp.decodeDataOrThrow()
+    }
+
+    suspend fun getBannedIPs(token: String): List<com.homedatacenter.app.data.model.BanEntry> {
+        val resp = api.getBannedIPs(bearer(token))
+        ensureSuccess(resp)
+        return resp.decodeData<List<com.homedatacenter.app.data.model.BanEntry>>() ?: emptyList()
+    }
+
+    suspend fun manualBan(token: String, ip: String, durationMinutes: Int, reason: String) {
+        val resp = api.manualBan(
+            bearer(token),
+            com.homedatacenter.app.data.model.ManualBanRequest(ip, durationMinutes, reason)
+        )
+        ensureSuccess(resp)
+    }
+
+    suspend fun manualUnban(token: String, ip: String) {
+        val resp = api.manualUnban(bearer(token), ip)
+        ensureSuccess(resp)
+    }
+
+    suspend fun testAlertEmail(token: String) {
+        val resp = api.testAlertEmail(bearer(token))
+        ensureSuccess(resp)
+    }
+
     private fun bearer(token: String): String = "Bearer $token"
 
     private fun ensureSuccess(resp: com.homedatacenter.app.data.model.ApiResponse) {

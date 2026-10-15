@@ -15,6 +15,7 @@ import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.homedatacenter.app.R
 import com.homedatacenter.app.databinding.FragmentSettingsBinding
+import com.homedatacenter.app.ui.admin.SecurityDefenseActivity
 import com.homedatacenter.app.ui.admin.UsersActivity
 import com.homedatacenter.app.ui.automations.AutomationsActivity
 import com.homedatacenter.app.ui.vision.FamilyFacesActivity
@@ -379,6 +380,9 @@ class SettingsFragment : Fragment() {
         }
         binding.btnSettingsStorage.setOnClickListener {
             showStorageConfigDialog()
+        }
+        binding.btnSettingsSecurity.setOnClickListener {
+            startActivity(Intent(requireContext(), SecurityDefenseActivity::class.java))
         }
     }
 

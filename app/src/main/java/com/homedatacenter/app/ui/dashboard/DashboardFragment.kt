@@ -761,18 +761,21 @@ class DashboardFragment : Fragment() {
             binding.quotaAlertBanner.visibility = View.GONE
             return
         }
+        val isAlreadyVisible = binding.quotaAlertBanner.visibility == View.VISIBLE
         binding.tvQuotaAlertMessage.text = log.message.ifBlank { log.event_type }
         binding.quotaAlertBanner.visibility = View.VISIBLE
-        AnimationHelper.fadeIn(binding.quotaAlertBanner, 250)
+        if (!isAlreadyVisible) {
+            AnimationHelper.fadeIn(binding.quotaAlertBanner, 250)
+            context?.let { ctx ->
+                NotificationHelper.showSystemAlertNotification(
+                    ctx,
+                    "存储配额告警",
+                    log.message.ifBlank { "录像存储空间已达警戒阈值" },
+                )
+            }
+        }
         binding.quotaAlertBanner.setOnClickListener {
             (activity as? MainActivity)?.let { it.binding.bottomNav.selectedItemId = R.id.nav_logs }
-        }
-        context?.let { ctx ->
-            NotificationHelper.showSystemAlertNotification(
-                ctx,
-                "存储配额告警",
-                log.message.ifBlank { "录像存储空间已达警戒阈值" },
-            )
         }
     }
 

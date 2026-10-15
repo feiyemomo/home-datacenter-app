@@ -91,6 +91,11 @@
             android:label="@string/users_title" />
 
         <activity
+            android:name=".ui.admin.SecurityDefenseActivity"
+            android:exported="false"
+            android:label="安全防御中心" />
+
+        <activity
             android:name=".ui.automations.AutomationsActivity"
             android:exported="false"
             android:label="@string/automations_title" />
