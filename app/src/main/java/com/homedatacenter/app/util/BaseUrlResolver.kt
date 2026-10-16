@@ -328,6 +328,15 @@ class BaseUrlResolver(
     }
 
     /**
+     * Called when a real API request receives a valid response from the backend.
+     * Guarantees that the offline banner is immediately dismissed even if an
+     * earlier synthetic probe timed out.
+     */
+    fun markServerReachable() {
+        markReachable(true)
+    }
+
+    /**
      * Returns the currently resolved base URL. Fast — never blocks.
      * Kicks off an async re-probe if the cache is older than [TTL_MS].
      */
@@ -418,9 +427,9 @@ class BaseUrlResolver(
 
     private fun fetchH3cUrl(): String? {
         val fastClient = client.newBuilder()
-            .callTimeout(3_000, TimeUnit.MILLISECONDS)
-            .connectTimeout(2_000, TimeUnit.MILLISECONDS)
-            .readTimeout(2_000, TimeUnit.MILLISECONDS)
+            .callTimeout(6_000, TimeUnit.MILLISECONDS)
+            .connectTimeout(5_000, TimeUnit.MILLISECONDS)
+            .readTimeout(5_000, TimeUnit.MILLISECONDS)
             .build()
         // NEVER query stale cached dynamic port for /fast-status — if the port rotated,
         // connecting to it stalls for TCP SYN timeout (3s) and exhausts the discovery deadline!
@@ -753,26 +762,14 @@ class BaseUrlResolver(
             runBlocking {
                 coroutineScope {
                     val lanDeferred = async(Dispatchers.IO) {
-                        // LAN probe: two-pronged (HTTP + TCP in parallel).
-                        val httpDeferred = async {
-                            probeUrl(effectiveLanUrl, LAN_TIMEOUT_MS)
-                        }
-                        val tcpDeferred = async {
-                            val tcpRtt = probeTcpRtt(effectiveLanHost, effectiveLanPort, LAN_TIMEOUT_MS)
-                            if (tcpRtt >= 0) ProbeResult(alive = true, rttMs = tcpRtt)
-                            else ProbeResult(alive = false, rttMs = -1L)
-                        }
-                        val httpResult = httpDeferred.await()
-                        val tcpResult = tcpDeferred.await()
-                        when {
-                            httpResult.alive && tcpResult.alive ->
-                                if (httpResult.rttMs <= tcpResult.rttMs) httpResult else tcpResult
-                            httpResult.alive -> httpResult
-                            tcpResult.alive -> {
-                                android.util.Log.i(TAG, "LAN: HTTP dead (${httpResult.rttMs}ms) but TCP alive (${tcpResult.rttMs}ms) — using TCP RTT proxy")
-                                tcpResult
-                            }
-                            else -> ProbeResult(alive = false, rttMs = min(httpResult.rttMs, tcpResult.rttMs))
+                        // LAN probe: must verify real HTTP response from the backend.
+                        // NEVER trust raw TCP socket alone when VPN/proxy is enabled,
+                        // because Android VPN/TUN virtual interfaces falsely accept TCP connections (fake SYN-ACK)!
+                        val httpResult = probeUrl(effectiveLanUrl, LAN_TIMEOUT_MS)
+                        if (httpResult.alive) {
+                            httpResult
+                        } else {
+                            ProbeResult(alive = false, rttMs = -1L)
                         }
                     }
                     val ipv6Deferred = async(Dispatchers.IO) {
@@ -1193,13 +1190,12 @@ class BaseUrlResolver(
         private const val IPV6_TIMEOUT_MS = 1_500
 
         // v1.6.23: remote probe timeout. The Tunnel is the last-resort
-        // fallback; 3s is enough for a cold Cloudflare Tunnel connection
-        // (typical 1-2s, worst ~3s on Chinese cellular). Reduced from
-        // 4s to minimize the total probe wall time.
-        private const val REMOTE_TIMEOUT_MS = 3_000
+        // fallback; 6s is enough for a cold Cloudflare Tunnel connection across
+        // Chinese cellular 5G networks, eliminating 3001ms false offline state.
+        private const val REMOTE_TIMEOUT_MS = 6_000
 
         // v1.13.11: H3C domestic tunnel probe timeout.
-        private const val H3C_TIMEOUT_MS = 2_500
+        private const val H3C_TIMEOUT_MS = 3_000
 
         // Escalating startup probe delays. Each entry schedules a
         // background probe at the given offset from app launch.

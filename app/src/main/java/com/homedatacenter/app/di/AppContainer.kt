@@ -2,6 +2,7 @@ package com.homedatacenter.app.di
 
 import android.content.Context
 import android.util.Log
+import com.homedatacenter.app.BuildConfig
 import com.homedatacenter.app.data.api.HomeCenterApi
 import com.homedatacenter.app.data.api.NetworkFactory
 import com.homedatacenter.app.data.repository.HomeCenterRepository
@@ -277,13 +278,11 @@ class AppContainer(private val context: Context) {
 
         updateCheckJob = warmScope.launch {
             try {
-                val isAdmin = prefsManager.isAdmin
-                val targetFlavor = if (isAdmin) null else "release"
+                val targetFlavor = if (BuildConfig.DEBUG) "debug" else "release"
                 val info = getRepository().getLatestRelease(token, targetFlavor)
                 latestKnownReleaseInfo = info
-                // 普通用户只接受 release 版本的推送；admin 用户接受两种版本的推送
-                if (!isAdmin && !info.isRelease) {
-                    Log.d("AppContainer", "Skipping non-release update for regular user: ${info.file_name}")
+                if (!info.isRelease && !BuildConfig.DEBUG) {
+                    Log.d("AppContainer", "Skipping non-release update: ${info.file_name}")
                     return@launch
                 }
                 // v1.6.14: compare versionName strings, NOT version_code.
@@ -344,13 +343,11 @@ class AppContainer(private val context: Context) {
     suspend fun forceCheckUpdate(): com.homedatacenter.app.data.model.UpdateInfo? {
         val token = prefsManager.token ?: return null
         return try {
-            val isAdmin = prefsManager.isAdmin
-            val targetFlavor = if (isAdmin) null else "release"
+            val targetFlavor = if (BuildConfig.DEBUG) "debug" else "release"
             val info = getRepository().getLatestRelease(token, targetFlavor)
             latestKnownReleaseInfo = info
-            // 普通用户只接受 release 版本的推送；admin 用户接受两种版本的推送
-            if (!isAdmin && !info.isRelease) {
-                Log.d("AppContainer", "Skipping non-release update for regular user: ${info.file_name}")
+            if (!info.isRelease && !BuildConfig.DEBUG) {
+                Log.d("AppContainer", "Skipping non-release update: ${info.file_name}")
                 cachedUpdateInfo = null
                 return null
             }

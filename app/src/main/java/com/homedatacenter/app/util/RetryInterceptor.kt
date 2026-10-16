@@ -68,6 +68,9 @@ class RetryInterceptor(
 
             try {
                 val response = chain.proceed(request)
+                if (response.code < 500) {
+                    baseUrlResolver?.markServerReachable()
+                }
                 if (response.isSuccessful) {
                     return response
                 }
