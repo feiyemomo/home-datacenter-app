@@ -344,8 +344,7 @@ class ServiceLogsFragment : Fragment() {
             },
             wsUrlProvider = { mainActivity.container.getWsUrl() },
             onConnectionFailed = { failedWsUrl ->
-                val failedHttpUrl = failedWsUrl.replace("ws://", "http://").replace("wss://", "https://")
-                mainActivity.container.baseUrlResolver.notifyUrlFailed(failedHttpUrl)
+                android.util.Log.w(TAG, "Logs WS connection dropped on $failedWsUrl")
             }
         )
         logsWebSocket?.connect()

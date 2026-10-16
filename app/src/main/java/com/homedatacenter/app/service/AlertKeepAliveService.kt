@@ -131,8 +131,10 @@ class AlertKeepAliveService : Service() {
             },
             wsUrlProvider = { container.getWsUrl() },
             onConnectionFailed = { failedWsUrl ->
-                val failedHttpUrl = failedWsUrl.replace("ws://", "http://").replace("wss://", "https://")
-                container.baseUrlResolver.notifyUrlFailed(failedHttpUrl)
+                // Do NOT call notifyUrlFailed on transient WebSocket drops!
+                // WebSocket is an event stream and drops regularly on mobile data due to carrier TCP idle timeout.
+                // Base URL failover is managed by RetryInterceptor when actual REST APIs fail.
+                Log.w(TAG, "Keepalive WS connection dropped on $failedWsUrl; will retry WS")
             },
             isServerReachable = { container.baseUrlResolver.serverReachable }
         )

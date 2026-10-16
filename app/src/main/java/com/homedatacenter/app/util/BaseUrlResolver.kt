@@ -791,16 +791,16 @@ class BaseUrlResolver(
                             candidate = fetchH3cUrl()
                         }
                         if (!candidate.isNullOrBlank()) {
-                            // If candidate is from cache, give it a quick 1200ms probe.
-                            // Domestic tunnels respond in <100ms; if it takes >1200ms it's almost certainly dead/rotated.
-                            var r = probeUrl(candidate, 1_200)
+                            // Give domestic tunnel candidate a proper probe timeout (H3C_TIMEOUT_MS = 3s).
+                            // A tight 1.2s timeout often false-drops on 5G radio cold start (RRC state transition).
+                            var r = probeUrl(candidate, H3C_TIMEOUT_MS)
                             if (!r.alive) {
-                                android.util.Log.w(TAG, "Cached H3C URL $candidate unreachable; invalidating cache and fetching fresh endpoint")
+                                android.util.Log.w(TAG, "H3C candidate $candidate unreachable; invalidating cache and fetching fresh endpoint")
                                 prefs.edit().remove(KEY_H3C_URL).apply()
                                 val fresh = fetchH3cUrl()
-                                if (!fresh.isNullOrBlank() && fresh != candidate) {
+                                if (!fresh.isNullOrBlank()) {
                                     candidate = fresh
-                                    r = probeUrl(candidate, H3C_TIMEOUT_MS)
+                                    r = probeUrl(fresh, H3C_TIMEOUT_MS)
                                 }
                             }
                             candidate to r

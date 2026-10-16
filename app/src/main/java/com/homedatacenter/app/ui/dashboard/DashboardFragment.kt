@@ -317,20 +317,19 @@ class DashboardFragment : Fragment() {
         val resolver = mainActivity.container.baseUrlResolver
         val isLan = resolver.isLan()
         val isIpv6 = resolver.isIpv6Direct()
+        val isH3c = resolver.isH3cFast()
         val rtt = resolver.currentRttMs()
         val rttStr = if (rtt >= 0) " (${rtt}ms)" else ""
         binding.tvPath.text = when {
             isLan -> "局域网$rttStr"
+            isH3c -> "国内高速$rttStr"
             isIpv6 -> "IPv6 直连$rttStr"
             else -> "远程$rttStr"
         }
-        // v1.6.26: green dot only for LAN (best path). IPv6 direct
-        // and Tunnel both use the amber "warning" dot — IPv6 is
-        // remote-network (cellular) so it can still be flaky, and
-        // Tunnel is the slow fallback. LAN on the home WiFi is the
-        // only path that's reliably < 50ms.
+        // v1.6.26 / v1.14.7: green dot for LAN and domestic H3C (fast domestic paths).
+        // IPv6 direct and Cloudflare Tunnel use amber dot.
         binding.pathDot.setBackgroundResource(
-            if (isLan) R.drawable.circle_online else R.drawable.circle_warning
+            if (isLan || isH3c) R.drawable.circle_online else R.drawable.circle_warning
         )
     }
 
