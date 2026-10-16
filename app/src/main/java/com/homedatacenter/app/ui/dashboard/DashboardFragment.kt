@@ -594,10 +594,12 @@ class DashboardFragment : Fragment() {
 
         val isLan = resolver?.isLan() ?: false
         val isIpv6 = if (showIpv6) resolver?.isIpv6Direct() ?: false else false
+        val isH3c = resolver?.isH3cFast() ?: false
         val rtt = resolver?.currentRttMs() ?: -1L
         val rttStr = if (rtt >= 0) " (${rtt}ms)" else ""
         binding.tvNetworkStrategy.text = when {
             isLan -> "局域网$rttStr"
+            isH3c -> "国内高速 (H3C)$rttStr"
             isIpv6 -> "IPv6 直连$rttStr"
             else -> "远程$rttStr"
         }

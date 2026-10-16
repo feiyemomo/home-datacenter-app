@@ -418,13 +418,13 @@ class BaseUrlResolver(
 
     private fun fetchH3cUrl(): String? {
         val fastClient = client.newBuilder()
-            .callTimeout(4_000, TimeUnit.MILLISECONDS)
-            .connectTimeout(3_000, TimeUnit.MILLISECONDS)
-            .readTimeout(3_000, TimeUnit.MILLISECONDS)
+            .callTimeout(3_000, TimeUnit.MILLISECONDS)
+            .connectTimeout(2_000, TimeUnit.MILLISECONDS)
+            .readTimeout(2_000, TimeUnit.MILLISECONDS)
             .build()
-        val cached = getCachedH3cUrl()
-        val urlsToTry = listOfNotNull(
-            cached?.takeIf { it.isNotBlank() }?.let { "${it.trimEnd('/')}/fast-status" },
+        // NEVER query stale cached dynamic port for /fast-status — if the port rotated,
+        // connecting to it stalls for TCP SYN timeout (3s) and exhausts the discovery deadline!
+        val urlsToTry = listOf(
             "${REMOTE_URL.trimEnd('/')}/fast-status",
             "https://dashboard.feiyemomo.top/fast-status"
         ).distinct()
@@ -444,7 +444,7 @@ class BaseUrlResolver(
                             if (addr.isNotBlank()) {
                                 val normalized = if (addr.endsWith("/")) addr else "$addr/"
                                 prefs.edit().putString(KEY_H3C_URL, normalized).apply()
-                                android.util.Log.i(TAG, "Discovered H3C Domestic Gateway via $u: $normalized")
+                                android.util.Log.i(TAG, "Discovered fresh H3C Domestic Gateway via $u: $normalized")
                                 return normalized
                             }
                         }
@@ -794,8 +794,12 @@ class BaseUrlResolver(
                             candidate = fetchH3cUrl()
                         }
                         if (!candidate.isNullOrBlank()) {
-                            var r = probeUrl(candidate, H3C_TIMEOUT_MS)
+                            // If candidate is from cache, give it a quick 1200ms probe.
+                            // Domestic tunnels respond in <100ms; if it takes >1200ms it's almost certainly dead/rotated.
+                            var r = probeUrl(candidate, 1_200)
                             if (!r.alive) {
+                                android.util.Log.w(TAG, "Cached H3C URL $candidate unreachable; invalidating cache and fetching fresh endpoint")
+                                prefs.edit().remove(KEY_H3C_URL).apply()
                                 val fresh = fetchH3cUrl()
                                 if (!fresh.isNullOrBlank() && fresh != candidate) {
                                     candidate = fresh
