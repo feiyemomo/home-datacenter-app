@@ -27,6 +27,8 @@ import com.homedatacenter.app.util.CacheManager
 import com.homedatacenter.app.util.NetworkMonitor
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -58,6 +60,14 @@ class CamerasFragment : Fragment() {
     companion object {
         @Volatile
         var pendingScrollToAlerts = false
+
+        /**
+         * How often the camera preview tiles are re-bound so the
+         * adapter can refresh frames whose TTL expired. Slightly
+         * shorter than the adapter TTL so a refresh is never missed
+         * due to tick jitter.
+         */
+        private const val THUMBNAIL_TICK_MS = 10_000L
     }
 
 
@@ -131,7 +141,15 @@ class CamerasFragment : Fragment() {
             }
         })
 
-        binding.swipeRefresh.setOnRefreshListener { loadCamerasFromNetwork() }
+        // v1.14.9: an explicit swipe-to-refresh should also drop the
+        // cached preview frames, not just re-hit the metadata API —
+        // otherwise a stale frame (or a go2rtc error placeholder left
+        // over from an outage) stays on screen even though the user
+        // just asked for fresh data.
+        binding.swipeRefresh.setOnRefreshListener {
+            adapter.invalidateThumbnails()
+            loadCamerasFromNetwork()
+        }
 
         // Admin-only: show FAB for registering a new camera. The
         // server still enforces admin-gating on POST /api/v1/cameras,
@@ -185,6 +203,22 @@ class CamerasFragment : Fragment() {
                                 alertsFadedIn = true
                                 AnimationHelper.fadeIn(binding.rvAllAlerts, 300)
                             }
+                        }
+                    }
+                }
+                // v1.14.9: keep the preview tiles live. The adapter
+                // expires frames after ~12s, but nothing re-bound the
+                // list, so the tiles used to stay frozen on the very
+                // first frame fetched after the fragment was created.
+                launch {
+                    while (isActive) {
+                        delay(THUMBNAIL_TICK_MS)
+                        // isHidden == true when the bottom-nav tab is
+                        // swiped away; the fragment lifecycle stays
+                        // STARTED in that case, so gate the refresh
+                        // explicitly to avoid needless tunnel traffic.
+                        if (isAdded && !isHidden) {
+                            adapter.refreshVisibleThumbnails()
                         }
                     }
                 }

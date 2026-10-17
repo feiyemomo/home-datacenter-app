@@ -93,7 +93,7 @@
         <activity
             android:name=".ui.admin.SecurityDefenseActivity"
             android:exported="false"
-            android:label="安全防御中心" />
+            android:label="@string/security_defense_title" />
 
         <activity
             android:name=".ui.automations.AutomationsActivity"

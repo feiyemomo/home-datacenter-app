@@ -6,6 +6,7 @@ import android.content.res.Configuration
 import android.graphics.BitmapFactory
 import android.os.Bundle
 import android.view.GestureDetector
+import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.widget.ImageView
@@ -59,6 +60,9 @@ class MultiCameraActivity : AppCompatActivity() {
     private var isFillCrop: Boolean = false
     private var pollJob: Job? = null
 
+    /** Last height applied to the grid rows, to avoid layout churn. */
+    private var lastRowHeightPx: Int = -1
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMultiCameraBinding.inflate(layoutInflater)
@@ -80,6 +84,20 @@ class MultiCameraActivity : AppCompatActivity() {
         applyGridModeLayout()
         applyAspectRatio()
 
+        // v1.14.9: size each visible grid row to the video aspect
+        // ratio instead of stretching it to fill the screen height.
+        // The rows used to be weight=1 inside a match_parent
+        // container, so on a portrait phone a 2x2 grid produced
+        // ~540x950 tiles holding a 16:9 stream: the video was
+        // letterboxed inside huge black bars. Recompute whenever the
+        // container is (re)measured, e.g. on rotation.
+        binding.slotsContainer.addOnLayoutChangeListener { _, left, top, right, bottom, oLeft, oTop, oRight, oBottom ->
+            if (right - left != oRight - oLeft || bottom - top != oBottom - oTop) {
+                applyGridRowHeights()
+            }
+        }
+        binding.slotsContainer.post { applyGridRowHeights() }
+
         binding.swipeRefresh.setOnRefreshListener { loadCameras() }
 
         loadCameras()
@@ -98,6 +116,7 @@ class MultiCameraActivity : AppCompatActivity() {
         }
         binding.btnGridMode.text = currentGridMode.label
         applyGridModeLayout()
+        applyGridRowHeights()
         bindSlots()
         startFramePolling()
     }
@@ -139,6 +158,52 @@ class MultiCameraActivity : AppCompatActivity() {
             binding.slotsContainer.setPadding(pad, pad, pad, pad)
             updateSlotMargins((3 * density).toInt())
         }
+        // Padding/margins just changed, so the aspect-derived row
+        // height is stale — recompute after the next measure pass.
+        binding.slotsContainer.post { applyGridRowHeights() }
+    }
+
+    /**
+     * v1.14.9: give every grid row the height its tiles need for a
+     * 16:9 stream (tileWidth * 9 / 16) and centre the grid vertically,
+     * instead of letting weight=1 stretch the rows to fill the screen.
+     * In landscape this works out to a full-bleed grid; in portrait it
+     * yields a compact, correctly proportioned grid with no giant
+     * letterbox bars.
+     */
+    private fun applyGridRowHeights() {
+        val container = binding.slotsContainer
+        val columns = when (currentGridMode) {
+            GridMode.ONE -> 1
+            GridMode.FOUR -> 2
+            GridMode.NINE -> 3
+        }
+        val availableWidth = container.width - container.paddingLeft - container.paddingRight
+        if (availableWidth <= 0) return
+
+        val density = resources.displayMetrics.density
+        val cardMarginPx = (if (resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
+            2 * density
+        } else {
+            3 * density
+        }).toInt()
+        // Each card carries a margin on both sides, so the usable
+        // tile width shrinks by two margins.
+        val tileWidth = availableWidth / columns - 2 * cardMarginPx
+        if (tileWidth <= 0) return
+
+        val rowHeight = (tileWidth * 9f / 16f).toInt()
+        if (rowHeight == lastRowHeightPx) return
+        lastRowHeightPx = rowHeight
+
+        for (row in listOf(binding.row0, binding.row1, binding.row2)) {
+            val lp = row.layoutParams as? LinearLayout.LayoutParams ?: continue
+            if (lp.height == rowHeight && lp.weight == 0f) continue
+            lp.height = rowHeight
+            lp.weight = 0f
+            row.layoutParams = lp
+        }
+        container.gravity = Gravity.CENTER_VERTICAL
     }
 
     private fun updateSlotMargins(margin: Int) {
@@ -289,6 +354,7 @@ class MultiCameraActivity : AppCompatActivity() {
         }
         binding.btnGridMode.text = currentGridMode.label
         applyGridModeLayout()
+        applyGridRowHeights()
         bindSlots()
         startFramePolling()
     }

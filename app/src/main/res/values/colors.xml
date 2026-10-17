@@ -34,6 +34,10 @@
     <!-- Glass effect — frosted warm white with top edge hint; matches web glass:
          backdrop white at 45-62% + warm tint -->
     <color name="glass_bg">#CCFFFFFF</color>
+    <!-- Bottom nav body. More opaque than @color/glass_bg so
+         scrolling content does not bleed through the floating
+         capsule and muddle the tab labels. -->
+    <color name="glass_bg_nav">#F7FFFFFF</color>
     <color name="glass_border">#33FFFFFF</color>
     <color name="glass_shadow">#14000000</color>
     <color name="glass_highlight">#26FFFFFF</color>

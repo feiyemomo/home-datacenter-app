@@ -33,6 +33,10 @@
 
     <!-- Glass effect in dark: translucent dark with subtle white edge -->
     <color name="glass_bg">#282430</color>
+    <!-- Bottom nav body. More opaque than @color/glass_bg so
+         scrolling content does not bleed through the floating
+         capsule and muddle the tab labels. -->
+    <color name="glass_bg_nav">#282430</color>
     <color name="glass_border">#1AFFFFFF</color>
     <color name="glass_shadow">#40000000</color>
     <color name="glass_highlight">#14FFFFFF</color>

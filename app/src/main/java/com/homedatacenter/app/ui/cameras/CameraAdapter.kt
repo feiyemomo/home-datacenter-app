@@ -2,6 +2,7 @@ package com.homedatacenter.app.ui.cameras
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.os.SystemClock
 import android.view.LayoutInflater
 import android.view.ViewGroup
 import androidx.compose.material3.MaterialTheme
@@ -53,10 +54,41 @@ class CameraAdapter(
     // camera list feel broken. Cache 16 snapshots (~16 × 50KB =
     // 800KB max memory) — enough for a typical camera fleet, small
     // enough to not pressure the heap.
-    private val thumbnailCache = object : LinkedHashMap<Long, Bitmap>(16, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, Bitmap>?): Boolean {
+    //
+    // v1.14.9: entries are timestamped and expire after
+    // [THUMBNAIL_TTL_MS]. Previously a frame was fetched exactly once
+    // per camera per adapter lifetime and cached forever, so (a) the
+    // "live" previews on the camera list never actually updated, and
+    // (b) when go2rtc answered with its "frames have been received,
+    // check error logs" placeholder during a stream outage, that
+    // placeholder was cached as if it were a real frame and stayed on
+    // screen until the process was restarted — even long after the
+    // stream came back. A TTL makes both failures self-heal.
+    private class ThumbEntry(val bitmap: Bitmap, val fetchedAtMs: Long) {
+        fun isFresh(nowMs: Long): Boolean = nowMs - fetchedAtMs < THUMBNAIL_TTL_MS
+    }
+
+    private val thumbnailCache = object : LinkedHashMap<Long, ThumbEntry>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Long, ThumbEntry>?): Boolean {
             return size > 16
         }
+    }
+
+    private fun cachedThumb(id: Long): ThumbEntry? = synchronized(thumbnailCache) { thumbnailCache[id] }
+
+    /** Drop every cached frame and re-bind, forcing a fresh fetch. */
+    fun invalidateThumbnails() {
+        synchronized(thumbnailCache) { thumbnailCache.clear() }
+        if (itemCount > 0) notifyItemRangeChanged(0, itemCount)
+    }
+
+    /**
+     * Re-bind every item so frames older than [THUMBNAIL_TTL_MS] are
+     * re-fetched. Cheap when nothing is stale: [CameraViewHolder.bind]
+     * only issues a request when the cached entry has expired.
+     */
+    fun refreshVisibleThumbnails() {
+        if (itemCount > 0) notifyItemRangeChanged(0, itemCount)
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): CameraViewHolder {
@@ -121,48 +153,73 @@ class CameraAdapter(
             if (cameraChanged || metadataChanged || currentCamera == null) {
                 currentCamera = camera
             }
+
+            val entry = cachedThumb(camera.id)
+            val fresh = entry != null && entry.isFresh(SystemClock.elapsedRealtime())
+
             if (cameraChanged) {
                 thumbnailJob?.cancel()
                 thumbnailError = false
-                val cached = synchronized(thumbnailCache) { thumbnailCache[camera.id] }
-                if (cached != null) {
-                    thumbnail = cached
+                if (fresh) {
+                    thumbnail = entry!!.bitmap
                     thumbnailLoading = false
                 } else {
                     thumbnail = null
                     loadThumbnail(camera)
                 }
+            } else if (!fresh) {
+                // Same camera bound to the same holder but the cached
+                // frame has expired: refresh in place without blanking
+                // the tile, so a stale frame (or a go2rtc error
+                // placeholder) is replaced silently on the next tick.
+                loadThumbnail(camera, silent = true)
             }
         }
 
-        private fun loadThumbnail(camera: Camera) {
+        private fun loadThumbnail(camera: Camera, silent: Boolean = false) {
             // v1.8.x: skip loading for offline cameras — the HTTP
             // request will fail anyway (go2rtc can't reach the camera),
             // and the loading spinner would stay spinning until the
             // connect timeout fires (~10s). Show "无预览" immediately.
             if (!camera.isOnline) {
-                thumbnailLoading = false
-                thumbnailError = true
+                if (!silent) {
+                    thumbnailLoading = false
+                    thumbnailError = true
+                }
                 return
             }
             val snapshotUrl = buildSnapshotUrl(camera.id)
             if (snapshotUrl.isEmpty()) {
-                thumbnailLoading = false
-                thumbnailError = true
+                if (!silent) {
+                    thumbnailLoading = false
+                    thumbnailError = true
+                }
                 return
             }
 
-            thumbnailLoading = true
-            thumbnailError = false
+            if (!silent) {
+                thumbnailLoading = true
+                thumbnailError = false
+            }
+            thumbnailJob?.cancel()
             thumbnailJob = scope.launch {
                 val bitmap = fetchScreenshot(snapshotUrl)
                 withContext(Dispatchers.Main) {
                     if (boundCamera?.id == camera.id && bindingAdapterPosition != RecyclerView.NO_POSITION) {
-                        thumbnail = bitmap
-                        thumbnailLoading = false
-                        thumbnailError = bitmap == null
                         if (bitmap != null) {
-                            thumbnailCache[camera.id] = bitmap
+                            thumbnail = bitmap
+                            thumbnailLoading = false
+                            thumbnailError = false
+                            synchronized(thumbnailCache) {
+                                thumbnailCache[camera.id] =
+                                    ThumbEntry(bitmap, SystemClock.elapsedRealtime())
+                            }
+                        } else if (!silent) {
+                            // Keep the previous frame visible on a
+                            // failed refresh; only a foreground load
+                            // may show the error state.
+                            thumbnailLoading = false
+                            thumbnailError = true
                         }
                     }
                 }
@@ -239,5 +296,13 @@ class CameraAdapter(
 
     companion object {
         private const val TAG = "CameraAdapter"
+
+        /**
+         * How long a cached preview frame stays valid. Chosen to be
+         * well under a human's patience for "live" previews while
+         * still avoiding a re-fetch on every scroll/bind for a
+         * slow-tunnel user.
+         */
+        private const val THUMBNAIL_TTL_MS = 12_000L
     }
 }

@@ -38,7 +38,7 @@ class SecurityDefenseActivity : AppCompatActivity() {
 
         // Security Barrier: Strictly enforce Admin role check
         if (!container.prefsManager.isAdmin) {
-            Toast.makeText(this, "权限不足：安全防御中心仅对系统管理员开放", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, getString(R.string.security_defense_no_permission), Toast.LENGTH_LONG).show()
             finish()
             return
         }
