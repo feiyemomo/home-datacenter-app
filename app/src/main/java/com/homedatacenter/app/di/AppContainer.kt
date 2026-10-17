@@ -167,7 +167,7 @@ class AppContainer(private val context: Context) {
     // resume path is instant.
     @Volatile
     private var sharedWebRtcClient: WebRtcClient? = null
-    private val warmScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    val warmScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var warmJob: Job? = null
 
     /**
@@ -278,24 +278,17 @@ class AppContainer(private val context: Context) {
 
         updateCheckJob = warmScope.launch {
             try {
-                val targetFlavor = if (BuildConfig.DEBUG) "debug" else "release"
+                val targetFlavor = prefsManager.getEffectiveUpdateTrack()
                 val info = getRepository().getLatestRelease(token, targetFlavor)
                 latestKnownReleaseInfo = info
-                if (!info.isRelease && !BuildConfig.DEBUG) {
+                if (targetFlavor == PrefsManager.TRACK_RELEASE && !info.isRelease) {
                     Log.d("AppContainer", "Skipping non-release update: ${info.file_name}")
                     return@launch
                 }
-                // v1.6.14: compare versionName strings, NOT version_code.
-                // Backend derives version_code from the APK filename via
-                // parseVersionCode("1.6.12") = 10612, but the app's
-                // versionCode in build.gradle.kts is a flat integer
-                // (e.g. 55). Different scales — `info.version_code > installed`
-                // was always true, causing perpetual "update available"
-                // prompts even when versions matched.
                 val installedName = com.homedatacenter.app.util.ApkInstaller
                     .installedVersionName(context)
                 val hasUpdate = com.homedatacenter.app.util.ApkInstaller
-                    .compareVersions(info.version_name, installedName) > 0
+                    .hasUpdate(context, info)
                 if (hasUpdate) {
                     cachedUpdateInfo = info
                     Log.d("AppContainer",
@@ -343,20 +336,16 @@ class AppContainer(private val context: Context) {
     suspend fun forceCheckUpdate(): com.homedatacenter.app.data.model.UpdateInfo? {
         val token = prefsManager.token ?: return null
         return try {
-            val targetFlavor = if (BuildConfig.DEBUG) "debug" else "release"
+            val targetFlavor = prefsManager.getEffectiveUpdateTrack()
             val info = getRepository().getLatestRelease(token, targetFlavor)
             latestKnownReleaseInfo = info
-            if (!info.isRelease && !BuildConfig.DEBUG) {
+            if (targetFlavor == PrefsManager.TRACK_RELEASE && !info.isRelease) {
                 Log.d("AppContainer", "Skipping non-release update: ${info.file_name}")
                 cachedUpdateInfo = null
                 return null
             }
-            // v1.6.14: compare versionName strings (see checkUpdateOnStartup
-            // for the version_code scale-mismatch explanation).
-            val installedName = com.homedatacenter.app.util.ApkInstaller
-                .installedVersionName(context)
             val hasUpdate = com.homedatacenter.app.util.ApkInstaller
-                .compareVersions(info.version_name, installedName) > 0
+                .hasUpdate(context, info)
             if (hasUpdate) {
                 cachedUpdateInfo = info
                 // v1.6.28: a manual check that finds a new version

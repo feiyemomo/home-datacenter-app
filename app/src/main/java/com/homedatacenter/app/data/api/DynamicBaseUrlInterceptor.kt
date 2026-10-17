@@ -16,6 +16,7 @@ import okhttp3.Response
  */
 class DynamicBaseUrlInterceptor(
     private val baseUrlProvider: () -> String,
+    private val baseUrlResolver: com.homedatacenter.app.util.BaseUrlResolver? = null,
 ) : Interceptor {
 
     override fun intercept(chain: Interceptor.Chain): Response {
@@ -92,7 +93,21 @@ class DynamicBaseUrlInterceptor(
 
         Log.d(TAG, "Rewrote base URL: ${currentUrl.scheme}://${currentUrl.host}:${currentUrl.port} -> ${targetUrl.scheme}://${targetUrl.host}:${targetUrl.port} for ${currentUrl.encodedPath}")
 
-        return chain.proceed(newRequest)
+        return try {
+            val response = chain.proceed(newRequest)
+            // If the rewritten request returned bad gateway (e.g. H3C gateway proxy error), notify resolver immediately
+            if (response.code in 502..504 && (targetUrl.host == "154.8.195.220" || baseUrlResolver?.isH3cFast() == true)) {
+                Log.w(TAG, "Target $newUrl returned ${response.code}; notifying baseUrlResolver of failure")
+                baseUrlResolver?.notifyUrlFailed(newUrl.toString())
+            }
+            response
+        } catch (e: Exception) {
+            if (e is java.io.IOException) {
+                Log.w(TAG, "Target $newUrl failed with ${e.javaClass.simpleName}; notifying baseUrlResolver of failure")
+                baseUrlResolver?.notifyUrlFailed(newUrl.toString())
+            }
+            throw e
+        }
     }
 
     private fun isDatacenterHost(host: String): Boolean {

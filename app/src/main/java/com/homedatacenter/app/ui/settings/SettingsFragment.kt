@@ -357,6 +357,7 @@ class SettingsFragment : Fragment() {
                 binding.tvAdminSectionHeader.visibility = if (user.isAdmin) View.VISIBLE else View.GONE
                 binding.cardAdminSection.visibility = if (user.isAdmin) View.VISIBLE else View.GONE
                 binding.layoutNotifySystem.visibility = if (user.isAdmin) View.VISIBLE else View.GONE
+                binding.layoutUpdateTrack.visibility = if (user.isAdmin) View.VISIBLE else View.GONE
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
@@ -636,6 +637,28 @@ class SettingsFragment : Fragment() {
     private fun setupUpdateSection() {
         val mainActivity = activity as? MainActivity ?: return
         val container = mainActivity.container
+        val prefs = container.prefsManager
+
+        // Setup admin-selectable update track (Release vs Debug)
+        binding.layoutUpdateTrack.visibility = if (prefs.isAdmin) View.VISIBLE else View.GONE
+        if (prefs.getEffectiveUpdateTrack() == PrefsManager.TRACK_DEBUG) {
+            binding.rbTrackDebug.isChecked = true
+        } else {
+            binding.rbTrackRelease.isChecked = true
+        }
+        binding.radioGroupUpdateTrack.setOnCheckedChangeListener { _, checkedId ->
+            val newTrack = if (checkedId == R.id.rbTrackDebug) PrefsManager.TRACK_DEBUG else PrefsManager.TRACK_RELEASE
+            if (prefs.updateTrack != newTrack) {
+                prefs.updateTrack = newTrack
+                container.clearCachedUpdateInfo()
+                renderCachedUpdateStatus()
+                Toast.makeText(
+                    requireContext(),
+                    if (newTrack == PrefsManager.TRACK_DEBUG) "已切换至测试版通道 (Debug)" else "已切换至正式版通道 (Release)",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+        }
 
         // Initial render from whatever state the background check /
         // download has reached so far.

@@ -212,6 +212,15 @@ class PrefsManager(context: Context) {
         }
     }
 
+    // v1.14.9: OTA update track (Release vs Debug). Admin only; non-admin strictly locked to release.
+    var updateTrack: String
+        get() = prefs.getString(KEY_UPDATE_TRACK, TRACK_RELEASE) ?: TRACK_RELEASE
+        set(value) = prefs.edit().putString(KEY_UPDATE_TRACK, value).apply()
+
+    fun getEffectiveUpdateTrack(): String {
+        return if (isAdmin && updateTrack == TRACK_DEBUG) TRACK_DEBUG else TRACK_RELEASE
+    }
+
     companion object {
         private const val PREFS_FILE = "home_datacenter_prefs"
         private const val KEY_TOKEN = "auth_token"
@@ -221,6 +230,9 @@ class PrefsManager(context: Context) {
         private const val KEY_USER_ID = "user_id"
         private const val KEY_USER_NAME = "user_name"
         private const val KEY_IS_ADMIN = "is_admin"
+        private const val KEY_UPDATE_TRACK = "update_track"
+        const val TRACK_RELEASE = "release"
+        const val TRACK_DEBUG = "debug"
         private const val KEY_THEME_MODE = "theme_mode"
         private const val KEY_DEVICE_SCOPE = "device_scope"
         private const val KEY_NOTIFICATIONS_ENABLED = "notifications_enabled"

@@ -476,21 +476,26 @@ class BaseUrlResolver(
      */
     fun notifyUrlFailed(failedUrl: String) {
         val currentResolved = resolved
-        android.util.Log.w(TAG, "notifyUrlFailed called for: $failedUrl (current resolved=$currentResolved)")
+        android.util.Log.w(TAG, "notifyUrlFailed called for: $failedUrl (current resolved=$currentResolved, isH3cFast=${isH3cFast()})")
 
         val cachedH3c = getCachedH3cUrl()
-        val isFailedH3c = (!cachedH3c.isNullOrBlank() && failedUrl.contains(cachedH3c.trimEnd('/'))) ||
-                (isH3cFast() && (failedUrl.contains(currentResolved.trimEnd('/')) || failedUrl.contains("154.8.195.220"))) ||
+        val isFailedH3c = isH3cFast() ||
+                (!cachedH3c.isNullOrBlank() && failedUrl.contains(cachedH3c.trimEnd('/'))) ||
                 failedUrl.contains("154.8.195.220")
         val isFailedLan = isLan() && (failedUrl.contains(effectiveLanUrl.trimEnd('/')) || failedUrl.contains(effectiveLanHost))
 
         if (isFailedH3c) {
-            android.util.Log.w(TAG, "Active H3C tunnel failed: $failedUrl. Clearing cached H3C and falling back to Remote Tunnel")
+            android.util.Log.w(TAG, "Active H3C tunnel failed: $failedUrl (isH3cFast=${isH3cFast()}). Clearing cached H3C and falling back")
             prefs.edit().remove(KEY_H3C_URL).putString(KEY_LAST_RESOLVED_URL, REMOTE_URL).apply()
-            resolved = REMOTE_URL
+            val fallback = when {
+                preference == NetworkPathPreference.LAN -> effectiveLanUrl
+                ENABLE_IPV6 && (preference == NetworkPathPreference.IPV6_DIRECT || ipv6DirectAvailable) -> IPV6_DIRECT_URL
+                else -> REMOTE_URL
+            }
+            resolved = fallback
             lastRttMs = -1L
             lastProbedAt = 0L
-            onUrlChanged?.invoke(REMOTE_URL)
+            onUrlChanged?.invoke(fallback)
             forceProbe()
         } else if (isFailedLan) {
             android.util.Log.w(TAG, "Active LAN path failed: $failedUrl. Falling back to Remote / H3C")

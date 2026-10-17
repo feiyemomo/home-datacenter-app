@@ -78,7 +78,7 @@ object NetworkFactory {
 
         // DynamicBaseUrlInterceptor: dynamically rewrites requests to current active base URL
         if (baseUrlProvider != null) {
-            builder.addInterceptor(DynamicBaseUrlInterceptor(baseUrlProvider))
+            builder.addInterceptor(DynamicBaseUrlInterceptor(baseUrlProvider, baseUrlResolver))
         }
 
         // 仅 DEBUG 构建挂载日志中间件

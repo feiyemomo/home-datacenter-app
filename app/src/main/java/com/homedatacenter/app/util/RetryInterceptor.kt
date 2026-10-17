@@ -52,17 +52,25 @@ class RetryInterceptor(
         // probe handles recovery; retrying here only burns battery and
         // blocks UI loaders for ~2.8s per request.
         val attempts = if (baseUrlResolver?.serverReachable == false) 1 else maxRetries
+        var previousResolved = baseUrlResolver?.current()
 
         for (attempt in 0 until attempts) {
             if (attempt > 0) {
-                // Exponential backoff: 400ms, 800ms, 1600ms
-                val delayMs = (1L shl (attempt - 1)) * 400L
-                Log.d(TAG, "Retry #$attempt for ${request.url.encodedPath} in ${delayMs}ms")
-                try {
-                    backoff(delayMs)
-                } catch (e: InterruptedException) {
-                    Thread.currentThread().interrupt()
-                    throw IOException("Retry interrupted", e)
+                val currentUrl = baseUrlResolver?.current()
+                val pathChanged = currentUrl != null && previousResolved != null && currentUrl != previousResolved
+                if (pathChanged) {
+                    Log.i(TAG, "Base URL failed over from $previousResolved to $currentUrl; retrying immediately without backoff")
+                    previousResolved = currentUrl
+                } else {
+                    // Exponential backoff: 400ms, 800ms, 1600ms
+                    val delayMs = (1L shl (attempt - 1)) * 400L
+                    Log.d(TAG, "Retry #$attempt for ${request.url.encodedPath} in ${delayMs}ms")
+                    try {
+                        backoff(delayMs)
+                    } catch (e: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        throw IOException("Retry interrupted", e)
+                    }
                 }
             }
 
@@ -87,8 +95,8 @@ class RetryInterceptor(
                         response.close()
                     }
                     Log.w(TAG, "Attempt #${attempt + 1} for ${request.url.encodedPath} returned ${response.code}")
-                    // On 502/503/504 (bad gateway or gateway timeout), notify resolver to failover
-                    if (attempt == 0 && (response.code == 502 || response.code == 503 || response.code == 504)) {
+                    // On 502/503/504 (bad gateway or gateway timeout), or ANY 5xx while on H3C, notify resolver to failover
+                    if (attempt == 0 && (response.code == 502 || response.code == 503 || response.code == 504 || baseUrlResolver?.isH3cFast() == true)) {
                         baseUrlResolver?.notifyUrlFailed(request.url.toString())
                     }
                     continue

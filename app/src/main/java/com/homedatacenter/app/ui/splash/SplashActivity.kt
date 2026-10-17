@@ -149,20 +149,27 @@ class SplashActivity : AppCompatActivity() {
         val repository = container.getRepository()
         val api = container.getApi()
         val cacheManager = CacheManager.getInstance(this)
-        val bearer = "Bearer $token"
+
+        // 1. Ensure token auto-refresh runs and settles first so concurrent requests
+        // do not hit 401 simultaneously and race with token refresh.
+        val tokenRefreshJob = prefetchScope.launch {
+            try {
+                container.tryAutoRefreshToken(force = true)?.join()
+                Log.d(TAG, "Prefetched token auto-refresh")
+            } catch (e: Exception) {
+                Log.w(TAG, "Prefetch token refresh failed: ${e.message}")
+            }
+        }
+
+        fun currentToken(): String = container.prefsManager.token ?: token
 
         return listOf(
+            tokenRefreshJob,
             prefetchScope.launch {
                 try {
-                    container.tryAutoRefreshToken(force = true)?.join()
-                    Log.d(TAG, "Prefetched token auto-refresh")
-                } catch (e: Exception) {
-                    Log.w(TAG, "Prefetch token refresh failed: ${e.message}")
-                }
-            },
-            prefetchScope.launch {
-                try {
-                    val status = repository.getSystemStatus(token, useCache = true)
+                    tokenRefreshJob.join()
+                    val curToken = currentToken()
+                    val status = repository.getSystemStatus(curToken, useCache = true)
                     cacheManager.set("dashboard.status", status)
                     Log.d(TAG, "Prefetched dashboard.status")
                 } catch (e: Exception) {
@@ -171,7 +178,9 @@ class SplashActivity : AppCompatActivity() {
             },
             prefetchScope.launch {
                 try {
-                    val weather = repository.getWeather(token)
+                    tokenRefreshJob.join()
+                    val curToken = currentToken()
+                    val weather = repository.getWeather(curToken)
                     if (weather != null) {
                         cacheManager.set("dashboard.weather", weather)
                         Log.d(TAG, "Prefetched dashboard.weather")
@@ -182,7 +191,9 @@ class SplashActivity : AppCompatActivity() {
             },
             prefetchScope.launch {
                 try {
-                    val netStatus = repository.getNetworkStatus(token, refresh = false)
+                    tokenRefreshJob.join()
+                    val curToken = currentToken()
+                    val netStatus = repository.getNetworkStatus(curToken, refresh = false)
                     cacheManager.set("network.status", netStatus)
                     Log.d(TAG, "Prefetched network.status")
                 } catch (e: Exception) {
@@ -191,7 +202,9 @@ class SplashActivity : AppCompatActivity() {
             },
             prefetchScope.launch {
                 try {
-                    val resp = api.listAlerts(bearer, limit = 10)
+                    tokenRefreshJob.join()
+                    val curToken = currentToken()
+                    val resp = api.listAlerts("Bearer $curToken", limit = 10)
                     val alerts = if (resp.isSuccess) {
                         resp.decodeData<AlertListData>()?.alerts ?: emptyList()
                     } else {
@@ -205,25 +218,30 @@ class SplashActivity : AppCompatActivity() {
             },
             prefetchScope.launch {
                 try {
-                    val cameras = repository.listCameras(token, useCache = true)
+                    tokenRefreshJob.join()
+                    val curToken = currentToken()
+                    val cameras = repository.listCameras(curToken, useCache = true)
                     cacheManager.set("cameras.list", cameras)
                     Log.d(TAG, "Prefetched cameras.list (${cameras.size})")
-                    // v1.10.1: warm top 3 online cameras to avoid connection pool starvation.
-                    // Fire-and-forget — launched on fresh child jobs so joinAll()
-                    // never blocks on them.
+                    // Warm top 3 online cameras using container scope so preheat survives SplashActivity destruction
                     for (cam in cameras.filter { it.isOnline }.take(3)) {
-                        prefetchScope.launch {
-                            repository.preheatCamera(token, cam.id)
+                        container.warmScope.launch {
+                            try {
+                                repository.preheatCamera(container.prefsManager.token ?: curToken, cam.id)
+                                Log.d(TAG, "Preheated camera ${cam.id}")
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Preheat camera ${cam.id} failed: ${e.message}")
+                            }
                         }
                     }
                 } catch (e: Exception) {
                     Log.w(TAG, "Prefetch cameras.list failed: ${e.message}")
                 }
             },
-            // v1.8.21: check for app updates in parallel with the
-            // dashboard prefetch.
+            // v1.8.21: check for app updates in parallel with the dashboard prefetch.
             prefetchScope.launch {
                 try {
+                    tokenRefreshJob.join()
                     container.checkUpdateOnStartup()
                     Log.d(TAG, "Update check completed")
                 } catch (e: Exception) {

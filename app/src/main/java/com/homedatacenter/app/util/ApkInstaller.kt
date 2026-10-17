@@ -379,4 +379,69 @@ object ApkInstaller {
         }
         return 0
     }
+
+    /**
+     * Parse semantic version string to backend-derived synthetic code:
+     * "1.6.12" -> 1*10000 + 6*100 + 12 = 10612.
+     * Returns 0 if string is not in MAJOR.MINOR.PATCH format.
+     */
+    fun parseVersionCode(versionName: String): Int {
+        val parts = versionName.split(".")
+        if (parts.size != 3) return 0
+        val major = parts[0].toIntOrNull() ?: return 0
+        val minor = parts[1].toIntOrNull() ?: return 0
+        val patch = parts[2].toIntOrNull() ?: return 0
+        return major * 10000 + minor * 100 + patch
+    }
+
+    /**
+     * Determines whether an update is available comparing both versionCode and versionName.
+     *
+     * 1. If remoteVersionCode is positive and both versions are positive:
+     *    Checks if remoteVersionCode was derived from versionName (major*10000 + minor*100 + patch)
+     *    while installed is a flat integer (< 10000). If so, uses semantic versionName comparison
+     *    to avoid perpetual update prompts.
+     *    Otherwise, uses versionCode as the primary monotonic check (e.g. build hotfix 195 > 194
+     *    with identical versionName).
+     * 2. Uses semantic versionName comparison as companion/fallback when versionCodes are equal
+     *    or unavailable.
+     */
+    fun hasUpdate(
+        installedVersionCode: Int,
+        installedVersionName: String,
+        remoteVersionCode: Int,
+        remoteVersionName: String,
+    ): Boolean {
+        val nameCmp = compareVersions(remoteVersionName, installedVersionName)
+
+        if (remoteVersionCode > 0 && installedVersionCode > 0) {
+            val derived = parseVersionCode(remoteVersionName)
+            val isRemoteDerived = derived > 0 && remoteVersionCode == derived
+            val isInstalledFlat = installedVersionCode < 10000
+
+            // If backend returned derived versionCode (scale mismatch with flat installed versionCode)
+            if (isRemoteDerived && isInstalledFlat) {
+                // Use semantic versionName comparison to avoid perpetual update prompts
+                return nameCmp > 0
+            }
+
+            // Otherwise, versionCode is on a consistent scale: use as primary monotonic check
+            if (remoteVersionCode > installedVersionCode) {
+                return true
+            } else if (remoteVersionCode < installedVersionCode) {
+                return false
+            }
+            // Same versionCode: fall back to semantic versionName comparison
+            return nameCmp > 0
+        }
+
+        // Companion / fallback: semantic versionName comparison
+        return nameCmp > 0
+    }
+
+    fun hasUpdate(context: Context, info: UpdateInfo): Boolean {
+        val installedCode = installedVersionCode(context)
+        val installedName = installedVersionName(context)
+        return hasUpdate(installedCode, installedName, info.version_code, info.version_name)
+    }
 }
