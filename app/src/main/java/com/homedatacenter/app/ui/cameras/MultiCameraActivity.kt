@@ -63,6 +63,9 @@ class MultiCameraActivity : AppCompatActivity() {
     /** Last height applied to the grid rows, to avoid layout churn. */
     private var lastRowHeightPx: Int = -1
 
+    /** True while the rows are stretched to fill (single-camera mode). */
+    private var rowsFill: Boolean = true
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMultiCameraBinding.inflate(layoutInflater)
@@ -173,11 +176,29 @@ class MultiCameraActivity : AppCompatActivity() {
      */
     private fun applyGridRowHeights() {
         val container = binding.slotsContainer
-        val columns = when (currentGridMode) {
-            GridMode.ONE -> 1
-            GridMode.FOUR -> 2
-            GridMode.NINE -> 3
+        val rows = listOf(binding.row0, binding.row1, binding.row2)
+
+        // The focused single-camera view deliberately fills the whole
+        // screen: the 适应/填充 (fit / fill) toggle only has a visible
+        // effect when the container is taller than the 16:9 stream.
+        // Giving it an aspect-correct row would silently turn that
+        // toggle into a no-op, so leave 1-grid mode stretched.
+        if (currentGridMode == GridMode.ONE) {
+            if (rowsFill) return
+            rowsFill = true
+            lastRowHeightPx = -1
+            for (row in rows) {
+                val lp = row.layoutParams as? LinearLayout.LayoutParams ?: continue
+                if (lp.height == 0 && lp.weight == 1f) continue
+                lp.height = 0
+                lp.weight = 1f
+                row.layoutParams = lp
+            }
+            container.gravity = Gravity.TOP
+            return
         }
+
+        val columns = if (currentGridMode == GridMode.FOUR) 2 else 3
         val availableWidth = container.width - container.paddingLeft - container.paddingRight
         if (availableWidth <= 0) return
 
@@ -193,10 +214,11 @@ class MultiCameraActivity : AppCompatActivity() {
         if (tileWidth <= 0) return
 
         val rowHeight = (tileWidth * 9f / 16f).toInt()
-        if (rowHeight == lastRowHeightPx) return
+        if (!rowsFill && rowHeight == lastRowHeightPx) return
+        rowsFill = false
         lastRowHeightPx = rowHeight
 
-        for (row in listOf(binding.row0, binding.row1, binding.row2)) {
+        for (row in rows) {
             val lp = row.layoutParams as? LinearLayout.LayoutParams ?: continue
             if (lp.height == rowHeight && lp.weight == 0f) continue
             lp.height = rowHeight
