@@ -109,10 +109,6 @@ class UsersActivity : AppCompatActivity() {
                 toast("请设置密码")
                 return@setOnClickListener
             }
-            if (!Regex("^[A-Za-z0-9]+$").matches(password)) {
-                toast("密码仅限字母和数字")
-                return@setOnClickListener
-            }
 
             dialog.dismiss()
             lifecycleScope.launch {

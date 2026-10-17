@@ -101,6 +101,8 @@ class CameraDetailActivity : AppCompatActivity() {
     // delay. Released on WebRTC success (onConnected) and in
     // releaseExoPlayerOnly.
     private var fallbackPlayer: ExoPlayer? = null
+    private var silentFallbackJob: kotlinx.coroutines.Job? = null
+    private var previewFrameJob: kotlinx.coroutines.Job? = null
     private var triedWebRtc = false
     private var triedMp4 = false
     private var triedHls = false
@@ -669,6 +671,8 @@ class CameraDetailActivity : AppCompatActivity() {
         // `player` above. Covers releasePlayer / onPause / onDestroy.
         val fb = fallbackPlayer
         fallbackPlayer = null
+        silentFallbackJob?.cancel()
+        silentFallbackJob = null
         fb?.release()
         // Reset fallback ladder flags so reload retries WebRTC first.
         triedMp4 = false
@@ -1567,17 +1571,14 @@ class CameraDetailActivity : AppCompatActivity() {
         // the full-resolution frame is never needed for a placeholder.
         val url = "${baseUrl.trimEnd('/')}/api/v1/cameras/${cam.id}/frame?quality=30&width=640"
 
-        lifecycleScope.launch {
-            // v1.7.3: retry up to 2 times on failure to cover go2rtc cold start
-            // (ffmpeg producer connecting to RTSP source). Each retry waits 3s.
+        previewFrameJob?.cancel()
+        previewFrameJob = lifecycleScope.launch {
+            // Retry up to 3 times with faster 1.5s interval to quickly show placeholder frame
             var bitmap: android.graphics.Bitmap? = null
             for (attempt in 0..2) {
-                if (isFinishing) return@launch
+                if (isFinishing || isDestroyed) return@launch
                 try {
                     bitmap = withContext(Dispatchers.IO) {
-                        // v1.6.16: use the shared OkHttpClient so this request
-                        // reuses the connection pool/interceptors that
-                        // BaseUrlResolver.warmupConnection already warmed.
                         val request = okhttp3.Request.Builder()
                             .url(url)
                             .header("User-Agent", NetworkFactory.USER_AGENT)
@@ -1592,16 +1593,21 @@ class CameraDetailActivity : AppCompatActivity() {
                     }
                     if (bitmap != null) break
                 } catch (e: Exception) {
-                    // Preview frame is best-effort; log and retry if attempts remain.
                     android.util.Log.w(TAG, "Preview frame fetch attempt ${attempt + 1} failed: ${e.message}")
                 }
                 if (attempt < 2 && bitmap == null) {
-                    delay(3000)
+                    delay(1500)
                 }
             }
-            if (bitmap != null && !isFinishing) {
-                binding.ivPreviewFrame.setImageBitmap(bitmap)
-                binding.ivPreviewFrame.visibility = View.VISIBLE
+            if (bitmap != null && !isFinishing && !isDestroyed) {
+                // Only show if real video hasn't arrived yet
+                val isRealVideoPlaying = (webRtcClient?.hasActiveStream() == true && webRtcClient?.isConnected() == true) ||
+                        (player != null && player?.playbackState == Player.STATE_READY)
+                if (!isRealVideoPlaying) {
+                    binding.ivPreviewFrame.setImageBitmap(bitmap)
+                    binding.ivPreviewFrame.visibility = View.VISIBLE
+                    binding.ivPreviewFrame.bringToFront()
+                }
             }
         }
     }
@@ -1617,9 +1623,9 @@ class CameraDetailActivity : AppCompatActivity() {
     private fun startPlayback() {
         if (isFinishing || isDestroyed || isBackNavigating) return
         val cam = camera ?: return
-        // Reset the fallback ladder. The reload button should always
-        // try WebRTC first (it's the lowest-latency transport and the
-        // one the user explicitly asked for in v1.5.3).
+        silentFallbackJob?.cancel()
+        silentFallbackJob = null
+        loadPreviewFrame()
         triedWebRtc = false
         triedMp4 = false
         triedHls = false
@@ -1904,6 +1910,17 @@ class CameraDetailActivity : AppCompatActivity() {
             }
             android.util.Log.d(TAG, "WebRTC ICE servers: ${iceServers.size} (directPath=$isDirectPath)")
 
+            // Start a 4.0s background silent fallback timer. If WebRTC doesn't connect within 4s,
+            // prepare the MP4/HLS fallback in the background and promote it as soon as WebRTC fails.
+            silentFallbackJob?.cancel()
+            silentFallbackJob = lifecycleScope.launch {
+                delay(4_000L)
+                if (webRtcInProgress && !isFinishing && !isDestroyed && fallbackPlayer == null) {
+                    android.util.Log.i(TAG, "WebRTC not connected after 4.0s: silently pre-preparing fallback player...")
+                    prepareFallbackPlayer(cam)
+                }
+            }
+
             client.setAudioEnabled(audioEnabled && !webRtcMuted)
             client.startStream(
                 cameraId = cam.id,
@@ -1915,6 +1932,8 @@ class CameraDetailActivity : AppCompatActivity() {
                 listener = object : WebRtcClient.Listener {
                     override fun onConnected() {
                         webRtcInProgress = false
+                        silentFallbackJob?.cancel()
+                        silentFallbackJob = null
                         if (isFinishing || isDestroyed || isBackNavigating) {
                             client.stopPlayoutImmediately()
                             client.setAudioEnabled(false)
@@ -1953,6 +1972,8 @@ class CameraDetailActivity : AppCompatActivity() {
 
                     override fun onError(reason: String) {
                         webRtcInProgress = false
+                        silentFallbackJob?.cancel()
+                        silentFallbackJob = null
                         if (isFinishing || isDestroyed || isBackNavigating) {
                             fallbackPlayer?.release()
                             fallbackPlayer = null
@@ -1973,6 +1994,11 @@ class CameraDetailActivity : AppCompatActivity() {
                         binding.btnWebRtcFullscreen.visibility = View.GONE
                         binding.playerView.visibility = View.VISIBLE
                         binding.progressVideo.visibility = View.VISIBLE
+
+                        // If we already pre-prepared the fallback player silently, promote it immediately
+                        if (promoteFallbackPlayer(cam)) {
+                            return
+                        }
 
                         // Clean up stale fallback player: unconsumed HLS sessions in go2rtc expire
                         // in 5s, so a pre-prepared session is already dead (404) when WebRTC times out.
@@ -1997,6 +2023,36 @@ class CameraDetailActivity : AppCompatActivity() {
      * method so [startWebRtcStream]'s onError callback can resume
      * the fallback ladder cleanly.
      */
+    private fun promoteFallbackPlayer(cam: Camera): Boolean {
+        val fb = fallbackPlayer ?: return false
+        fallbackPlayer = null
+        releaseExoPlayerOnly()
+        player = fb
+        binding.playerView.player = fb
+
+        val mp4Url = resolveMp4Url(cam)
+        val hlsUrl = resolveHlsUrl(cam)
+        val isDirectPath = container.baseUrlResolver.isDirectPath()
+        val useMp4 = when {
+            isDirectPath -> mp4Url.isNotBlank()
+            hlsUrl.isNotBlank() -> false
+            else -> mp4Url.isNotBlank()
+        }
+        updateStreamStrategy(if (useMp4) "MP4" else "HLS")
+
+        fb.playWhenReady = true
+        fb.volume = if (audioEnabled && !webRtcMuted) 1.0f else 0.0f
+        if (fb.playbackState == Player.STATE_READY) {
+            binding.progressVideo.visibility = View.GONE
+            binding.tvVideoError.visibility = View.GONE
+            binding.surfaceRenderer.visibility = View.GONE
+            hidePreviewFrame()
+            updatePipParams()
+        }
+        android.util.Log.i(TAG, "Promoted pre-prepared fallback player immediately on WebRTC failure")
+        return true
+    }
+
     private fun startMp4Playback(cam: Camera) {
         if (isFinishing || isDestroyed || isBackNavigating) return
         val mp4Url = resolveMp4Url(cam)

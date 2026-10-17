@@ -727,15 +727,12 @@ class WebRtcClient(
         }
         return PeerConnection.RTCConfiguration(filteredServers).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
-            // v1.13.19: GATHER_CONTINUALLY allows dynamic candidate adaptation during
-            // network handovers and transient NAT re-mapping, preventing video freeze.
+            // In WHEP (HTTP single exchange) we gather candidates for the initial offer.
             continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
             iceConnectionReceivingTimeout = 4000
-            tcpCandidatePolicy = if (isLan && !overlayBase) {
-                PeerConnection.TcpCandidatePolicy.DISABLED
-            } else {
-                PeerConnection.TcpCandidatePolicy.ENABLED
-            }
+            // Enable TCP candidates unconditionally so go2rtc's TCP 8555 candidate
+            // can pair when UDP is firewalled or NAT-isolated.
+            tcpCandidatePolicy = PeerConnection.TcpCandidatePolicy.ENABLED
             rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE
         }
     }
@@ -1102,11 +1099,8 @@ class WebRtcClient(
         // (host-candidate ICE completes in <500ms).
         watchdogJob?.cancel()
         if (!connectedOrFailed) {
-            // v1.14.2: restore the v1.14.0 budgets (4s LAN, 7s remote). v1.14.1's
-            // 3.5s/4.5s was shorter than a typical TCP-relay ICE check over the H3C
-            // tunnel (DTLS + first keyframe over TCP often lands at 4-6s), so live
-            // view fell back to MP4 even when WebRTC would have connected.
-            val connectTimeoutMs = if (isLan) 4_000L else 7_000L
+            // Fast failover watchdog: 4.5s for LAN, 6s for remote tunnel.
+            val connectTimeoutMs = if (isLan) 4_500L else 6_000L
             watchdogJob = scope.launch {
                 delay(connectTimeoutMs)
                 if (!connectedOrFailed && activeListener === listener) {

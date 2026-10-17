@@ -66,6 +66,16 @@
                         app:show_buffering="when_playing"
                         app:show_timeout="3000" />
 
+                    <!-- WebRTC surface: shown when the live stream is delivered
+                         via WebRtcClient (v1.5.3 primary path). Hidden when the
+                         ExoPlayer MP4/HLS fallback is active. -->
+                    <com.homedatacenter.app.ui.cameras.SafeSurfaceViewRenderer
+                        android:id="@+id/surfaceRenderer"
+                        android:layout_width="match_parent"
+                        android:layout_height="200dp"
+                        android:layout_gravity="center"
+                        android:visibility="gone" />
+
                     <!-- v1.6.16: JPEG preview frame shown immediately while
                          WebRTC/MP4 is connecting. Mirrors the web dashboard's
                          strategy of showing a cheap JPEG frame (/api/v1/cameras/:id/frame)
@@ -80,16 +90,6 @@
                         android:layout_gravity="center"
                         android:scaleType="centerCrop"
                         android:background="@android:color/black"
-                        android:visibility="gone" />
-
-                    <!-- WebRTC surface: shown when the live stream is delivered
-                         via WebRtcClient (v1.5.3 primary path). Hidden when the
-                         ExoPlayer MP4/HLS fallback is active. -->
-                    <com.homedatacenter.app.ui.cameras.SafeSurfaceViewRenderer
-                        android:id="@+id/surfaceRenderer"
-                        android:layout_width="match_parent"
-                        android:layout_height="200dp"
-                        android:layout_gravity="center"
                         android:visibility="gone" />
                 </FrameLayout>
             </com.homedatacenter.app.ui.cameras.PinchToZoomFrameLayout>

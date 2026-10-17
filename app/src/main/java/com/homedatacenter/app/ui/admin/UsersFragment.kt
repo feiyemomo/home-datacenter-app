@@ -110,7 +110,7 @@ class UsersFragment : Fragment() {
         }
         val etName = EditText(requireContext()).apply { hint = getString(R.string.user_name_label) }
         val etPassword = EditText(requireContext()).apply {
-            hint = "密码（仅限字母和数字）"
+            hint = "密码（支持特殊符号）"
             inputType = android.text.InputType.TYPE_CLASS_TEXT
         }
         val cbAdmin = CheckBox(requireContext()).apply { text = getString(R.string.user_admin_label) }
@@ -132,10 +132,6 @@ class UsersFragment : Fragment() {
         val password = etPassword.text.toString()
         if (password.isEmpty()) {
             toast("请设置密码")
-            return@setPositiveButton
-        }
-        if (!Regex("^[A-Za-z0-9]+$").matches(password)) {
-            toast("密码仅限字母和数字")
             return@setPositiveButton
         }
                 lifecycleScope.launch {
