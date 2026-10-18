@@ -32,6 +32,7 @@ class TokenManager(
     private val json = Json { ignoreUnknownKeys = true }
 
     private val bindClient = OkHttpClient.Builder()
+        .dns(Ipv4FirstDns)
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
         .writeTimeout(15, TimeUnit.SECONDS)

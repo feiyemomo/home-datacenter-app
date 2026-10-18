@@ -103,6 +103,9 @@ class CameraDetailActivity : AppCompatActivity() {
     private var fallbackPlayer: ExoPlayer? = null
     private var silentFallbackJob: kotlinx.coroutines.Job? = null
     private var previewFrameJob: kotlinx.coroutines.Job? = null
+    // One-shot listener that un-hides the JPEG preview when WebRTC
+    // renders its first frame (see hidePreviewOnFirstFrame).
+    private var firstFrameListener: org.webrtc.EglRenderer.FrameListener? = null
     private var triedWebRtc = false
     private var triedMp4 = false
     private var triedHls = false
@@ -195,6 +198,7 @@ class CameraDetailActivity : AppCompatActivity() {
         isBackNavigating = true
         streamRetryJob?.cancel()
         streamRetryJob = null
+        removeFirstFrameListener()
         webRtcClient?.stopPlayoutImmediately()
         webRtcClient?.setAudioEnabled(false)
         player?.pause()
@@ -651,6 +655,7 @@ class CameraDetailActivity : AppCompatActivity() {
         alertsDialog?.dismiss()
         recordingsDialog = null
         alertsDialog = null
+        removeFirstFrameListener()
         try { binding.surfaceRenderer.release() } catch (_: Exception) {}
         try { webRtcClient?.release() } catch (_: Exception) {}
     }
@@ -1620,6 +1625,48 @@ class CameraDetailActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Hides the preview only after WebRTC has painted its first frame.
+     *
+     * It used to be hidden when ICE reached CONNECTED, but the decoder
+     * needs another 200–500 ms to produce a picture — during that window
+     * the user saw the black SurfaceView (the "闪黑屏" when opening a
+     * camera). The renderer's frame listener fires on the first rendered
+     * frame, then unregisters itself so no per-frame bitmap copies are
+     * wasted.
+     */
+    private fun hidePreviewOnFirstFrame() {
+        removeFirstFrameListener()
+        val renderer = binding.surfaceRenderer
+        val listener = object : org.webrtc.EglRenderer.FrameListener {
+            override fun onFrame(frame: android.graphics.Bitmap?) {
+                removeFirstFrameListener()
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    binding.progressVideo.visibility = View.GONE
+                    hidePreviewFrame()
+                }
+            }
+        }
+        firstFrameListener = listener
+        try {
+            renderer.addFrameListener(listener, 1.0f)
+        } catch (e: Exception) {
+            android.util.Log.w(TAG, "addFrameListener failed: ${e.message}")
+            binding.progressVideo.visibility = View.GONE
+            hidePreviewFrame()
+        }
+    }
+
+    private fun removeFirstFrameListener() {
+        val listener = firstFrameListener ?: return
+        firstFrameListener = null
+        try {
+            binding.surfaceRenderer.removeFrameListener(listener)
+        } catch (_: Exception) {
+        }
+    }
+
     private fun startPlayback() {
         if (isFinishing || isDestroyed || isBackNavigating) return
         val cam = camera ?: return
@@ -1951,9 +1998,11 @@ class CameraDetailActivity : AppCompatActivity() {
                         binding.tvVideoError.text = getString(R.string.camera_video_failed)
                         binding.progressVideo.visibility = View.GONE
                         binding.tvVideoError.visibility = View.GONE
-                        // v1.6.16: hide the JPEG preview frame once the
-                        // real WebRTC video surface is live.
-                        hidePreviewFrame()
+                        // Hide the JPEG preview only once WebRTC has
+                        // actually painted a frame — hiding it here
+                        // exposed the still-black SurfaceView for a
+                        // few hundred milliseconds.
+                        hidePreviewOnFirstFrame()
                         // WebRTC succeeded: release the pre-prepared
                         // fallback player — it's no longer needed.
                         fallbackPlayer?.release()

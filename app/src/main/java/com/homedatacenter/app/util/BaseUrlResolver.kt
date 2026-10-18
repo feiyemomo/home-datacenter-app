@@ -426,44 +426,93 @@ class BaseUrlResolver(
     }
 
     private fun fetchH3cUrl(): String? {
-        val fastClient = client.newBuilder()
-            .callTimeout(6_000, TimeUnit.MILLISECONDS)
-            .connectTimeout(5_000, TimeUnit.MILLISECONDS)
-            .readTimeout(5_000, TimeUnit.MILLISECONDS)
-            .build()
-        // NEVER query stale cached dynamic port for /fast-status — if the port rotated,
-        // connecting to it stalls for TCP SYN timeout (3s) and exhausts the discovery deadline!
-        val urlsToTry = listOf(
-            "${REMOTE_URL.trimEnd('/')}/fast-status",
-            "https://dashboard.feiyemomo.top/fast-status"
-        ).distinct()
+        // Discovery has to work even when the configured REMOTE_URL is
+        // unreachable, because that is exactly the situation the tunnel
+        // exists for. Three sources are raced in parallel and the first
+        // valid answer wins:
+        //
+        //   1. /fast-status through the *cached* tunnel address. nginx
+        //      serves this route, so the tunnel can hand out its own
+        //      current port — this is what makes recovery work when the
+        //      Cloudflare hosts are blocked/slow (they resolve to IPv6
+        //      addresses that time out on some carriers).
+        //   2. /fast-status on REMOTE_URL.
+        //   3. /fast-status on the dashboard host.
+        //
+        // Racing instead of sequencing means a stale cached port (3s
+        // SYN timeout) can no longer eat the whole discovery budget.
+        val cached = getCachedH3cUrl()?.trimEnd('/')
+        val urlsToTry = buildList {
+            if (!cached.isNullOrBlank()) add("$cached/fast-status")
+            add("${REMOTE_URL.trimEnd('/')}/fast-status")
+            add("https://dashboard.feiyemomo.top/fast-status")
+        }.distinct()
+
+        val winner = java.util.concurrent.atomic.AtomicReference<String?>(null)
+        val latch = java.util.concurrent.CountDownLatch(urlsToTry.size)
         for (u in urlsToTry) {
-            val req = Request.Builder()
-                .url(u)
-                .header("X-Probe-Request", "true")
-                .get()
-                .build()
-            try {
-                fastClient.newCall(req).execute().use { resp ->
-                    if (resp.isSuccessful) {
-                        val body = resp.body?.string() ?: return@use
-                        val json = org.json.JSONObject(body)
-                        if (json.optString("status") == "online") {
-                            val addr = json.optString("externalAddr")
-                            if (addr.isNotBlank()) {
-                                val normalized = if (addr.endsWith("/")) addr else "$addr/"
-                                prefs.edit().putString(KEY_H3C_URL, normalized).apply()
-                                android.util.Log.i(TAG, "Discovered fresh H3C Domestic Gateway via $u: $normalized")
-                                return normalized
-                            }
-                        }
+            Thread {
+                try {
+                    if (winner.get() == null) {
+                        fetchFastStatus(u)?.let { winner.compareAndSet(null, it) }
                     }
+                } catch (_: Exception) {
+                } finally {
+                    latch.countDown()
                 }
-            } catch (e: Exception) {
-                android.util.Log.w(TAG, "fetchH3cUrl via $u failed: ${e.message}")
+            }.apply {
+                isDaemon = true
+                name = "h3c-discovery"
+                start()
             }
         }
-        return null
+        try {
+            // Return as soon as any source answers — waiting for the
+            // full latch would add the slowest timeout to every probe.
+            val deadlineAt = System.currentTimeMillis() + 7_000L
+            while (winner.get() == null && latch.count > 0L &&
+                System.currentTimeMillis() < deadlineAt
+            ) {
+                latch.await(30, TimeUnit.MILLISECONDS)
+            }
+        } catch (_: InterruptedException) {
+        }
+
+        val found = winner.get() ?: return null
+        val normalized = if (found.endsWith("/")) found else "$found/"
+        // Only touch SharedPreferences when the address actually
+        // changed — discovery runs on every probe (~1/min).
+        if (getCachedH3cUrl() != normalized) {
+            prefs.edit().putString(KEY_H3C_URL, normalized).apply()
+        }
+        android.util.Log.i(TAG, "Discovered fresh H3C Domestic Gateway: $normalized")
+        return normalized
+    }
+
+    /** One /fast-status call. Returns the tunnel address, or null. */
+    private fun fetchFastStatus(url: String): String? {
+        val req = Request.Builder()
+            .url(url)
+            .header("X-Probe-Request", "true")
+            .get()
+            .build()
+        val fastClient = client.newBuilder()
+            .callTimeout(5_000, TimeUnit.MILLISECONDS)
+            .connectTimeout(4_000, TimeUnit.MILLISECONDS)
+            .readTimeout(5_000, TimeUnit.MILLISECONDS)
+            .build()
+        return try {
+            fastClient.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return null
+                val body = resp.body?.string() ?: return null
+                val json = org.json.JSONObject(body)
+                if (json.optString("status") != "online") return null
+                json.optString("externalAddr").takeIf { it.isNotBlank() }
+            }
+        } catch (e: Exception) {
+            android.util.Log.w(TAG, "fetchH3cUrl via $url failed: ${e.message}")
+            null
+        }
     }
 
     /**
@@ -485,18 +534,22 @@ class BaseUrlResolver(
         val isFailedLan = isLan() && (failedUrl.contains(effectiveLanUrl.trimEnd('/')) || failedUrl.contains(effectiveLanHost))
 
         if (isFailedH3c) {
-            android.util.Log.w(TAG, "Active H3C tunnel failed: $failedUrl (isH3cFast=${isH3cFast()}). Clearing cached H3C and falling back")
-            prefs.edit().remove(KEY_H3C_URL).putString(KEY_LAST_RESOLVED_URL, REMOTE_URL).apply()
-            val fallback = when {
-                preference == NetworkPathPreference.LAN -> effectiveLanUrl
-                ENABLE_IPV6 && (preference == NetworkPathPreference.IPV6_DIRECT || ipv6DirectAvailable) -> IPV6_DIRECT_URL
-                else -> REMOTE_URL
-            }
-            resolved = fallback
-            lastRttMs = -1L
+            // A single failed request is not proof that the tunnel is
+            // gone — the H3C public port only rotates every few hours,
+            // and a timed-out thumbnail or a WebSocket reconnect would
+            // otherwise knock the app off its only working path. Worse,
+            // it used to drop the cached address and fall back to
+            // REMOTE_URL, which is unreachable on carriers that cannot
+            // reach the Cloudflare hosts — and /fast-status (the only
+            // way to learn a new port) lives on that same dead host, so
+            // there was no way back.
+            //
+            // Keep the cache, keep the current path, and let a fresh
+            // probe decide between LAN / IPv6 / tunnel / remote.
+            android.util.Log.w(TAG, "H3C request failed: $failedUrl (isH3cFast=${isH3cFast()}); re-probing instead of dropping the cached tunnel")
             lastProbedAt = 0L
-            onUrlChanged?.invoke(fallback)
             forceProbe()
+            return
         } else if (isFailedLan) {
             android.util.Log.w(TAG, "Active LAN path failed: $failedUrl. Falling back to Remote / H3C")
             val fallback = if (!cachedH3c.isNullOrBlank()) cachedH3c else REMOTE_URL
@@ -791,26 +844,29 @@ class BaseUrlResolver(
                         }
                     }
                     val h3cDeferred = async(Dispatchers.IO) {
-                        var candidate = getCachedH3cUrl()
-                        if (candidate.isNullOrBlank()) {
-                            candidate = fetchH3cUrl()
-                        }
+                        // Always run discovery, even when an address is
+                        // already cached: fetchH3cUrl() races
+                        // /fast-status on the cached tunnel itself (it
+                        // can hand out its own current port), so this is
+                        // how a rotated H3C port is picked up while the
+                        // old mapping is still alive. On this network
+                        // the Cloudflare hosts cannot be reached at all
+                        // (TCP 443/80 blocked, ICMP passes), so the
+                        // tunnel is the only source of truth.
+                        val candidate = fetchH3cUrl()
                         if (!candidate.isNullOrBlank()) {
-                            // Give domestic tunnel candidate a proper probe timeout (H3C_TIMEOUT_MS = 3s).
-                            // A tight 1.2s timeout often false-drops on 5G radio cold start (RRC state transition).
-                            var r = probeUrl(candidate, H3C_TIMEOUT_MS)
-                            if (!r.alive) {
-                                android.util.Log.w(TAG, "H3C candidate $candidate unreachable; invalidating cache and fetching fresh endpoint")
-                                prefs.edit().remove(KEY_H3C_URL).apply()
-                                val fresh = fetchH3cUrl()
-                                if (!fresh.isNullOrBlank()) {
-                                    candidate = fresh
-                                    r = probeUrl(fresh, H3C_TIMEOUT_MS)
-                                }
-                            }
-                            candidate to r
+                            candidate to probeUrl(candidate, H3C_TIMEOUT_MS)
                         } else {
-                            null to ProbeResult(alive = false, rttMs = -1L)
+                            // Discovery failed (offline / both hosts
+                            // blocked). Fall back to the cached address
+                            // so a transient failure doesn't drop a
+                            // tunnel that may still work.
+                            val cached = getCachedH3cUrl()
+                            if (!cached.isNullOrBlank()) {
+                                cached to probeUrl(cached, H3C_TIMEOUT_MS)
+                            } else {
+                                null to ProbeResult(alive = false, rttMs = -1L)
+                            }
                         }
                     }
                     val remoteDeferred = async(Dispatchers.IO) {

@@ -2,6 +2,7 @@ package com.homedatacenter.app.data.api
 
 import com.homedatacenter.app.BuildConfig
 import com.homedatacenter.app.util.BaseUrlResolver
+import com.homedatacenter.app.util.Ipv4FirstDns
 import com.homedatacenter.app.util.RetryInterceptor
 import kotlinx.serialization.json.Json
 import okhttp3.ConnectionPool
@@ -32,6 +33,10 @@ object NetworkFactory {
      */
     fun createProbeClient(): OkHttpClient {
         return OkHttpClient.Builder()
+            // IPv4 first — see Ipv4FirstDns. Without this the reachability
+            // probe times out on a blackholed AAAA route while the IPv4
+            // address answers in a few hundred ms.
+            .dns(Ipv4FirstDns)
             .connectTimeout(5, TimeUnit.SECONDS)
             .readTimeout(5, TimeUnit.SECONDS)
             .writeTimeout(5, TimeUnit.SECONDS)
@@ -55,6 +60,8 @@ object NetworkFactory {
         baseUrlResolver: BaseUrlResolver? = null,
     ): OkHttpClient {
         val builder = OkHttpClient.Builder()
+            // IPv4 first — see Ipv4FirstDns.
+            .dns(Ipv4FirstDns)
             .connectionPool(ConnectionPool(5, 10, TimeUnit.MINUTES))
             .connectTimeout(5, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
