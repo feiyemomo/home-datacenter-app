@@ -1323,6 +1323,29 @@ class WebRtcClient(
     }
 
     /**
+     * Attaches an extra [org.webrtc.VideoSink] to the live video track.
+     *
+     * Used by the player UI to measure whether frames are actually
+     * flowing before it reveals the video (and hides the JPEG poster).
+     * Sinks receive the frame reference — no copies are made — but the
+     * caller must remove it with [removeVideoSink] when done.
+     */
+    fun addVideoSink(sink: org.webrtc.VideoSink) {
+        try {
+            videoTrack?.addSink(sink)
+        } catch (e: Exception) {
+            Log.w(TAG, "addVideoSink failed: ${e.message}")
+        }
+    }
+
+    fun removeVideoSink(sink: org.webrtc.VideoSink) {
+        try {
+            videoTrack?.removeSink(sink)
+        } catch (_: Exception) {
+        }
+    }
+
+    /**
      * v1.6.10: re-attaches the current videoTrack (if any) to a
      * freshly-init'd SurfaceViewRenderer. Used by CameraDetailActivity
      * .onResume to recover video after the EGL surface was torn down

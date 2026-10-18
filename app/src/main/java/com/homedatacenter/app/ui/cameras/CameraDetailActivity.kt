@@ -103,9 +103,6 @@ class CameraDetailActivity : AppCompatActivity() {
     private var fallbackPlayer: ExoPlayer? = null
     private var silentFallbackJob: kotlinx.coroutines.Job? = null
     private var previewFrameJob: kotlinx.coroutines.Job? = null
-    // One-shot listener that un-hides the JPEG preview when WebRTC
-    // renders its first frame (see hidePreviewOnFirstFrame).
-    private var firstFrameListener: org.webrtc.EglRenderer.FrameListener? = null
     private var triedWebRtc = false
     private var triedMp4 = false
     private var triedHls = false
@@ -198,7 +195,8 @@ class CameraDetailActivity : AppCompatActivity() {
         isBackNavigating = true
         streamRetryJob?.cancel()
         streamRetryJob = null
-        removeFirstFrameListener()
+        cancelRevealWatchdog()
+        webRtcClient?.removeVideoSink(videoFrameRateSink)
         webRtcClient?.stopPlayoutImmediately()
         webRtcClient?.setAudioEnabled(false)
         player?.pause()
@@ -655,7 +653,8 @@ class CameraDetailActivity : AppCompatActivity() {
         alertsDialog?.dismiss()
         recordingsDialog = null
         alertsDialog = null
-        removeFirstFrameListener()
+        cancelRevealWatchdog()
+        webRtcClient?.removeVideoSink(videoFrameRateSink)
         try { binding.surfaceRenderer.release() } catch (_: Exception) {}
         try { webRtcClient?.release() } catch (_: Exception) {}
     }
@@ -1610,60 +1609,113 @@ class CameraDetailActivity : AppCompatActivity() {
                         (player != null && player?.playbackState == Player.STATE_READY)
                 if (!isRealVideoPlaying) {
                     binding.ivPreviewFrame.setImageBitmap(bitmap)
+                    // Fade the still in instead of popping it over the
+                    // black SurfaceView.
+                    binding.ivPreviewFrame.alpha = 0f
                     binding.ivPreviewFrame.visibility = View.VISIBLE
                     binding.ivPreviewFrame.bringToFront()
+                    binding.ivPreviewFrame.animate()
+                        .alpha(1f)
+                        .setDuration(150L)
+                        .start()
                 }
             }
-        }
-    }
-
-    /** Hide the JPEG preview frame once a real video surface is showing. */
-    private fun hidePreviewFrame() {
-        if (binding.ivPreviewFrame.visibility == View.VISIBLE) {
-            binding.ivPreviewFrame.visibility = View.GONE
-            binding.ivPreviewFrame.setImageDrawable(null)
         }
     }
 
     /**
-     * Hides the preview only after WebRTC has painted its first frame.
+     * Keeps the JPEG poster on top of the video until WebRTC is
+     * actually delivering a steady stream, then cross-fades to live
+     * video.
      *
-     * It used to be hidden when ICE reached CONNECTED, but the decoder
-     * needs another 200–500 ms to produce a picture — during that window
-     * the user saw the black SurfaceView (the "闪黑屏" when opening a
-     * camera). The renderer's frame listener fires on the first rendered
-     * frame, then unregisters itself so no per-frame bitmap copies are
-     * wasted.
+     * Two things used to be visible: the black SurfaceView between
+     * ICE-CONNECTED and the first decoded frame, and the choppy first
+     * seconds while the WebRTC pacer / jitter buffer ramp up (the
+     * renderer's own stats often showed 4–11 fps for the first 3–4 s
+     * before settling at 25). Holding the poster and fading it out
+     * makes the start look instant and hides the ramp entirely.
      */
-    private fun hidePreviewOnFirstFrame() {
-        removeFirstFrameListener()
-        val renderer = binding.surfaceRenderer
-        val listener = object : org.webrtc.EglRenderer.FrameListener {
-            override fun onFrame(frame: android.graphics.Bitmap?) {
-                removeFirstFrameListener()
-                runOnUiThread {
-                    if (isFinishing || isDestroyed) return@runOnUiThread
-                    binding.progressVideo.visibility = View.GONE
-                    hidePreviewFrame()
-                }
+    private val videoFrameRateSink = object : org.webrtc.VideoSink {
+        private var windowStartAt = 0L
+        private var framesInWindow = 0
+        private var steadyWindows = 0
+
+        override fun onFrame(frame: org.webrtc.VideoFrame) {
+            val now = android.os.SystemClock.elapsedRealtime()
+            if (windowStartAt == 0L) {
+                windowStartAt = now
+                framesInWindow = 0
+                return
             }
-        }
-        firstFrameListener = listener
-        try {
-            renderer.addFrameListener(listener, 1.0f)
-        } catch (e: Exception) {
-            android.util.Log.w(TAG, "addFrameListener failed: ${e.message}")
-            binding.progressVideo.visibility = View.GONE
-            hidePreviewFrame()
+            framesInWindow++
+            val elapsed = now - windowStartAt
+            if (elapsed < 500L) return
+
+            val fps = framesInWindow * 1000f / elapsed
+            framesInWindow = 0
+            windowStartAt = now
+            if (fps >= 10f) steadyWindows++ else steadyWindows = 0
+
+            if (steadyWindows >= 2) {
+                steadyWindows = 0
+                binding.root.post { revealVideoWhenSteady() }
+            }
         }
     }
 
-    private fun removeFirstFrameListener() {
-        val listener = firstFrameListener ?: return
-        firstFrameListener = null
-        try {
-            binding.surfaceRenderer.removeFrameListener(listener)
-        } catch (_: Exception) {
+    private var revealWatchdog: Runnable? = null
+    private var videoRevealed = false
+
+    /** Starts the "wait for a steady stream, then fade in" sequence. */
+    private fun beginVideoReveal() {
+        videoRevealed = false
+        cancelRevealWatchdog()
+        webRtcClient?.addVideoSink(videoFrameRateSink)
+
+        // Safety net: never keep the poster up forever if the encoder
+        // happens to run below 10 fps (or the sink never fires).
+        val watchdog = Runnable {
+            android.util.Log.i(TAG, "reveal watchdog fired — showing video at whatever rate it has")
+            revealVideoWhenSteady()
+        }
+        revealWatchdog = watchdog
+        binding.root.postDelayed(watchdog, 3_000L)
+    }
+
+    private fun cancelRevealWatchdog() {
+        revealWatchdog?.let { binding.root.removeCallbacks(it) }
+        revealWatchdog = null
+    }
+
+    private fun revealVideoWhenSteady() {
+        if (videoRevealed || isFinishing || isDestroyed) return
+        videoRevealed = true
+        cancelRevealWatchdog()
+        webRtcClient?.removeVideoSink(videoFrameRateSink)
+        binding.progressVideo.visibility = View.GONE
+
+        val preview = binding.ivPreviewFrame
+        if (preview.visibility != View.VISIBLE) return
+        preview.animate()
+            .alpha(0f)
+            .setDuration(280L)
+            .withEndAction {
+                preview.animate().cancel()
+                preview.alpha = 1f
+                preview.visibility = View.GONE
+                preview.setImageDrawable(null)
+            }
+            .start()
+    }
+
+    /** Hide the JPEG preview frame once a real video surface is showing. */
+    private fun hidePreviewFrame() {
+        val preview = binding.ivPreviewFrame
+        if (preview.visibility == View.VISIBLE) {
+            preview.animate().cancel()
+            preview.alpha = 1f
+            preview.visibility = View.GONE
+            preview.setImageDrawable(null)
         }
     }
 
@@ -1998,11 +2050,10 @@ class CameraDetailActivity : AppCompatActivity() {
                         binding.tvVideoError.text = getString(R.string.camera_video_failed)
                         binding.progressVideo.visibility = View.GONE
                         binding.tvVideoError.visibility = View.GONE
-                        // Hide the JPEG preview only once WebRTC has
-                        // actually painted a frame — hiding it here
-                        // exposed the still-black SurfaceView for a
-                        // few hundred milliseconds.
-                        hidePreviewOnFirstFrame()
+                        // Keep the JPEG poster up until the stream is
+                        // actually steady, then cross-fade it out
+                        // (see beginVideoReveal).
+                        beginVideoReveal()
                         // WebRTC succeeded: release the pre-prepared
                         // fallback player — it's no longer needed.
                         fallbackPlayer?.release()
