@@ -104,8 +104,11 @@ class AutomationsActivity : AppCompatActivity() {
                 darkColorScheme(
                     primary = Color(0xFF64B5F6),
                     secondary = Color(0xFF81C784),
-                    background = Color(0xFF121418),
-                    surface = Color(0xFF1E222A),
+                    // Match @color/bg_primary / bg_surface (values-night) so
+                    // this Compose screen has the same warm-plum tone as the
+                    // rest of the dark theme instead of a blue-black console.
+                    background = Color(0xFF16141C),
+                    surface = Color(0xFF2A2632),
                     onPrimary = Color.Black,
                     onSurface = Color(0xFFE8EAED),
                 )
@@ -113,8 +116,11 @@ class AutomationsActivity : AppCompatActivity() {
                 lightColorScheme(
                     primary = Color(0xFF1976D2),
                     secondary = Color(0xFF388E3C),
-                    background = Color(0xFFF7F9FC),
-                    surface = Color(0xFFFFFFFF),
+                    // Same warm cream palette as @color/bg_primary /
+                    // bg_surface; the Material defaults read as a cool
+                    // blue-grey next to the XML screens.
+                    background = Color(0xFFF6F1EA),
+                    surface = Color(0xFFFFFCF8),
                     onPrimary = Color.White,
                     onSurface = Color(0xFF1A1C1E),
                 )
