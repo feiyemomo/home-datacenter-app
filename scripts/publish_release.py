@@ -13,6 +13,7 @@ Replaces the hand-edited upload_release.py / release.ps1 / push-apk.ps1 flow.
 Usage (from the repo root):
     $env:NAS_PASSWORD = '...'
     python scripts/publish_release.py            # build + upload + verify
+    python scripts/publish_release.py --debug-only  # debug APK only
     python scripts/publish_release.py --no-build # upload existing APKs
     python scripts/publish_release.py --dry-run  # show plan only
 
@@ -51,12 +52,13 @@ def sha256(path):
     return h.hexdigest()
 
 
-def build():
+def build(debug_only=False):
     env = dict(os.environ)
     if "JAVA_HOME" not in env and os.path.isdir(DEFAULT_JAVA_HOME):
         env["JAVA_HOME"] = DEFAULT_JAVA_HOME
     gradlew = os.path.join(ROOT, "gradlew.bat" if os.name == "nt" else "gradlew")
-    cmd = [gradlew, ":app:assembleRelease", ":app:assembleDebug", "--console=plain"]
+    tasks = [":app:assembleDebug"] if debug_only else [":app:assembleRelease", ":app:assembleDebug"]
+    cmd = [gradlew, *tasks, "--console=plain"]
     print("==> building:", " ".join(cmd))
     r = subprocess.run(cmd, cwd=ROOT, env=env)
     if r.returncode != 0:
@@ -91,6 +93,7 @@ def connect():
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--no-build", action="store_true", help="skip gradle, upload existing APKs")
+    ap.add_argument("--debug-only", action="store_true", help="build + upload only the debug APK")
     ap.add_argument("--dry-run", action="store_true", help="print the plan and exit")
     args = ap.parse_args()
 
@@ -101,19 +104,23 @@ def main():
         sys.exit(f"ERROR: missing release notes: {notes}")
 
     files = [
-        (RELEASE_APK, f"{REMOTE_DIR}/app-release-v{version}.apk"),
-        (RELEASE_APK, f"{REMOTE_DIR}/app-release-latest.apk"),
         (DEBUG_APK, f"{REMOTE_DIR}/app-debug-v{version}.apk"),
         (DEBUG_APK, f"{REMOTE_DIR}/app-debug-latest.apk"),
         (notes, f"{REMOTE_DIR}/release-notes-v{version}.txt"),
     ]
+    if not args.debug_only:
+        files = [
+            (RELEASE_APK, f"{REMOTE_DIR}/app-release-v{version}.apk"),
+            (RELEASE_APK, f"{REMOTE_DIR}/app-release-latest.apk"),
+            *files,
+        ]
     if args.dry_run:
         for lp, rp in files:
             print(f"    {lp} -> {rp}")
         return
 
     if not args.no_build:
-        build()
+        build(debug_only=args.debug_only)
     for lp, _ in files:
         if not os.path.isfile(lp):
             sys.exit(f"ERROR: missing build output: {lp}")

@@ -1,0 +1,21 @@
+v1.14.17 (versionCode 203)
+
+## 修复
+- **WebRTC 接管后黑屏但只有声音**：根因是渲染器（SurfaceViewRenderer）在
+  onResume 里被释放后没有重建（竞速期间它处于隐藏状态，重建条件不成立），
+  WebRTC 解码正常却无处绘制。现在用统一的就绪标记管理渲染器，接管时先确保
+  渲染器可用、重新绑定视频轨，再显示画面。
+- **打开前门机仍占用麦克风**：上一版把音频设成通话模式（IN_COMMUNICATION）
+  并开启硬件回声消除，系统会按“打电话”处理——亮麦克风、走听筒。现已回退为
+  普通媒体模式、关闭硬件 AEC。另外在流建立时显式调用
+  `setAudioRecording(false)`，只有按住「对讲」才允许录音，松手立即关闭。
+- **WebRTC 接管后没有声音**：同样是通话模式把声音送到听筒（听不见）。回退
+  后恢复扬声器输出，并在接管 600ms 后再断言一次音量，覆盖远端音轨晚到。
+
+## 说明
+- 本次为 debug 版本，可直接覆盖安装 1.14.16 及更早版本。
+- 验证日志：
+  - `WebRTC surface renderer initialised`：渲染器就绪
+  - `Race: WebRTC took over the screen (frames confirmed)`：已接管且有画面
+  - `Talkback started (... recording=true)` / `Talkback stopped (recording=false, ...)`：
+    麦克风只在按住期间开启

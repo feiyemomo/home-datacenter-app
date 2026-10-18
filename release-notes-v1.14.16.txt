@@ -1,0 +1,22 @@
+v1.14.16 (versionCode 202)
+
+## 修复
+- **直播不再总是停在 MP4**：上一版「先出帧者接管」会让先渲染的 MP4 永久占屏，
+  WebRTC 即使握手成功也会被丢弃。现在 ExoPlayer 只做「秒开垫场」，WebRTC
+  一旦被确认在真实解码帧（连续约 1 秒、≥10fps）就接管画面，徽标随之变成
+  WebRTC。
+- **WebRTC 接管不再黑屏**：不再以「ICE 握手成功」作为切换条件（那时
+  SurfaceView 还没有画面）。切换时先让画面源换到 WebRTC、占位图继续盖
+  450ms，再交叉淡出；旧播放器静音后延迟 700ms 释放，避免双音与黑帧。
+- **握手成功但无帧**：8 秒内拿不到可持续帧则自动放弃 WebRTC、保留
+  ExoPlayer 画面，不会再出现「徽标 WebRTC 却全黑」。
+
+## 优化
+- 对讲麦克风仍为按住才挂载、松手立即释放（v1.14.15 行为不变）。
+- 对讲音质参数（AEC/AGC/NS、2x 增益、通话音频模式）保持不变。
+
+## 说明
+- 本次为 debug 版本，可直接覆盖安装 1.14.14 / 1.14.15。
+- 想确认接管路径，可看日志：`Race: WebRTC took over the screen (frames confirmed)`；
+  若是 `Race: no WebRTC frames in 8s — keeping ExoPlayer`，说明该链路
+  WebRTC 媒体确实不通（多为运营商封 UDP），此时 MP4/HLS 就是正确结果。

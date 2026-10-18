@@ -115,7 +115,11 @@ class WebRtcClient(
     @Volatile
     private var isTalkingBack: Boolean = false
     @Volatile
-    var talkbackMicGain: Float = 5.0f // 5.0x software amplifier for camera speaker
+    // v1.14.15: dropped from 5.0x to 2.0x. 5x clipped the APM output
+    // on phones held near the mouth and, combined with AEC disabled,
+    // produced the echo/whistle users reported. 2x plus software AEC
+    // is loud enough for a doorbell speaker without distortion.
+    var talkbackMicGain: Float = 2.0f
     private var audioDeviceModule: JavaAudioDeviceModule? = null
     // v1.7.2: latch the user's mute preference so that audio tracks
     // arriving AFTER a reconnect / renegotiation honour it. Without
@@ -319,11 +323,14 @@ class WebRtcClient(
 
             if (localAudioTrack == null || localAudioSource == null) {
                 val constraints = MediaConstraints().apply {
-                    // Disable VoIP AGC and NS so our 5.0x amplifier isn't squashed down or filtered
-                    optional.add(MediaConstraints.KeyValuePair("googEchoCancellation", "false"))
-                    optional.add(MediaConstraints.KeyValuePair("googAutoGainControl", "false"))
+                    // v1.14.15: AEC / AGC / NS are enabled now that the
+                    // 5x amplifier is gone (2x). Disabling them was what
+                    // turned the doorbell talkback into an echo/whistle
+                    // feedback loop on speakerphone.
+                    optional.add(MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
+                    optional.add(MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
                     optional.add(MediaConstraints.KeyValuePair("googHighpassFilter", "true"))
-                    optional.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "false"))
+                    optional.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
                 }
                 val src = try {
                     pcFactory.createAudioSource(constraints)
@@ -360,13 +367,20 @@ class WebRtcClient(
     }
 
     /**
-     * Pre-warms local audio track and binds to transceiver if permissions are granted.
+     * v1.14.15: no longer pre-warms the microphone.
+     *
+     * Attaching a local audio track to the sender opens the platform
+     * `AudioRecord` and keeps it open for as long as the track stays
+     * attached — `setEnabled(false)` only stops RTP, it does NOT stop
+     * recording. That is why opening a two-way camera used to leave the
+     * system microphone indicator lit for the whole session.
+     *
+     * The track is now created on talkback press and fully detached +
+     * disposed on release (see [startTalkback] / [stopTalkback]).
      */
+    @Deprecated("Microphone is attached on demand by startTalkback()")
     fun warmLocalAudioTrack() {
-        val transceiver = audioTransceiver ?: peerConnection?.transceivers?.find {
-            it.mediaType == MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO
-        } ?: return
-        ensureLocalAudioTrack(transceiver)
+        Log.d(TAG, "warmLocalAudioTrack: ignored (mic is attached on demand)")
     }
 
     /**
@@ -393,10 +407,17 @@ class WebRtcClient(
                 return err
             }
             val audioManager = context.getSystemService(android.content.Context.AUDIO_SERVICE) as? android.media.AudioManager
+            // v1.14.17: keep MODE_NORMAL. MODE_IN_COMMUNICATION routed the
+            // camera audio to the earpiece (users reported "no sound")
+            // and made the OS show the microphone indicator even while
+            // only listening.
             audioManager?.mode = android.media.AudioManager.MODE_NORMAL
+            // Explicitly allow recording only for the duration of the
+            // press; released again in stopTalkback().
+            runCatching { peerConnection?.setAudioRecording(true) }
             localAudioTrack?.setEnabled(true)
             isTalkingBack = true
-            Log.i(TAG, "Talkback started (mic unmuted, 5.0x amplifier active, mode=NORMAL)")
+            Log.i(TAG, "Talkback started (mic attached, ${talkbackMicGain}x gain, AEC on, recording=true)")
             null
         } catch (e: Exception) {
             Log.e(TAG, "startTalkback failed: ${e.message}", e)
@@ -405,15 +426,36 @@ class WebRtcClient(
     }
 
     /**
-     * v1.13.0: Stops two-way talkback by muting the microphone track.
+     * v1.14.15: fully releases the microphone.
+     *
+     * Detaching the track from the sender and disposing it tears down
+     * the native audio source, so `AudioRecord` is actually stopped and
+     * the system microphone indicator goes away as soon as the user
+     * lifts their finger. Muting alone (the old behaviour) kept the mic
+     * open until the PeerConnection was released.
      */
     fun stopTalkback() {
         isTalkingBack = false
+        val track = localAudioTrack
+        localAudioTrack = null
         try {
-            localAudioTrack?.setEnabled(false)
+            // v1.14.17: hard-stop the ADM recorder first, then detach
+            // and dispose. This guarantees the system microphone
+            // indicator goes away the moment the finger lifts.
+            runCatching { peerConnection?.setAudioRecording(false) }
+            // Detach first so libwebrtc tears down the sending channel.
+            runCatching {
+                (audioTransceiver ?: peerConnection?.transceivers?.find {
+                    it.mediaType == MediaStreamTrack.MediaType.MEDIA_TYPE_AUDIO
+                })?.sender?.setTrack(null, false)
+            }
+            runCatching { track?.setEnabled(false) }
+            runCatching { track?.dispose() }
+            runCatching { localAudioSource?.dispose() }
+            localAudioSource = null
             val audioManager = context.getSystemService(android.content.Context.AUDIO_SERVICE) as? android.media.AudioManager
             audioManager?.mode = android.media.AudioManager.MODE_NORMAL
-            Log.i(TAG, "Talkback stopped (mic muted)")
+            Log.i(TAG, "Talkback stopped (recording=false, mic detached + released)")
         } catch (e: Exception) {
             Log.w(TAG, "stopTalkback failed: ${e.message}")
         }
@@ -453,6 +495,11 @@ class WebRtcClient(
         )
         val audioDevice = JavaAudioDeviceModule.builder(context)
             .setAudioSource(android.media.MediaRecorder.AudioSource.MIC)
+            // v1.14.17: hardware AEC/NS back OFF. Enabling them made the
+            // platform treat the session as a call: the mic indicator lit
+            // up on open and playback was routed to the earpiece (aka
+            // "no sound"). Software AEC/AGC/NS is still requested on the
+            // capture source when talkback actually starts.
             .setUseHardwareAcousticEchoCanceler(false)
             .setUseHardwareNoiseSuppressor(false)
             .setUseStereoInput(false)
@@ -1060,6 +1107,14 @@ class WebRtcClient(
         val remote = SessionDescription(SessionDescription.Type.ANSWER, answerSdp)
         withContext(Dispatchers.IO) {
             setRemoteDescriptionSuspend(pc, remote)
+        }
+
+        // v1.14.17: watching must never open the microphone. The
+        // sendrecv audio m-line is needed for the doorbell backchannel,
+        // but the ADM recorder stays off until startTalkback() flips it.
+        runCatching {
+            pc.setAudioRecording(false)
+            audioDeviceModule?.setSpeakerMute(!audioEnabledByUser)
         }
 
         // v1.6.13: app-level connection timeout. Without this, a

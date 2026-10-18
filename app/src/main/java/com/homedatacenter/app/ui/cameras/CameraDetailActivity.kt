@@ -25,6 +25,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.google.android.exoplayer2.DefaultLivePlaybackSpeedControl
 import com.google.android.exoplayer2.DefaultLoadControl
 import com.google.android.exoplayer2.ExoPlayer
 import com.google.android.exoplayer2.MediaItem
@@ -107,6 +108,18 @@ class CameraDetailActivity : AppCompatActivity() {
     private var triedMp4 = false
     private var triedHls = false
     private var triedH264Hls = false
+    // v1.14.15: live transport race. WebRTC and an ExoPlayer (MP4/HLS)
+    // start at the same time; whichever becomes ready first owns the
+    // picture and the other is stopped. This removes the old "wait up
+    // to 4s for WebRTC, then start ExoPlayer" dead time.
+    private var liveOwner = OWNER_NONE
+    private var raceExoFirstFrame = false
+    private var raceUseMp4 = false
+    // v1.14.16: WebRTC is only allowed to take the screen once real
+    // decoded frames are flowing (counted by videoFrameRateSink), not
+    // when ICE merely reports CONNECTED. Switching on handshake alone
+    // was what produced the occasional black screen.
+    private var raceActive = false
     private var audioEnabled = true
     private var recordingsDialog: RecordingsDialog? = null
     private var alertsDialog: AlertsDialog? = null
@@ -116,8 +129,11 @@ class CameraDetailActivity : AppCompatActivity() {
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) {
-            webRtcClient?.warmLocalAudioTrack()
-            android.widget.Toast.makeText(this, "麦克风权限已获取，请长按开始对讲", android.widget.Toast.LENGTH_SHORT).show()
+            // v1.14.15: do NOT attach the microphone here. Attaching it
+            // opens AudioRecord for the rest of the session (the mic
+            // indicator stays lit). The track is now created only while
+            // the user actually holds the talkback button.
+            android.widget.Toast.makeText(this, "麦克风权限已获取，按住「对讲」即可说话", android.widget.Toast.LENGTH_SHORT).show()
         } else {
             android.widget.Toast.makeText(this, "需开启麦克风权限以使用语音对讲功能", android.widget.Toast.LENGTH_SHORT).show()
         }
@@ -204,7 +220,7 @@ class CameraDetailActivity : AppCompatActivity() {
         player?.playWhenReady = false
         fallbackPlayer?.stop()
         releaseExoPlayerOnly()
-        try { binding.surfaceRenderer.release() } catch (_: Exception) {}
+        releaseSurfaceRenderer()
         try { webRtcClient?.release() } catch (_: Exception) {}
         if (isTaskRoot) {
             val intent = Intent(this, com.homedatacenter.app.ui.main.MainActivity::class.java).apply {
@@ -465,7 +481,7 @@ class CameraDetailActivity : AppCompatActivity() {
             fallbackPlayer = null
 
             if (isFinishing || isDestroyed) {
-                try { binding.surfaceRenderer.release() } catch (_: Exception) {}
+                releaseSurfaceRenderer()
                 try { webRtcClient?.release() } catch (_: Exception) {}
                 releaseExoPlayerOnly()
                 return
@@ -481,7 +497,7 @@ class CameraDetailActivity : AppCompatActivity() {
                     if (!isFinishing && !isDestroyed && !lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
                         android.util.Log.d(TAG, "PiP dismissed by user (activity not resumed): finishing")
                         webRtcClient?.stopPlayoutImmediately()
-                        try { binding.surfaceRenderer.release() } catch (_: Exception) {}
+                        releaseSurfaceRenderer()
                         try { webRtcClient?.release() } catch (_: Exception) {}
                         releaseExoPlayerOnly()
                         finish()
@@ -558,7 +574,7 @@ class CameraDetailActivity : AppCompatActivity() {
         fallbackPlayer?.stop()
         releaseExoPlayerOnly()
         if (wasInPipMode || isFinishing || isBackNavigating) {
-            try { binding.surfaceRenderer.release() } catch (_: Exception) {}
+            releaseSurfaceRenderer()
             try { webRtcClient?.release() } catch (_: Exception) {}
             if (!isFinishing) {
                 finish()
@@ -577,7 +593,7 @@ class CameraDetailActivity : AppCompatActivity() {
         player?.volume = 0f
         player?.playWhenReady = false
         fallbackPlayer?.stop()
-        try { binding.surfaceRenderer.release() } catch (_: Exception) {}
+        releaseSurfaceRenderer()
         try { webRtcClient?.release() } catch (_: Exception) {}
         releaseExoPlayerOnly()
         if (shouldFinish && !isFinishing) {
@@ -593,15 +609,15 @@ class CameraDetailActivity : AppCompatActivity() {
         if (recordingsDialog?.isShowing == true || alertsDialog?.isShowing == true) {
             return
         }
-        try { binding.surfaceRenderer.release() } catch (_: Exception) {}
         val client = webRtcClient
-        if (client != null && (client.hasActiveStream() || binding.surfaceRenderer.visibility == View.VISIBLE)) {
+        // v1.14.15: never steal the surface back from ExoPlayer.
+        // v1.14.17: don't release the renderer unless we are about to
+        // re-attach it — releasing it here and returning early (race in
+        // progress) left the renderer dead.
+        if (client != null && liveOwner != OWNER_EXO && client.hasActiveStream()) {
+            releaseSurfaceRenderer()
+            ensureSurfaceRenderer()
             try {
-                binding.surfaceRenderer.init(client.eglBase.eglBaseContext, null)
-                binding.surfaceRenderer.setMirror(false)
-                binding.surfaceRenderer.setScalingType(
-                    RendererCommon.ScalingType.SCALE_ASPECT_FIT
-                )
                 client.reattachVideoTrack(binding.surfaceRenderer)
             } catch (e: Exception) {
                 android.util.Log.w(TAG, "WebRTC resume re-attach failed: ${e.message}")
@@ -655,7 +671,7 @@ class CameraDetailActivity : AppCompatActivity() {
         alertsDialog = null
         cancelRevealWatchdog()
         webRtcClient?.removeVideoSink(videoFrameRateSink)
-        try { binding.surfaceRenderer.release() } catch (_: Exception) {}
+        releaseSurfaceRenderer()
         try { webRtcClient?.release() } catch (_: Exception) {}
     }
 
@@ -685,6 +701,10 @@ class CameraDetailActivity : AppCompatActivity() {
         // Hide WebRTC-only overlays so they don't linger during reload.
         binding.btnWebRtcFullscreen.visibility = View.GONE
         binding.webRtcControls.visibility = View.GONE
+        // v1.14.15: no transport owns the screen any more.
+        liveOwner = OWNER_NONE
+        raceExoFirstFrame = false
+        raceActive = false
     }
 
     private fun setupHeader() {
@@ -1314,17 +1334,16 @@ class CameraDetailActivity : AppCompatActivity() {
         }
         isLivePausedForDialog = false
         val client = webRtcClient
-        if (client != null && client.hasActiveStream() && client.isConnected()) {
-            try {
-                binding.surfaceRenderer.release()
-            } catch (_: Exception) {}
-            try {
-                binding.surfaceRenderer.init(client.eglBase.eglBaseContext, null)
-                binding.surfaceRenderer.setMirror(false)
-                binding.surfaceRenderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT)
-                client.reattachVideoTrack(binding.surfaceRenderer)
-            } catch (e: Exception) {
-                android.util.Log.w(TAG, "WebRTC resume re-attach failed: ${e.message}")
+        // v1.14.15: honour whoever won the race — don't hand the surface
+        // back to WebRTC when ExoPlayer owns the screen.
+        if (client != null && liveOwner != OWNER_EXO && client.hasActiveStream() && client.isConnected()) {
+            if (webRtcRendererReady) {
+                // Re-attach to the live renderer as-is; releasing it
+                // here would drop the EGL surface for no reason.
+                runCatching { client.reattachVideoTrack(binding.surfaceRenderer) }
+            } else {
+                ensureSurfaceRenderer()
+                runCatching { client.reattachVideoTrack(binding.surfaceRenderer) }
             }
             client.setVideoEnabled(true)
             if (audioEnabled && !webRtcMuted) {
@@ -1658,7 +1677,15 @@ class CameraDetailActivity : AppCompatActivity() {
 
             if (steadyWindows >= 2) {
                 steadyWindows = 0
-                binding.root.post { revealVideoWhenSteady() }
+                binding.root.post {
+                    if (raceActive) {
+                        // v1.14.16: WebRTC is provably delivering
+                        // frames — promote it to the screen.
+                        promoteWebRtcToScreen()
+                    } else {
+                        revealVideoWhenSteady()
+                    }
+                }
             }
         }
     }
@@ -1666,20 +1693,123 @@ class CameraDetailActivity : AppCompatActivity() {
     private var revealWatchdog: Runnable? = null
     private var videoRevealed = false
 
+    /**
+     * True once the WebRTC renderer has actually drawn a decoded frame.
+     * v1.14.14: the JPEG poster must only be dropped after this flips —
+     * on a relayed (public) path ICE reaches CONNECTED seconds before
+     * the first RTP keyframe arrives, so fading on a timer used to
+     * expose a black SurfaceView.
+     */
+    @Volatile
+    private var webRtcFirstFrameRendered = false
+
+    private val webRtcRendererEvents = object : RendererCommon.RendererEvents {
+        override fun onFirstFrameRendered() {
+            webRtcFirstFrameRendered = true
+            android.util.Log.i(TAG, "WebRTC renderer: first frame rendered")
+        }
+
+        override fun onFrameResolutionChanged(width: Int, height: Int, rotation: Int) {
+            android.util.Log.d(TAG, "WebRTC frame resolution ${width}x$height rot=$rotation")
+        }
+    }
+
+    /**
+     * v1.14.17: true while [binding.surfaceRenderer] holds a live EGL
+     * context. The race path keeps the renderer GONE during
+     * negotiation, and the old onResume() released it unconditionally
+     * — leaving it released-but-never-reinitialised, which is exactly
+     * "WebRTC takes over but the screen stays black while audio plays".
+     */
+    private var webRtcRendererReady = false
+
+    private fun releaseSurfaceRenderer() {
+        webRtcRendererReady = false
+        try { binding.surfaceRenderer.release() } catch (_: Exception) {}
+    }
+
+    /** Initialises the WebRTC renderer if it is not ready yet. */
+    private fun ensureSurfaceRenderer(): Boolean {
+        val client = webRtcClient ?: return false
+        if (webRtcRendererReady) return true
+        return try {
+            binding.surfaceRenderer.init(client.eglBase.eglBaseContext, webRtcRendererEvents)
+            binding.surfaceRenderer.setMirror(false)
+            binding.surfaceRenderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT)
+            webRtcRendererReady = true
+            android.util.Log.i(TAG, "WebRTC surface renderer initialised")
+            true
+        } catch (e: Exception) {
+            android.util.Log.e(TAG, "WebRTC surface renderer init failed: ${e.message}", e)
+            false
+        }
+    }
+
     /** Starts the "wait for a steady stream, then fade in" sequence. */
     private fun beginVideoReveal() {
         videoRevealed = false
         cancelRevealWatchdog()
         webRtcClient?.addVideoSink(videoFrameRateSink)
 
-        // Safety net: never keep the poster up forever if the encoder
-        // happens to run below 10 fps (or the sink never fires).
-        val watchdog = Runnable {
-            android.util.Log.i(TAG, "reveal watchdog fired — showing video at whatever rate it has")
-            revealVideoWhenSteady()
+        // If a poster is already up it is the content the user is
+        // looking at, so the spinner can go away. Without a poster we
+        // must keep the spinner (a bare black surface reads as "stuck").
+        if (binding.ivPreviewFrame.visibility == View.VISIBLE) {
+            binding.progressVideo.visibility = View.GONE
+        }
+
+        // v1.14.14: poll instead of a one-shot deadline. The poster is
+        // only cross-faded once the renderer has really produced a
+        // frame; until then it stays on screen (with the spinner) so
+        // the viewer never sees a black surface. Previously the 3s
+        // watchdog faded unconditionally, which on a relayed link is
+        // before the first keyframe → "preview → spinner → black".
+        val watchdog = object : Runnable {
+            private var ticks = 0
+
+            override fun run() {
+                if (isFinishing || isDestroyed || videoRevealed) return
+                if (webRtcFirstFrameRendered) {
+                    revealVideoWhenSteady()
+                    return
+                }
+                ticks++
+                // v1.14.14: 12s without a single decoded frame while
+                // ICE reports CONNECTED means the media path is dead
+                // (codec / relay drop). Hand over to the ExoPlayer
+                // ladder instead of holding the poster forever.
+                if (ticks >= 8) {
+                    android.util.Log.w(
+                        TAG,
+                        "WebRTC connected but no frame after 12s — falling back to ExoPlayer",
+                    )
+                    webRtcClient?.let { c ->
+                        c.stopPlayoutImmediately()
+                        c.setAudioEnabled(false)
+                        try { c.release() } catch (_: Exception) {}
+                    }
+                    webRtcInProgress = false
+                    // Mirror the onError failover surface state so the
+                    // ExoPlayer view is actually visible; the WebRTC
+                    // surface keeps its last frame (poster stays on top)
+                    // until ExoPlayer renders its own first frame.
+                    binding.webRtcControls.visibility = View.GONE
+                    binding.btnWebRtcFullscreen.visibility = View.GONE
+                    binding.playerView.visibility = View.VISIBLE
+                    binding.progressVideo.visibility = View.VISIBLE
+                    // v1.14.15: prefer the parked race player (already
+                    // buffered) over building a cold one.
+                    val cam = camera
+                    if (cam != null && !promoteFallbackPlayer(cam)) {
+                        startMp4Playback(cam)
+                    }
+                    return
+                }
+                binding.root.postDelayed(this, 1_500L)
+            }
         }
         revealWatchdog = watchdog
-        binding.root.postDelayed(watchdog, 3_000L)
+        binding.root.postDelayed(watchdog, 1_500L)
     }
 
     private fun cancelRevealWatchdog() {
@@ -1729,6 +1859,8 @@ class CameraDetailActivity : AppCompatActivity() {
         triedMp4 = false
         triedHls = false
         triedH264Hls = false
+        liveOwner = OWNER_NONE
+        raceExoFirstFrame = false
 
         binding.tvVideoError.setOnClickListener {
             val c = camera
@@ -1785,7 +1917,9 @@ class CameraDetailActivity : AppCompatActivity() {
         if (cam.isOnline && ensureWebRtcClient()) {
             binding.tvVideoError.visibility = View.GONE
             binding.progressVideo.visibility = View.VISIBLE
-            startWebRtcStream(cam)
+            // v1.14.15: 秒开竞速 —— WebRTC 与 ExoPlayer 同时起，谁先
+            // 出画面用谁（详见 startLiveRace）。
+            startLiveRace(cam)
             return
         }
 
@@ -1793,6 +1927,167 @@ class CameraDetailActivity : AppCompatActivity() {
         // let startMp4Playback pick the right ExoPlayer transport
         // (HLS on remote, MP4 on LAN).
         startMp4Playback(cam)
+    }
+
+    /**
+     * v1.14.15: parallel start ("秒开竞速").
+     *
+     * Both transports are kicked off at the same time:
+     *  - ExoPlayer (MP4 on direct paths / HLS on relay) starts muted and
+     *    renders underneath the JPEG poster;
+     *  - WebRTC negotiates in parallel.
+     *
+     * The first one that actually paints a frame claims the screen:
+     *  - ExoPlayer first → it keeps playing (with the 1.15x live
+     *    catch-up policy) and WebRTC is torn down when it connects;
+     *  - WebRTC first    → the poster stays until WebRTC's own first
+     *    frame, then the muted racer is parked as the instant fallback.
+     *
+     * Net effect: the still poster is replaced by *moving* video as
+     * fast as the link allows instead of waiting for WebRTC to connect
+     * (or time out) before an ExoPlayer source is even created.
+     */
+    private fun startLiveRace(cam: Camera) {
+        liveOwner = OWNER_NONE
+        raceExoFirstFrame = false
+        raceActive = true
+        binding.playerView.visibility = View.VISIBLE
+        binding.surfaceRenderer.visibility = View.GONE
+        binding.webRtcControls.visibility = View.GONE
+        binding.btnWebRtcFullscreen.visibility = View.GONE
+        binding.tvVideoError.visibility = View.GONE
+        updateStreamStrategy("加载中")
+        // Racer #1: silent ExoPlayer. Its surface stays visible so it can
+        // paint (and report) a first frame; audio is muted until it wins.
+        prepareFallbackPlayer(cam, race = true)
+        // Racer #2: WebRTC. UI takeover is deferred until it connects.
+        startWebRtcStream(cam, raceMode = true)
+    }
+
+    /** The muted racer painted its first frame — it owns the screen. */
+    private fun claimExoLive(p: ExoPlayer) {
+        if (liveOwner == OWNER_WEBRTC || liveOwner == OWNER_EXO) return
+        liveOwner = OWNER_EXO
+        raceExoFirstFrame = true
+        if (fallbackPlayer === p) fallbackPlayer = null
+        player = p
+        binding.playerView.player = p
+        binding.playerView.visibility = View.VISIBLE
+        binding.surfaceRenderer.visibility = View.GONE
+        binding.progressVideo.visibility = View.GONE
+        binding.tvVideoError.visibility = View.GONE
+        p.volume = if (audioEnabled && !webRtcMuted) 1.0f else 0.0f
+        updateStreamStrategy(if (raceUseMp4) "MP4" else "HLS")
+        hidePreviewFrame()
+        updatePipParams()
+        fullscreenHelper?.onPlayerChanged(p)
+        android.util.Log.i(TAG, "Race: ExoPlayer won (${if (raceUseMp4) "MP4" else "HLS"})")
+    }
+
+    /**
+     * v1.14.16: waits for real WebRTC frames while the ExoPlayer racer
+     * keeps the screen. Promotion happens from [videoFrameRateSink]
+     * once decoded frames are sustained; if none arrive within ~8s the
+     * WebRTC side is dropped and the ExoPlayer stream simply stays.
+     */
+    private fun beginRaceWarmup() {
+        raceActive = true
+        webRtcClient?.addVideoSink(videoFrameRateSink)
+        cancelRevealWatchdog()
+        val watchdog = object : Runnable {
+            private var ticks = 0
+
+            override fun run() {
+                if (isFinishing || isDestroyed) return
+                if (liveOwner == OWNER_WEBRTC || !raceActive) return
+                ticks++
+                if (ticks >= 10) {
+                    // ~8s without a single sustained frame: keep the
+                    // ExoPlayer picture, drop WebRTC quietly.
+                    android.util.Log.w(TAG, "Race: no WebRTC frames in 8s — keeping ExoPlayer")
+                    raceActive = false
+                    webRtcClient?.removeVideoSink(videoFrameRateSink)
+                    webRtcClient?.let { c ->
+                        c.stopPlayoutImmediately()
+                        c.setAudioEnabled(false)
+                        c.setVideoEnabled(false)
+                        try { c.release() } catch (_: Exception) {}
+                    }
+                    return
+                }
+                binding.root.postDelayed(this, 800L)
+            }
+        }
+        revealWatchdog = watchdog
+        binding.root.postDelayed(watchdog, 800L)
+    }
+
+    /**
+     * v1.14.16: WebRTC is confirmed to be decoding frames — hand it the
+     * screen. The poster stays 450ms so the freshly-visible SurfaceView
+     * has painted before we cross-fade, which is what removes the black
+     * flash; the parked ExoPlayer is released only after that.
+     */
+    private fun promoteWebRtcToScreen() {
+        if (liveOwner == OWNER_WEBRTC) {
+            revealVideoWhenSteady()
+            return
+        }
+        liveOwner = OWNER_WEBRTC
+        raceActive = false
+        videoRevealed = false
+        cancelRevealWatchdog()
+        webRtcClient?.removeVideoSink(videoFrameRateSink)
+
+        // v1.14.17: make sure the renderer really owns an EGL context
+        // before we reveal it — this is the black-screen fix.
+        ensureSurfaceRenderer()
+        binding.playerView.visibility = View.GONE
+        binding.surfaceRenderer.visibility = View.VISIBLE
+        // Re-bind the decoded track to the freshly shown renderer.
+        webRtcClient?.reattachVideoTrack(binding.surfaceRenderer)
+        binding.btnWebRtcFullscreen.visibility = View.VISIBLE
+        binding.tvVideoError.visibility = View.GONE
+        webRtcPaused = false
+        updateStreamStrategy("WebRTC")
+        // Silence the loser immediately so audio doesn't double up
+        // during the 700ms hand-over.
+        player?.volume = 0f
+        fallbackPlayer?.volume = 0f
+        webRtcClient?.setAudioEnabled(audioEnabled && !webRtcMuted)
+        updateWebRtcControlButtons()
+        showWebRtcControls(autoHide = true)
+        updatePipParams()
+
+        // Free the (muted) ExoPlayer once the swap has settled. Do it
+        // manually: releaseExoPlayerOnly() would also hide the WebRTC
+        // control bar we just brought up.
+        binding.root.postDelayed({
+            if (liveOwner == OWNER_WEBRTC && !isFinishing && !isDestroyed) {
+                val exo = player
+                player = null
+                binding.playerView.player = null
+                try { exo?.release() } catch (_: Exception) {}
+                val fb = fallbackPlayer
+                fallbackPlayer = null
+                try { fb?.release() } catch (_: Exception) {}
+            }
+        }, 700L)
+
+        // Poster grace period, then cross-fade to live.
+        binding.root.postDelayed({
+            if (!isFinishing && !isDestroyed && liveOwner == OWNER_WEBRTC) {
+                revealVideoWhenSteady()
+            }
+        }, 450L)
+        // v1.14.17: the remote audio track can arrive a beat after the
+        // video (go2rtc audio m-line), so re-assert the unmute once.
+        binding.root.postDelayed({
+            if (!isFinishing && !isDestroyed && liveOwner == OWNER_WEBRTC) {
+                webRtcClient?.setAudioEnabled(audioEnabled && !webRtcMuted)
+            }
+        }, 600L)
+        android.util.Log.i(TAG, "Race: WebRTC took over the screen (frames confirmed)")
     }
 
     /**
@@ -1807,7 +2102,11 @@ class CameraDetailActivity : AppCompatActivity() {
      * Falls back to synchronous init when warming isn't ready yet.
      */
     private fun ensureWebRtcClient(): Boolean {
-        if (webRtcClient != null) return true
+        // v1.14.17: even when the client already exists, make sure the
+        // renderer holds an EGL context. onResume() releases it, and a
+        // released-but-never-reinitialised renderer is what produced
+        // "audio plays but the picture is black".
+        if (webRtcClient != null) return ensureSurfaceRenderer()
         // v1.6.10: use the shared WebRtcClient from AppContainer.
         // The PeerConnectionFactory + EGL context are now shared
         // across all CameraDetailActivity instances so opening a
@@ -1823,23 +2122,7 @@ class CameraDetailActivity : AppCompatActivity() {
             return false
         }
         webRtcClient = client
-        return try {
-            // Init the SurfaceViewRenderer with the WebRTC client's
-            // EGL context. Must run on the main thread (EGL surface
-            // creation requires it on most GPUs).
-            binding.surfaceRenderer.init(client.eglBase.eglBaseContext, null)
-            binding.surfaceRenderer.setMirror(false)
-            // v1.13.7: always use FILL — in fullscreen the video should
-            // fill the screen (user can pinch-to-zoom to adjust). FIT was
-            // causing letterboxing on tall-aspect phones.
-            binding.surfaceRenderer.setScalingType(
-                RendererCommon.ScalingType.SCALE_ASPECT_FIT
-            )
-            true
-        } catch (e: Exception) {
-            android.util.Log.e(TAG, "WebRtcClient init failed: ${e.message}", e)
-            false
-        }
+        return ensureSurfaceRenderer()
     }
 
     /**
@@ -1920,44 +2203,58 @@ class CameraDetailActivity : AppCompatActivity() {
      * SurfaceViewRenderer and hides the ExoPlayer StyledPlayerView.
      * On failure, falls back to MP4 (and then HLS).
      */
-    private fun startWebRtcStream(cam: Camera) {
+    private fun startWebRtcStream(cam: Camera, raceMode: Boolean = false) {
         val client = webRtcClient ?: run {
             startMp4Playback(cam); return
         }
         if (webRtcInProgress) return
         webRtcInProgress = true
         triedWebRtc = true
+        // v1.14.14: a fresh negotiation means a fresh renderer state.
+        // Clearing this forces the poster to stay up until the new
+        // session draws its own first frame.
+        webRtcFirstFrameRendered = false
 
-        // v1.5.12: release any lingering ExoPlayer BEFORE starting
-        // WebRTC. ExoPlayer's setAudioAttributes(handleAudioFocus=true)
-        // registers an AudioFocusRequest on STREAM_MUSIC; if we
-        // don't release it before WebRTC starts, the system keeps
-        // ExoPlayer's AudioFocus active and WebRTC's AudioTrack
-        // output gets ducked or routed to the wrong stream — the
-        // user sees video but hears nothing. releasePlayer() calls
-        // ExoPlayer.release() which internally abandons AudioFocus.
-        releasePlayer()
+        if (!raceMode) {
+            // v1.5.12: release any lingering ExoPlayer BEFORE starting
+            // WebRTC. ExoPlayer's setAudioAttributes(handleAudioFocus=true)
+            // registers an AudioFocusRequest on STREAM_MUSIC; if we
+            // don't release it before WebRTC starts, the system keeps
+            // ExoPlayer's AudioFocus active and WebRTC's AudioTrack
+            // output gets ducked or routed to the wrong stream — the
+            // user sees video but hears nothing. releasePlayer() calls
+            // ExoPlayer.release() which internally abandons AudioFocus.
+            //
+            // v1.14.15: skipped in race mode — the muted race player
+            // must stay alive so ExoPlayer can win the race.
+            releasePlayer()
 
-        // v1.5.9: mark the active transport. WebRTC is the primary
-        // path; if it fails the onError callback flips the badge to
-        // "MP4" when the fallback starts.
-        updateStreamStrategy("WebRTC")
+            // v1.5.9: mark the active transport. WebRTC is the primary
+            // path; if it fails the onError callback flips the badge to
+            // "MP4" when the fallback starts.
+            updateStreamStrategy("WebRTC")
 
-        // Show the WebRTC surface + standalone fullscreen button,
-        // hide the ExoPlayer view (its controller UI is irrelevant
-        // while WebRTC is rendering).
-        // v1.5.8: show the WebRTC control bar (pause / mute /
-        // fullscreen) instead of just a fullscreen overlay button
-        // so the user has parity with ExoPlayer's controller.
-        binding.playerView.visibility = View.GONE
-        binding.surfaceRenderer.visibility = View.VISIBLE
-        showWebRtcControls(autoHide = true)
-        binding.btnWebRtcFullscreen.visibility = View.VISIBLE
-        binding.progressVideo.visibility = View.VISIBLE
-        binding.tvVideoError.visibility = View.GONE
-        // Initial state: not paused.
-        webRtcPaused = false
-        updateWebRtcControlButtons()
+            // Show the WebRTC surface + standalone fullscreen button,
+            // hide the ExoPlayer view (its controller UI is irrelevant
+            // while WebRTC is rendering).
+            // v1.5.8: show the WebRTC control bar (pause / mute /
+            // fullscreen) instead of just a fullscreen overlay button
+            // so the user has parity with ExoPlayer's controller.
+            binding.playerView.visibility = View.GONE
+            binding.surfaceRenderer.visibility = View.VISIBLE
+            showWebRtcControls(autoHide = true)
+            binding.btnWebRtcFullscreen.visibility = View.VISIBLE
+            binding.progressVideo.visibility = View.VISIBLE
+            binding.tvVideoError.visibility = View.GONE
+            // Initial state: not paused.
+            webRtcPaused = false
+            updateWebRtcControlButtons()
+        } else {
+            // Race mode: keep the ExoPlayer surface on screen and the
+            // badge on "加载中". WebRTC only takes the screen over once
+            // ICE connects AND ExoPlayer hasn't painted yet.
+            binding.tvVideoError.visibility = View.GONE
+        }
 
         // Fetch ICE config (cached after first call). The list may
         // be empty on LAN — host candidates are enough there.
@@ -2012,15 +2309,19 @@ class CameraDetailActivity : AppCompatActivity() {
             // Start a 4.0s background silent fallback timer. If WebRTC doesn't connect within 4s,
             // prepare the MP4/HLS fallback in the background and promote it as soon as WebRTC fails.
             silentFallbackJob?.cancel()
-            silentFallbackJob = lifecycleScope.launch {
-                delay(4_000L)
-                if (webRtcInProgress && !isFinishing && !isDestroyed && fallbackPlayer == null) {
-                    android.util.Log.i(TAG, "WebRTC not connected after 4.0s: silently pre-preparing fallback player...")
-                    prepareFallbackPlayer(cam)
+            if (!raceMode) {
+                silentFallbackJob = lifecycleScope.launch {
+                    delay(4_000L)
+                    if (webRtcInProgress && !isFinishing && !isDestroyed && fallbackPlayer == null) {
+                        android.util.Log.i(TAG, "WebRTC not connected after 4.0s: silently pre-preparing fallback player...")
+                        prepareFallbackPlayer(cam)
+                    }
                 }
             }
 
-            client.setAudioEnabled(audioEnabled && !webRtcMuted)
+            // v1.14.15: in race mode the ExoPlayer racer already owns
+            // the audio until WebRTC wins, so start WebRTC muted.
+            client.setAudioEnabled(if (raceMode) false else (audioEnabled && !webRtcMuted))
             client.startStream(
                 cameraId = cam.id,
                 surfaceRenderer = binding.surfaceRenderer,
@@ -2047,17 +2348,57 @@ class CameraDetailActivity : AppCompatActivity() {
                             client.setVideoEnabled(false)
                             return
                         }
+
+                        // v1.14.16: race mode — do NOT take the screen
+                        // on handshake alone (that was the black-screen
+                        // case). Keep the ExoPlayer picture and let
+                        // beginRaceWarmup promote WebRTC once decoded
+                        // frames are actually flowing.
+                        if (raceMode) {
+                            android.util.Log.i(
+                                TAG,
+                                "Race: WebRTC connected — waiting for decoded frames before switching",
+                            )
+                            beginRaceWarmup()
+                            // ExoPlayer keeps the audio until the swap.
+                            client.setAudioEnabled(false)
+                            return
+                        }
+
+                        // WebRTC wins: take the screen over. The poster
+                        // stays on top until WebRTC's own first frame.
+                        liveOwner = OWNER_WEBRTC
+                        binding.playerView.visibility = View.GONE
+                        binding.surfaceRenderer.visibility = View.VISIBLE
+                        binding.btnWebRtcFullscreen.visibility = View.VISIBLE
+                        webRtcPaused = false
+
                         binding.tvVideoError.text = getString(R.string.camera_video_failed)
-                        binding.progressVideo.visibility = View.GONE
+                        // v1.14.14: keep the spinner until a real frame
+                        // lands (revealVideoWhenSteady). Hiding it here
+                        // exposed the black SurfaceView on relayed links
+                        // where the first RTP keyframe arrives seconds
+                        // after ICE CONNECTED.
                         binding.tvVideoError.visibility = View.GONE
                         // Keep the JPEG poster up until the stream is
                         // actually steady, then cross-fade it out
                         // (see beginVideoReveal).
                         beginVideoReveal()
-                        // WebRTC succeeded: release the pre-prepared
-                        // fallback player — it's no longer needed.
-                        fallbackPlayer?.release()
-                        fallbackPlayer = null
+                        if (raceMode) {
+                            // Keep the (never-shown) racer paused as an
+                            // instant fallback instead of releasing it:
+                            // if WebRTC stalls before its first frame the
+                            // watchdog can promote a warm player.
+                            fallbackPlayer?.let { fb ->
+                                fb.volume = 0f
+                                fb.playWhenReady = false
+                            }
+                        } else {
+                            // WebRTC succeeded: release the pre-prepared
+                            // fallback player — it's no longer needed.
+                            fallbackPlayer?.release()
+                            fallbackPlayer = null
+                        }
                         // v1.5.9: confirm the active transport once
                         // ICE reaches CONNECTED — the badge was already
                         // "WebRTC" from startWebRtcStream, this just
@@ -2072,6 +2413,10 @@ class CameraDetailActivity : AppCompatActivity() {
 
                     override fun onError(reason: String) {
                         webRtcInProgress = false
+                        // v1.14.14: WebRTC is no longer the active
+                        // transport — stop the first-frame watchdog so
+                        // it cannot restart ExoPlayer later.
+                        cancelRevealWatchdog()
                         silentFallbackJob?.cancel()
                         silentFallbackJob = null
                         if (isFinishing || isDestroyed || isBackNavigating) {
@@ -2081,6 +2426,17 @@ class CameraDetailActivity : AppCompatActivity() {
                         }
                         if (isLivePausedForDialog) {
                             android.util.Log.d(TAG, "WebRTC error while dialog open: ignoring fallback")
+                            return
+                        }
+                        // v1.14.15: race verdict — ExoPlayer already
+                        // owns the screen, so a WebRTC failure is a
+                        // non-event. Just drop the WebRTC side.
+                        if (raceMode && (raceExoFirstFrame || liveOwner == OWNER_EXO)) {
+                            android.util.Log.i(
+                                TAG,
+                                "Race: WebRTC failed after ExoPlayer took over — keeping ExoPlayer ($reason)",
+                            )
+                            try { client.release() } catch (_: Exception) {}
                             return
                         }
                         android.util.Log.w(TAG, "WebRTC failed: $reason — falling back to fresh ExoPlayer")
@@ -2125,6 +2481,9 @@ class CameraDetailActivity : AppCompatActivity() {
      */
     private fun promoteFallbackPlayer(cam: Camera): Boolean {
         val fb = fallbackPlayer ?: return false
+        // v1.14.14: ExoPlayer is taking over — retire the WebRTC
+        // first-frame poll.
+        cancelRevealWatchdog()
         fallbackPlayer = null
         releaseExoPlayerOnly()
         player = fb
@@ -2142,11 +2501,17 @@ class CameraDetailActivity : AppCompatActivity() {
 
         fb.playWhenReady = true
         fb.volume = if (audioEnabled && !webRtcMuted) 1.0f else 0.0f
+        // v1.14.15: mark ExoPlayer as the live owner so the WebRTC
+        // race/failover paths know the screen is already covered.
+        liveOwner = OWNER_EXO
+        raceExoFirstFrame = true
+        raceActive = false
         if (fb.playbackState == Player.STATE_READY) {
-            binding.progressVideo.visibility = View.GONE
             binding.tvVideoError.visibility = View.GONE
             binding.surfaceRenderer.visibility = View.GONE
-            hidePreviewFrame()
+            // v1.14.14: keep the poster and let onRenderedFirstFrame
+            // drop it once a real frame is drawn, otherwise a slow
+            // decode leaves a black rectangle.
             updatePipParams()
         }
         android.util.Log.i(TAG, "Promoted pre-prepared fallback player immediately on WebRTC failure")
@@ -2155,6 +2520,9 @@ class CameraDetailActivity : AppCompatActivity() {
 
     private fun startMp4Playback(cam: Camera) {
         if (isFinishing || isDestroyed || isBackNavigating) return
+        // v1.14.14: ExoPlayer is taking over — retire the WebRTC
+        // first-frame poll.
+        cancelRevealWatchdog()
         val mp4Url = resolveMp4Url(cam)
         val hlsUrl = resolveHlsUrl(cam)
         if (mp4Url.isBlank() && hlsUrl.isBlank()) {
@@ -2212,6 +2580,32 @@ class CameraDetailActivity : AppCompatActivity() {
     }
 
     /**
+     * v1.14.14 live catch-up policy.
+     *
+     * When the live edge drifts away from the target offset (slow
+     * first segment, tunnel jitter, a rebuffer), ExoPlayer should
+     * gently play faster instead of stalling or black-screening while
+     * it re-aligns. 1.15x closes a 5s gap in ~35s and is essentially
+     * imperceptible; the Sonic audio processor keeps the pitch.
+     */
+    private fun liveSpeedControl(): DefaultLivePlaybackSpeedControl =
+        DefaultLivePlaybackSpeedControl.Builder()
+            .setFallbackMinPlaybackSpeed(1.0f)
+            .setFallbackMaxPlaybackSpeed(1.15f)
+            // Stay at 1.0x while within 2s of the target offset, then
+            // ramp up to the 1.15x cap as the error grows.
+            .setMaxLiveOffsetErrorMsForUnitSpeed(2_000L)
+            .setTargetLiveOffsetIncrementOnRebufferMs(0L)
+            .setMinUpdateIntervalMs(1_000L)
+            .build()
+
+    /** ExoPlayer actually drew a frame — safe to drop the poster. */
+    private fun onExoPlayerFirstFrame() {
+        binding.progressVideo.visibility = View.GONE
+        hidePreviewFrame()
+    }
+
+    /**
      * Pre-prepares a fallback ExoPlayer (playWhenReady=false) while
      * WebRTC is negotiating. Mirrors [preparePlayback]'s player +
      * media source configuration, but does NOT call play() — the
@@ -2226,7 +2620,10 @@ class CameraDetailActivity : AppCompatActivity() {
      * internal threads), so this is safe to call on the main thread
      * without blocking the WebRTC negotiation.
      */
-    private fun prepareFallbackPlayer(cam: Camera) {
+    private fun prepareFallbackPlayer(cam: Camera, race: Boolean = false) {
+        // Any pending WebRTC reveal poll is meaningless once the
+        // ExoPlayer ladder takes over (v1.14.14).
+        cancelRevealWatchdog()
         // Release any stale fallback player from a previous attempt.
         fallbackPlayer?.release()
         fallbackPlayer = null
@@ -2244,6 +2641,7 @@ class CameraDetailActivity : AppCompatActivity() {
         }
         val url = if (useMp4) mp4Url else hlsUrl
         if (url.isBlank()) return
+        if (race) raceUseMp4 = useMp4
 
         val token = container.prefsManager.token
         val dataSourceFactory = DefaultHttpDataSource.Factory().apply {
@@ -2271,6 +2669,12 @@ class CameraDetailActivity : AppCompatActivity() {
                         .setTargetOffsetMs(3_000)
                         .setMaxOffsetMs(10_000)
                         .setMinOffsetMs(1_000)
+                        // v1.14.14: allow catch-up playback. When the
+                        // stream falls behind the live edge (slow first
+                        // segments, tunnel jitter) play at up to 1.15x
+                        // until re-aligned instead of stalling.
+                        .setMinPlaybackSpeed(1.0f)
+                        .setMaxPlaybackSpeed(1.15f)
                         .build()
                 )
                 .build()
@@ -2292,7 +2696,15 @@ class CameraDetailActivity : AppCompatActivity() {
         val renderersFactory = ExoPlayerRendererFactory.create(this)
         val newPlayer = ExoPlayer.Builder(this, renderersFactory)
             .setLoadControl(loadControl)
+            .setLivePlaybackSpeedControl(liveSpeedControl())
             .build()
+        // v1.14.15: the race player must be attached to the visible
+        // playerView BEFORE prepare() (same MediaCodec surface rule as
+        // preparePlayback), otherwise it can never render a frame and
+        // therefore never win the race.
+        if (race) {
+            binding.playerView.player = newPlayer
+        }
         newPlayer.setAudioAttributes(
             com.google.android.exoplayer2.audio.AudioAttributes.Builder()
                 .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
@@ -2302,8 +2714,11 @@ class CameraDetailActivity : AppCompatActivity() {
         )
         newPlayer.apply {
             setMediaSource(mediaSource)
-            playWhenReady = false
-            volume = if (audioEnabled && !webRtcMuted) 1.0f else 0.0f
+            // v1.14.15: race player starts playing muted so it can
+            // paint its first frame; non-race fallback stays paused
+            // until promoted.
+            playWhenReady = race
+            volume = if (race) 0f else if (audioEnabled && !webRtcMuted) 1.0f else 0.0f
             addListener(object : Player.Listener {
                 override fun onPlaybackStateChanged(state: Int) {
                     // Only update UI once this player has been promoted
@@ -2319,12 +2734,27 @@ class CameraDetailActivity : AppCompatActivity() {
                         binding.tvVideoError.text = getString(R.string.camera_video_failed)
                         binding.tvVideoError.visibility = View.GONE
                         binding.surfaceRenderer.visibility = View.GONE
-                        hidePreviewFrame()
+                        // v1.14.14: the poster is dropped in
+                        // onRenderedFirstFrame, not here — STATE_READY
+                        // only means "enough buffered", the surface can
+                        // still be black for a few hundred ms.
                         updatePipParams()
                     }
                     if (state == Player.STATE_IDLE || state == Player.STATE_ENDED) {
                         binding.progressVideo.visibility = View.GONE
                     }
+                }
+
+                override fun onRenderedFirstFrame() {
+                    // v1.14.15: race mode — the first transport to
+                    // paint claims the screen. Non-race fallback keeps
+                    // the original "only after promotion" behaviour.
+                    if (race && this@CameraDetailActivity.player !== newPlayer) {
+                        claimExoLive(newPlayer)
+                        return
+                    }
+                    if (this@CameraDetailActivity.player !== newPlayer) return
+                    onExoPlayerFirstFrame()
                 }
 
                 override fun onPlayerError(error: PlaybackException) {
@@ -2338,6 +2768,14 @@ class CameraDetailActivity : AppCompatActivity() {
                         android.util.Log.w(TAG, "Fallback player behind live window, re-seeking...")
                         newPlayer.seekToDefaultPosition()
                         newPlayer.prepare()
+                        return
+                    }
+                    // v1.14.15: the race player failed before anyone
+                    // won — drop it quietly and let WebRTC (or its
+                    // failure ladder) decide.
+                    if (race && this@CameraDetailActivity.player !== newPlayer) {
+                        try { newPlayer.release() } catch (_: Exception) {}
+                        if (fallbackPlayer === newPlayer) fallbackPlayer = null
                         return
                     }
                     if (fallbackPlayer === newPlayer) {
@@ -2364,6 +2802,9 @@ class CameraDetailActivity : AppCompatActivity() {
 
     private fun preparePlayback(mp4Url: String, hlsUrl: String, useMp4: Boolean) {
         if (isFinishing || isDestroyed || isBackNavigating) return
+        // v1.14.14: ExoPlayer is taking over — retire the WebRTC
+        // first-frame poll.
+        cancelRevealWatchdog()
         releasePlayer()
         val url = if (useMp4) mp4Url else hlsUrl
         if (url.isBlank()) {
@@ -2413,6 +2854,12 @@ class CameraDetailActivity : AppCompatActivity() {
                         .setTargetOffsetMs(3_000)
                         .setMaxOffsetMs(10_000)
                         .setMinOffsetMs(1_000)
+                        // v1.14.14: allow catch-up playback. When the
+                        // stream falls behind the live edge (slow first
+                        // segments, tunnel jitter) play at up to 1.15x
+                        // until re-aligned instead of stalling.
+                        .setMinPlaybackSpeed(1.0f)
+                        .setMaxPlaybackSpeed(1.15f)
                         .build()
                 )
                 .build()
@@ -2434,6 +2881,7 @@ class CameraDetailActivity : AppCompatActivity() {
         val renderersFactory = ExoPlayerRendererFactory.create(this)
         val newPlayer = ExoPlayer.Builder(this, renderersFactory)
             .setLoadControl(loadControl)
+            .setLivePlaybackSpeedControl(liveSpeedControl())
             .build()
         // CRITICAL: attach the surface BEFORE prepare(). ExoPlayer
         // creates the MediaCodec during prepare() — if no surface is
@@ -2461,14 +2909,19 @@ class CameraDetailActivity : AppCompatActivity() {
                         binding.tvVideoError.text = getString(R.string.camera_video_failed)
                         binding.tvVideoError.visibility = View.GONE
                         binding.surfaceRenderer.visibility = View.GONE
-                        // v1.6.16: hide the JPEG preview frame once
-                        // ExoPlayer has its first frame ready.
-                        hidePreviewFrame()
+                        // v1.14.14: poster is dropped in
+                        // onRenderedFirstFrame below, not on
+                        // STATE_READY (which can still be a black
+                        // surface while the first frame decodes).
                         updatePipParams()
                     }
                     if (state == Player.STATE_IDLE || state == Player.STATE_ENDED) {
                         binding.progressVideo.visibility = View.GONE
                     }
+                }
+
+                override fun onRenderedFirstFrame() {
+                    onExoPlayerFirstFrame()
                 }
 
                 override fun onPlayerError(error: PlaybackException) {
@@ -2654,6 +3107,10 @@ class CameraDetailActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "CameraDetailActivity"
+        // v1.14.15: live transport ownership (see startLiveRace).
+        private const val OWNER_NONE = 0
+        private const val OWNER_WEBRTC = 1
+        private const val OWNER_EXO = 2
         const val EXTRA_CAMERA_JSON = "camera_json"
         // v1.6.0: optional initial playback position as a unix
         // timestamp (seconds). When present (passed by the alerts

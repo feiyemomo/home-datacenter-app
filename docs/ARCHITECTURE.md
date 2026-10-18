@@ -1024,6 +1024,55 @@ binding.cardNetwork.setOnClickListener {
 - **Fallback 链路**：WebRTC → MP4 → HLS → 错误占位图，每一步失败自动切到下一步
 - **生命周期**：`onCreate` 中 `webRtcClient.init()`，`onDestroy` 中先 `surfaceRenderer.release()` 再 `webRtcClient.shutdown()`（EGL 释放顺序）
 
+### v1.14.14：首帧占位与直播追赶
+
+公网中继（Cloudflare / H3C / TCP 8555）下，ICE 到达 `CONNECTED` 与第一帧 RTP 关键帧解码之间常有数秒空档，因此占位图不能按固定计时器淡出：
+
+- **WebRTC 首帧判定**：`SurfaceViewRenderer.init(eglBase, webRtcRendererEvents)` 注册 `RendererCommon.RendererEvents`，只有 `onFirstFrameRendered()` 触发后才允许 `ivPreviewFrame` 交叉淡出（280ms）。`beginVideoReveal()` 改为每 1.5s 轮询该标志，不再有「3s 无条件淡出」路径，从根上消除「预览图 → 转圈 → 黑屏」。
+- **死路兜底**：若 ICE 已 `CONNECTED` 但 12s 内一帧都没渲染，判定媒体通路失效，释放 WebRTC 并切到 ExoPlayer 阶梯（占位图仍保留在顶层，直到 ExoPlayer 出帧）。
+- **ExoPlayer 首帧判定**：占位图与转圈不再在 `STATE_READY` 隐藏，而是等 `Player.Listener.onRenderedFirstFrame()`（`STATE_READY` 只代表缓冲够，画面仍可能是黑的）。
+- **直播追赶（catch-up）**：HLS 的 `MediaItem.LiveConfiguration` 增加 `minPlaybackSpeed=1.0` / `maxPlaybackSpeed=1.15`，并在 `ExoPlayer.Builder` 上设置 `DefaultLivePlaybackSpeedControl`（目标偏移 3s、误差 2s 内保持 1.0x、之后线性升到 1.15x）。落后几秒时不再停顿等重缓冲，而是轻微加速追回；Sonic 处理器保持音调不变。
+
+### v1.14.15：秒开竞速 + 对讲麦克风按需挂载
+
+**1. 秒开竞速（`startLiveRace`）**
+
+打开摄像头时两条链路同时起，谁先画出第一帧谁就接管画面：
+
+- Racer #1：ExoPlayer（直连走 MP4，中继走 HLS），`playWhenReady=true` 但 `volume=0`，挂在 `playerView` 上渲染，画面被 JPEG 占位图盖住。
+- Racer #2：WebRTC 并行协商，**不再**清屏/切换 Surface（旧的 `releasePlayer()` 与 UI 接管推迟到 `onConnected`）。
+- ExoPlayer 先出帧 → `claimExoLive()`：解除静音、显示 HLS/MP4 徽标，继续用 1.15x 追赶；WebRTC 之后连上也只释放自己（避免闪黑/双音）。
+- WebRTC 先连上 → 接管 Surface，占位图保持到 WebRTC 自己的首帧；未出过帧的 ExoPlayer 被暂停保留，作为瞬时可用的 fallback（12s 无帧看门狗可 `promoteFallbackPlayer`）。
+- `liveOwner`（NONE/WEBRTC/EXO）贯穿 `onResume`、`resumeLivePlayback`、`releaseExoPlayerOnly`，防止任一链路把别人的画面抢走。
+
+**2. 对讲麦克风按需挂载**
+
+旧实现把本地 mic track 常驻挂在 sender 上，`setEnabled(false)` 只停 RTP 不停 `AudioRecord`，所以打开两路音频摄像头后系统麦克风长期占用。
+
+- 删除 `warmLocalAudioTrack()` 的实际挂载（权限回调不再预热）。
+- `stopTalkback()` 现在 `sender.setTrack(null)` → `track.dispose()` → `AudioSource.dispose()`，真正释放录音；松开按钮即熄灭麦克风指示。
+- 音质修正：开启软件 AEC/AGC/NS（此前为了 5x 放大被关掉）、硬件 AEC/NS 打开、增益 5.0x → 2.0x、`AudioManager.mode` 改为 `MODE_IN_COMMUNICATION`。
+
+### v1.14.16：竞速改为「帧确认后接管」
+
+v1.14.15 有两个问题：ExoPlayer 几乎总先出帧，于是 WebRTC 连上后也被丢弃（徽标永远是 MP4）；而按「握手成功」接管画面时，SurfaceView 刚变 VISIBLE、EGL surface 还没画就被淡出，出现黑屏。
+
+- **不再用握手判定**：`onConnected` 只调用 `beginRaceWarmup()`，ExoPlayer 继续占屏。WebRTC 是否可接管由 `videoFrameRateSink` 判定——只有连续 2 个 500ms 窗口 ≥10fps（真实解码帧）才 `promoteWebRtcToScreen()`。
+- **接管顺序防黑屏**：先 `playerView GONE` + `surfaceRenderer VISIBLE`，占位图继续盖 450ms（此时帧流已确认），再交叉淡出；ExoPlayer 静音并延迟 700ms 释放，避免双音与黑帧。
+- **放弃条件**：8s 内没有可持续帧 → 释放 WebRTC、保留 ExoPlayer（徽标保持 MP4/HLS），不再出现「握手成功但一直黑」。
+- 徽标语义：竞速中为「加载中」→ Exo 先出帧显示 MP4/HLS → WebRTC 接管后变为 WebRTC。
+
+### v1.14.17：渲染器生命周期 + 音频路由修正
+
+- **黑屏但有声音**：`onResume()` 会无条件 `surfaceRenderer.release()`，随后只在 `hasActiveStream() || surfaceRenderer.visibility == VISIBLE` 时重建。竞速期间两条件都不成立，渲染器被释放后再也没初始化，WebRTC 接管时只能出声音。现在用 `webRtcRendererReady` + `releaseSurfaceRenderer()/ensureSurfaceRenderer()` 统一管理，并在 `promoteWebRtcToScreen()` 里先确保渲染器就绪、再 `reattachVideoTrack`。
+- **麦克风常开**：`AudioManager.mode = MODE_IN_COMMUNICATION` 与 `setUseHardwareAcousticEchoCanceler(true)` 让系统把会话当通话处理（亮麦克风、走听筒）。两者回退为 `MODE_NORMAL` / 关闭硬件 AEC。
+- **硬性关闭录音**：`PeerConnection.setAudioRecording(false)` 在流建立时调用，`startTalkback()` 才置 true，`stopTalkback()` 立即置 false，作为“只看不听不说”的兜底保证。
+- **接管后无声**：IN_COMMUNICATION 把输出送到听筒导致“没声音”；回退 MODE_NORMAL 后恢复扬声器，并在接管后 600ms 再断言一次 `setAudioEnabled`，覆盖远端音轨晚到的情况。
+
+
+
+
+
 ### v1.5.3：播放器全屏 + 播放速度独立按钮
 
 - `PlayerFullscreenHelper`（[util/PlayerFullscreenHelper.kt](../app/src/main/java/com/homedatacenter/app/util/PlayerFullscreenHelper.kt)）统一处理三个播放器宿主（`CameraDetailActivity`、`RecordingsDialog`、`AlertsDialog`）的横屏全屏：
