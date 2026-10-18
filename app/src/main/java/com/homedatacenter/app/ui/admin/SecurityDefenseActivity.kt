@@ -5,7 +5,9 @@ import android.os.Bundle
 import android.view.View
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.homedatacenter.app.HomeCenterApp
 import com.homedatacenter.app.R
@@ -67,9 +69,27 @@ class SecurityDefenseActivity : AppCompatActivity() {
         binding.btnManualBan.setOnClickListener {
             showManualBanDialog()
         }
+
+        // v1.15.0: silent auto-refresh while the screen is visible, so
+        // the ban list/counters don't go stale during an attack.
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                while (true) {
+                    kotlinx.coroutines.delay(15_000L)
+                    if (binding.swipeRefresh.isRefreshing) continue
+                    loadDefenseData(silent = true)
+                }
+            }
+        }
     }
 
-    private fun loadDefenseData() {
+    private fun updateRefreshHint() {
+        val stamp = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
+            .format(java.util.Date())
+        binding.tvRefreshNotice.text = "每 15 秒自动同步 · 上次更新 $stamp"
+    }
+
+    private fun loadDefenseData(silent: Boolean = false) {
         val token = container.prefsManager.token
         if (token.isNullOrBlank()) {
             Toast.makeText(this, "登录状态失效，请重新登录", Toast.LENGTH_SHORT).show()
@@ -77,7 +97,7 @@ class SecurityDefenseActivity : AppCompatActivity() {
             return
         }
 
-        binding.swipeRefresh.isRefreshing = true
+        if (!silent) binding.swipeRefresh.isRefreshing = true
         lifecycleScope.launch {
             try {
                 val overview = container.getRepository().getDefenseOverview(token)
@@ -85,7 +105,9 @@ class SecurityDefenseActivity : AppCompatActivity() {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Toast.makeText(this@SecurityDefenseActivity, "加载防御中心数据失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                if (!silent) {
+                    Toast.makeText(this@SecurityDefenseActivity, "加载防御中心数据失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
             } finally {
                 binding.swipeRefresh.isRefreshing = false
             }
@@ -109,6 +131,7 @@ class SecurityDefenseActivity : AppCompatActivity() {
 
         val bans = overview.activeBans
         adapter.submitList(bans)
+        updateRefreshHint()
 
         if (bans.isEmpty()) {
             binding.layoutEmpty.visibility = View.VISIBLE
@@ -144,18 +167,41 @@ class SecurityDefenseActivity : AppCompatActivity() {
             .setNegativeButton("取消", null)
             .create()
 
+        // v1.15.0: preset duration chips keep the common cases one tap
+        // away and make "permanent" discoverable (it used to require
+        // knowing that 0 means forever).
+        val presets = mapOf(
+            dialogBinding.chip30m to 30,
+            dialogBinding.chip6h to 360,
+            dialogBinding.chip24h to 1440,
+            dialogBinding.chipPermanent to 0,
+        )
+        dialogBinding.chipGroupDuration.setOnCheckedStateChangeListener { _, checkedIds ->
+            val chip = checkedIds.firstOrNull()?.let { dialogBinding.chipGroupDuration.findViewById<com.google.android.material.chip.Chip>(it) }
+            val minutes = chip?.let { presets[it] }
+            if (minutes != null) {
+                dialogBinding.etDuration.setText(minutes.toString())
+            }
+        }
+
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 val ip = dialogBinding.etIp.text?.toString()?.trim() ?: ""
                 val durationStr = dialogBinding.etDuration.text?.toString()?.trim() ?: "30"
                 val reason = dialogBinding.etReason.text?.toString()?.trim() ?: "管理员手动阻断"
 
-                if (ip.isBlank()) {
-                    dialogBinding.tilIp.error = "请输入有效的 IP 地址"
+                if (!isValidIp(ip)) {
+                    dialogBinding.tilIp.error = "请输入合法的 IPv4 / IPv6 地址"
                     return@setOnClickListener
                 }
+                dialogBinding.tilIp.error = null
 
                 val duration = durationStr.toIntOrNull() ?: 30
+                if (duration < 0) {
+                    dialogBinding.tilDuration.error = "时长不能为负数（0 表示永久）"
+                    return@setOnClickListener
+                }
+                dialogBinding.tilDuration.error = null
 
                 val token = container.prefsManager.token ?: return@setOnClickListener
                 lifecycleScope.launch {
@@ -174,6 +220,20 @@ class SecurityDefenseActivity : AppCompatActivity() {
         }
 
         dialog.show()
+    }
+
+    /** v1.15.0: accept plain IPv4 or IPv6 (no hostnames, no DNS lookups). */
+    private fun isValidIp(raw: String): Boolean {
+        if (raw.isBlank() || raw.any { it.isWhitespace() }) return false
+        if (raw.contains(':')) {
+            // Loose IPv6 check: hex groups separated by ':', optional IPv4 tail.
+            return Regex("^[0-9a-fA-F:]+$").matches(raw) && raw.count { it == ':' } >= 2
+        }
+        val parts = raw.split('.')
+        if (parts.size != 4) return false
+        return parts.all { p ->
+            p.isNotEmpty() && p.length <= 3 && p.all(Char::isDigit) && p.toInt() in 0..255
+        }
     }
 
     private fun confirmUnban(entry: BanEntry) {

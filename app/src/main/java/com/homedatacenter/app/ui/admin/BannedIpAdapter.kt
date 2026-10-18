@@ -49,7 +49,40 @@ class BannedIpAdapter(
             } else {
                 binding.tvPermanentBadge.visibility = View.GONE
                 val expStr = if (entry.expiresAt.isNotBlank()) formatTime(entry.expiresAt) else "即将到期"
-                binding.tvTimeInfo.text = "封禁: ${formatTime(entry.bannedAt)} · 解封预计: $expStr"
+                // v1.15.0: surface the remaining window so an admin can
+                // tell at a glance how long the block still applies.
+                val remain = remainingText(entry.expiresAt)
+                binding.tvTimeInfo.text = buildString {
+                    append("封禁: ").append(formatTime(entry.bannedAt))
+                    append(" · 解封预计: ").append(expStr)
+                    if (remain.isNotEmpty()) append(" (").append(remain).append(")")
+                }
+            }
+
+            // Long-press the IP to copy it (handy when moving a block
+            // rule into router/firewall config).
+            binding.tvIpAddress.setOnLongClickListener {
+                val cm = binding.root.context
+                    .getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                cm?.setPrimaryClip(android.content.ClipData.newPlainText("ip", entry.ip))
+                android.widget.Toast.makeText(binding.root.context, "已复制 ${entry.ip}", android.widget.Toast.LENGTH_SHORT).show()
+                true
+            }
+        }
+
+        /** "剩余 12 分钟" / "剩余 3 小时 5 分", empty when unknown. */
+        private fun remainingText(expiresAt: String): String {
+            if (expiresAt.isBlank()) return ""
+            val expires = try {
+                java.time.OffsetDateTime.parse(expiresAt).toInstant()
+            } catch (_: Exception) {
+                try { java.time.Instant.parse(expiresAt) } catch (_: Exception) { return "" }
+            }
+            val mins = java.time.Duration.between(java.time.Instant.now(), expires).toMinutes()
+            return when {
+                mins <= 0L -> "即将解封"
+                mins < 60L -> "剩余 $mins 分钟"
+                else -> "剩余 ${mins / 60} 小时 ${mins % 60} 分"
             }
         }
 
