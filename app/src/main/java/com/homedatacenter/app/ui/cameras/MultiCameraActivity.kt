@@ -181,9 +181,9 @@ class MultiCameraActivity : AppCompatActivity() {
         // The focused single-camera view deliberately fills the whole
         // screen: the 适应/填充 (fit / fill) toggle only has a visible
         // effect when the container is taller than the 16:9 stream.
-        // Giving it an aspect-correct row would silently turn that
-        // toggle into a no-op, so leave 1-grid mode stretched.
-        if (currentGridMode == GridMode.ONE) {
+        // The same is true of 铺满 (centre-crop) in the tile grids, so
+        // fill mode keeps the stretched rows there too.
+        if (isFillCrop || currentGridMode == GridMode.ONE) {
             if (rowsFill) return
             rowsFill = true
             lastRowHeightPx = -1
@@ -384,6 +384,9 @@ class MultiCameraActivity : AppCompatActivity() {
     private fun toggleAspectRatio() {
         isFillCrop = !isFillCrop
         applyAspectRatio()
+        // 铺满 (centre-crop) only has anything to crop when the tile is
+        // taller than 16:9, so the rows go back to stretching.
+        binding.slotsContainer.post { applyGridRowHeights() }
     }
 
     private fun applyAspectRatio() {

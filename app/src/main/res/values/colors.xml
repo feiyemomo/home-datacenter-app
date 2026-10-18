@@ -34,10 +34,12 @@
     <!-- Glass effect — frosted warm white with top edge hint; matches web glass:
          backdrop white at 45-62% + warm tint -->
     <color name="glass_bg">#CCFFFFFF</color>
-    <!-- Bottom nav body. More opaque than @color/glass_bg so
-         scrolling content does not bleed through the floating
-         capsule and muddle the tab labels. -->
-    <color name="glass_bg_nav">#F7FFFFFF</color>
+    <!-- Bottom nav body. Fully opaque: the bar floats over scrolling
+         lists, and even a few percent of see-through made dense text
+         (log rows, camera thumbnails) readable behind the tab labels.
+         The liquid-glass look is carried by the border, the top-edge
+         highlight and the drop shadow instead of by transparency. -->
+    <color name="glass_bg_nav">#FFFFFFFF</color>
     <color name="glass_border">#33FFFFFF</color>
     <color name="glass_shadow">#14000000</color>
     <color name="glass_highlight">#26FFFFFF</color>

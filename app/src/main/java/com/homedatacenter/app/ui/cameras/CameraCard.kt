@@ -4,7 +4,6 @@ import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,6 +28,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.homedatacenter.app.R
 import com.homedatacenter.app.data.model.Camera
+import com.homedatacenter.app.util.ThemeManager
 
 // v1.6.4 rev6: warm liquid glass palette. Replaced the cold dark
 // CardBackground (#171C24) with warm cream + warm amber accent so
@@ -112,10 +113,11 @@ fun CameraCard(
     val thumbWidth = dimensionResource(R.dimen.camera_card_thumb_width)
     val thumbHeight = dimensionResource(R.dimen.camera_card_thumb_height)
 
-    // v1.6.14: pick the palette based on system theme. Compose
-    // doesn't auto-respect values-night/colors.xml — the @Composable
-    // must explicitly call isSystemInDarkTheme() and branch.
-    val isDark = isSystemInDarkTheme()
+    // v1.6.14: pick the palette based on the effective app theme.
+    // Compose doesn't auto-respect values-night/colors.xml, and
+    // isSystemInDarkTheme() ignores the in-app 外观设置 (浅色 / 深色 /
+    // 跟随系统) — ThemeManager resolves all three for us.
+    val isDark = ThemeManager.isDarkMode(LocalContext.current)
     val cardBackground = if (isDark) CardBackgroundDark else CardBackgroundLight
     val cardBorder = if (isDark) CardBorderDark else CardBorderLight
     val textPrimary = if (isDark) TextPrimaryDark else TextPrimaryLight

@@ -19,6 +19,9 @@ import com.homedatacenter.app.databinding.ActivityNetworkDetailBinding
 import com.homedatacenter.app.di.AppContainer
 import com.homedatacenter.app.util.NetworkPathPreference
 import kotlinx.coroutines.launch
+import java.time.OffsetDateTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 /**
  * Network detail page — opens when the user taps the network quality card
@@ -182,7 +185,7 @@ class NetworkDetailActivity : AppCompatActivity() {
 
         binding.tvInitial.text = "${getString(R.string.network_detail_initial)}: ${strategyLabel(s.initial)}"
         binding.tvActual.text = "${getString(R.string.network_detail_actual)}: ${strategyLabel(s.strategy)}"
-        binding.tvCheckedAt.text = "${getString(R.string.network_detail_checked_at)}: ${s.checkedAt.ifBlank { "-" }}"
+        binding.tvCheckedAt.text = "${getString(R.string.network_detail_checked_at)}: ${formatCheckedAt(s.checkedAt)}"
 
         renderIPv6(s.ipv6)
         renderNat(s.nat)
@@ -204,7 +207,29 @@ class NetworkDetailActivity : AppCompatActivity() {
 
     private fun renderP2P(p2p: P2PStatus) {
         binding.tvP2pSupported.text = "${getString(R.string.network_detail_p2p_supported)}: ${yesNo(p2p.supported)}"
+        // The reason field only makes sense when P2P did NOT work —
+        // the backend also fills it on success ("cone NAT — UDP hole
+        // punching feasible"), which rendered as a contradictory
+        // "不支持原因: …" right under "支持: 是".
         binding.tvP2pReason.text = "${getString(R.string.network_detail_p2p_reason)}: ${p2p.reason.ifBlank { "-" }}"
+        binding.tvP2pReason.visibility = if (p2p.supported) View.GONE else View.VISIBLE
+    }
+
+    /**
+     * The backend serialises checked_at as a Go time.Time, i.e. RFC3339
+     * with nanoseconds ("2026-10-18T10:25:34.981282661+08:00"). Showing
+     * that verbatim is unreadable, so render the local wall-clock time
+     * and fall back to the raw value when it cannot be parsed.
+     */
+    private fun formatCheckedAt(raw: String): String {
+        if (raw.isBlank()) return "-"
+        return try {
+            OffsetDateTime.parse(raw)
+                .atZoneSameInstant(ZoneId.systemDefault())
+                .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
+        } catch (_: Exception) {
+            raw
+        }
     }
 
     private fun renderRelay(relay: RelayStatus) {

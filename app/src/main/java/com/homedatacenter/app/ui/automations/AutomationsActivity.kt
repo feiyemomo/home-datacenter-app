@@ -2,12 +2,11 @@ package com.homedatacenter.app.ui.automations
 
 import android.os.Bundle
 import android.widget.Toast
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -76,6 +75,7 @@ import com.homedatacenter.app.data.model.RuleAction
 import com.homedatacenter.app.data.model.RuleCondition
 import com.homedatacenter.app.data.model.RuleThrottle
 import com.homedatacenter.app.data.model.UpdateAutomationRuleRequest
+import com.homedatacenter.app.util.ThemeManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -86,14 +86,20 @@ import kotlinx.coroutines.withContext
  *   [触发源 (Trigger)] ➔ [过滤规则 (Filter)] ➔ [联动动作 (Action)]
  * with execution heat indicators, metrics banner, and live rule testing.
  */
-class AutomationsActivity : ComponentActivity() {
+class AutomationsActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val container = (application as HomeCenterApp).container
 
         setContent {
-            val isDark = isSystemInDarkTheme()
+            // Honour the in-app 外观设置 (浅色 / 深色 / 跟随系统) rather
+            // than the raw system night mode. This screen used to be a
+            // plain ComponentActivity calling isSystemInDarkTheme(), so
+            // on a phone whose SYSTEM is in night mode it rendered a
+            // dark console even when the user had picked 浅色 — every
+            // other screen in the app (XML + AppCompat) stayed light.
+            val isDark = ThemeManager.isDarkMode(this)
             val colorScheme = if (isDark) {
                 darkColorScheme(
                     primary = Color(0xFF64B5F6),
