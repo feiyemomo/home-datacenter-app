@@ -155,7 +155,9 @@ object NotificationHelper {
             // v1.13.0: Attach snapshot picture if enabled
             if (prefs.notifyIncludeSnapshot) {
                 var bitmap: android.graphics.Bitmap? = null
-                val baseUrl = prefs.baseUrl?.trimEnd('/')
+                val container = (context.applicationContext as? com.homedatacenter.app.HomeCenterApp)?.container
+                val rawBaseUrl = container?.getApiBaseUrl() ?: prefs.baseUrl
+                val baseUrl = rawBaseUrl?.trimEnd('/')
                 val token = prefs.token
                 if (!baseUrl.isNullOrEmpty()) {
                     // Try thumbnail first (~6-20KB, fast & low memory, ideal for notifications),
@@ -170,7 +172,7 @@ object NotificationHelper {
                         candidateUrls.add("$baseUrl/api/v1/cameras/${alert.cameraId}/frame?quality=30")
                     }
 
-                    val client = okhttp3.OkHttpClient.Builder()
+                    val client = container?.okHttpClient ?: okhttp3.OkHttpClient.Builder()
                         .connectTimeout(2, java.util.concurrent.TimeUnit.SECONDS)
                         .readTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
                         .build()

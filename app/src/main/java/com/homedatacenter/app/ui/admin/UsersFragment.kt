@@ -1,4 +1,4 @@
-﻿package com.homedatacenter.app.ui.admin
+package com.homedatacenter.app.ui.admin
 
 import android.app.AlertDialog
 import android.content.ClipData
@@ -104,55 +104,67 @@ class UsersFragment : Fragment() {
     private fun showCreateUserDialog() {
         val token = container.prefsManager.token ?: return
 
-        val dialogContainer = LinearLayout(requireContext()).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(50, 30, 50, 10)
-        }
-        val etName = EditText(requireContext()).apply { hint = getString(R.string.user_name_label) }
-        val etPassword = EditText(requireContext()).apply {
-            hint = "密码（支持特殊符号）"
-            inputType = android.text.InputType.TYPE_CLASS_TEXT
-        }
-        val cbAdmin = CheckBox(requireContext()).apply { text = getString(R.string.user_admin_label) }
-        dialogContainer.apply {
-            addView(etName)
-            addView(etPassword)
-            addView(cbAdmin)
-        }
+        // v1.15.1: use the same warm glass dialog as the rest of the
+        // app instead of the bare platform AlertDialog + inline
+        // EditTexts, which rendered as an opaque white square box.
+        val dialogBinding =
+            com.homedatacenter.app.databinding.DialogCreateUserBinding.inflate(layoutInflater)
 
-        AlertDialog.Builder(requireContext())
-            .setTitle(R.string.users_create)
-            .setView(dialogContainer)
-            .setPositiveButton(R.string.action_create) { _, _ ->
-                val name = etName.text.toString().trim()
+        val dialog = com.google.android.material.dialog.MaterialAlertDialogBuilder(requireContext())
+            .setView(dialogBinding.root)
+            .create()
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+
+        dialogBinding.btnCancel.setOnClickListener { dialog.dismiss() }
+
+        dialogBinding.btnConfirm.setOnClickListener {
+                val name = dialogBinding.etUserName.text?.toString()?.trim().orEmpty()
                 if (name.isEmpty()) {
                     toast("请填写用户名")
-                    return@setPositiveButton
+                    return@setOnClickListener
                 }
-        val password = etPassword.text.toString()
-        if (password.isEmpty()) {
-            toast("请设置密码")
-            return@setPositiveButton
-        }
+                val password = dialogBinding.etPassword.text?.toString().orEmpty()
+                if (password.length < 6) {
+                    toast("密码长度至少为 6 位")
+                    return@setOnClickListener
+                }
+                dialog.dismiss()
                 lifecycleScope.launch {
                     try {
-                        val accessKey = container.getRepository().createUser(
+                        val created = container.getRepository().createUserDetailed(
                             token,
                             name = name,
-                            isAdmin = cbAdmin.isChecked,
-                password = password,
+                            isAdmin = dialogBinding.switchIsAdmin.isChecked,
+                            password = password,
                         )
                         loadUsers()
-                toast("用户已创建（登录凭据为所设密码）")
+                        val idText = created?.id?.toString() ?: "未知"
+                        com.google.android.material.dialog.MaterialAlertDialogBuilder(requireContext())
+                            .setTitle("用户创建成功")
+                            .setMessage("用户名: $name\n用户 ID: $idText\n\n该成员在 App 端登录时，「用户 ID」栏需填写数字 $idText，密码为刚刚设置的密码。")
+                            .setPositiveButton("复制用户 ID") { _, _ ->
+                                val newId = created?.id
+                                if (newId != null) {
+                                    val cm = requireContext()
+                                        .getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                                            as? android.content.ClipboardManager
+                                    cm?.setPrimaryClip(
+                                        android.content.ClipData.newPlainText("User ID", newId.toString())
+                                    )
+                                    toast("用户 ID ($newId) 已复制到剪贴板")
+                                }
+                            }
+                            .setNegativeButton("好的", null)
+                            .show()
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
                         toast("创建失败: ${e.message}")
                     }
                 }
-            }
-            .setNegativeButton(R.string.btn_cancel, null)
-            .show()
+        }
+
+        dialog.show()
     }
 
 //     private fun showAccessKeyDialog(accessKey: String) {

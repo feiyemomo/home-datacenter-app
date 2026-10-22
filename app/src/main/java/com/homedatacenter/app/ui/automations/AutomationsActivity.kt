@@ -102,27 +102,21 @@ class AutomationsActivity : AppCompatActivity() {
             val isDark = ThemeManager.isDarkMode(this)
             val colorScheme = if (isDark) {
                 darkColorScheme(
-                    primary = Color(0xFF64B5F6),
-                    secondary = Color(0xFF81C784),
-                    // Match @color/bg_primary / bg_surface (values-night) so
-                    // this Compose screen has the same warm-plum tone as the
-                    // rest of the dark theme instead of a blue-black console.
+                    primary = Color(0xFFD7A064),
+                    secondary = Color(0xFFE8A87C),
                     background = Color(0xFF16141C),
                     surface = Color(0xFF2A2632),
-                    onPrimary = Color.Black,
+                    onPrimary = Color(0xFF16141C),
                     onSurface = Color(0xFFE8EAED),
                 )
             } else {
                 lightColorScheme(
-                    primary = Color(0xFF1976D2),
-                    secondary = Color(0xFF388E3C),
-                    // Same warm cream palette as @color/bg_primary /
-                    // bg_surface; the Material defaults read as a cool
-                    // blue-grey next to the XML screens.
+                    primary = Color(0xFFD7A064),
+                    secondary = Color(0xFFE8A87C),
                     background = Color(0xFFF6F1EA),
                     surface = Color(0xFFFFFCF8),
                     onPrimary = Color.White,
-                    onSurface = Color(0xFF1A1C1E),
+                    onSurface = Color(0xFF3D3530),
                 )
             }
 
@@ -481,7 +475,7 @@ private fun AutomationsScreen(
                         if (target != null) deleteRule(target)
                     }
                 ) {
-                    Text("确认删除", color = Color(0xFFE53935))
+                    Text("确认删除", color = Color(0xFFE07070))
                 }
             },
             dismissButton = {
@@ -629,7 +623,7 @@ private fun AutomationPipelineCard(
                     "camera.online" -> "设备上线"
                     else -> rule.trigger
                 }
-                PipelineNodeChip(text = triggerLabel, bgColor = Color(0xFFE3F2FD), textColor = Color(0xFF1565C0))
+                PipelineNodeChip(text = triggerLabel, bgColor = Color(0x28D7A064), textColor = Color(0xFFD7A064))
 
                 Text("➔", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f), fontSize = 12.sp, modifier = Modifier.align(Alignment.CenterVertically))
 
@@ -643,7 +637,7 @@ private fun AutomationPipelineCard(
                     }
                     if (isEmpty()) append("全部通过")
                 }
-                PipelineNodeChip(text = filterLabel, bgColor = Color(0xFFFFF3E0), textColor = Color(0xFFE65100))
+                PipelineNodeChip(text = filterLabel, bgColor = Color(0x28E8A87C), textColor = Color(0xFFD4956A))
 
                 Text("➔", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f), fontSize = 12.sp, modifier = Modifier.align(Alignment.CenterVertically))
 
@@ -654,7 +648,7 @@ private fun AutomationPipelineCard(
                     "webhook" -> "Webhook"
                     else -> rule.action?.type ?: "notify"
                 }
-                PipelineNodeChip(text = actionLabel, bgColor = Color(0xFFE8F5E9), textColor = Color(0xFF2E7D32))
+                PipelineNodeChip(text = actionLabel, bgColor = Color(0x285CB880), textColor = Color(0xFF5CB880))
             }
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -692,7 +686,7 @@ private fun AutomationPipelineCard(
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                         modifier = Modifier.height(32.dp)
                     ) {
-                        Text("删除", fontSize = 12.sp, color = Color(0xFFE53935))
+                        Text("删除", fontSize = 12.sp, color = Color(0xFFE07070))
                     }
                 }
             }
@@ -720,9 +714,9 @@ private fun PipelineNodeChip(text: String, bgColor: Color, textColor: Color) {
 @Composable
 private fun HeatBadge(fireCount: Long) {
     val (text, color, bg) = when {
-        fireCount >= 20 -> Triple("高频", Color(0xFFD32F2F), Color(0xFFFFEBEE))
-        fireCount > 0 -> Triple("正常", Color(0xFF1976D2), Color(0xFFE3F2FD))
-        else -> Triple("未触发", Color(0xFF757575), Color(0xFFEEEEEE))
+        fireCount >= 20 -> Triple("高频", Color(0xFFE07070), Color(0x28E07070))
+        fireCount > 0 -> Triple("正常", Color(0xFFD7A064), Color(0x28D7A064))
+        else -> Triple("未触发", Color(0xFF8A7E72), Color(0x188A7E72))
     }
     Box(
         modifier = Modifier

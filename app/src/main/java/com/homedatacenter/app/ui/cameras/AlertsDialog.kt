@@ -361,9 +361,9 @@ class AlertsDialog(
                     android.util.Log.e("AlertsDialog", "Player error: ${error.message}")
                 }
             })
-            prepare()
         }
         binding.playerView.player = player
+        player?.prepare()
         binding.btnBack.setOnClickListener {
             if (!onBackPressedCustom()) {
                 dismiss()

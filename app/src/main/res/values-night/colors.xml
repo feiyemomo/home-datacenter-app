@@ -33,6 +33,9 @@
 
     <!-- Glass effect in dark: translucent dark with subtle white edge -->
     <color name="glass_bg">#282430</color>
+    <!-- v1.15.1: dialog surface — near-opaque so the dimmed backdrop
+         cannot bleed through the floating card. -->
+    <color name="glass_bg_dialog">#F52A2632</color>
     <!-- Bottom nav body. More opaque than @color/glass_bg so
          scrolling content does not bleed through the floating
          capsule and muddle the tab labels. -->
@@ -55,4 +58,10 @@
 
     <!-- Icon circle dark tint -->
     <color name="icon_circle_bg">#28D7A064</color>
+
+    <!-- v1.15.1: warm tonal container pair (dark). -->
+    <color name="chip_warm_bg_checked">#33D7A064</color>
+    <color name="chip_warm_text_checked">#E0B98C</color>
+    <color name="warm_container">#4A3A2A</color>
+    <color name="on_warm_container">#F0D6B8</color>
 </resources>

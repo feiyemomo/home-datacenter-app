@@ -429,6 +429,25 @@ class HomeCenterRepository(
         return resp.decodeData<CreateUserResponse>()?.accessKey
     }
 
+    /**
+     * v1.15.1: create a user and return the FULL response so the admin
+     * UI can surface the freshly assigned numeric user ID (which family
+     * members must type into the login screen's 用户 ID field).
+     */
+    suspend fun createUserDetailed(
+        token: String,
+        name: String,
+        isAdmin: Boolean,
+        password: String? = null,
+    ): CreateUserResponse? {
+        val resp = api.createUser(
+            bearer(token),
+            CreateUserRequest(name = name, isAdmin = isAdmin, password = password),
+        )
+        ensureSuccess(resp)
+        return resp.decodeData<CreateUserResponse>()
+    }
+
     suspend fun getUser(token: String, userId: Long): User {
         val resp = api.getUser(bearer(token), userId)
         ensureSuccess(resp)

@@ -291,6 +291,7 @@ class MainActivity : AppCompatActivity() {
         if (target != null && target === activeFragment) return
 
         fm.commit {
+            setCustomAnimations(R.anim.fade_in, R.anim.fade_out)
             activeFragment?.let { hide(it) }
             if (target == null) {
                 val newFragment = factory()

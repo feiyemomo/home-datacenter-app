@@ -91,16 +91,17 @@
                 app:boxCornerRadiusBottomEnd="14dp"
                 app:boxStrokeColor="@color/primary"
                 app:hintTextColor="@color/text_hint"
+                app:endIconMode="password_toggle"
+                app:endIconTint="@color/primary"
                 app:boxBackgroundColor="@android:color/transparent">
 
                 <com.google.android.material.textfield.TextInputEditText
                     android:id="@+id/etAccessKey"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:inputType="textMultiLine|textNoSuggestions"
+                    android:inputType="textPassword"
                     android:textColor="@color/text_primary"
                     android:textSize="15sp"
-                    android:minLines="2"
                     android:paddingVertical="6dp"
                     android:imeOptions="actionDone" />
 
@@ -134,6 +135,7 @@
                 android:textColor="@color/error"
                 android:textSize="13sp"
                 android:visibility="gone"
+                android:accessibilityLiveRegion="polite"
                 android:layout_gravity="center_horizontal"
                 android:layout_marginBottom="8dp" />
 

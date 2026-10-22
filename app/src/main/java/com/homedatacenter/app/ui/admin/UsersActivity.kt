@@ -105,22 +105,35 @@ class UsersActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
             val password = dialogBinding.etPassword.text?.toString().orEmpty()
-            if (password.isEmpty()) {
-                toast("请设置密码")
+            if (password.length < 6) {
+                toast("密码长度至少为 6 位")
                 return@setOnClickListener
             }
 
             dialog.dismiss()
             lifecycleScope.launch {
                 try {
-                    container.getRepository().createUser(
+                    val resp = container.getRepository().createUserDetailed(
                         token,
                         name = name,
                         isAdmin = dialogBinding.switchIsAdmin.isChecked,
                         password = password,
                     )
                     loadUsers()
-                    toast("用户已创建（登录凭据为所设密码）")
+                    val createdId = resp?.id
+                    val idText = createdId?.toString() ?: "未知"
+                    com.google.android.material.dialog.MaterialAlertDialogBuilder(this@UsersActivity)
+                        .setTitle("用户创建成功")
+                        .setMessage("用户名: $name\n用户 ID: $idText\n\n提示：该成员在 App 端登录时，必须在「用户 ID」栏输入数字 $idText，密码为刚刚设置的密码。")
+                        .setPositiveButton("复制用户 ID") { _, _ ->
+                            if (createdId != null) {
+                                val cm = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                                cm?.setPrimaryClip(android.content.ClipData.newPlainText("User ID", createdId.toString()))
+                                toast("用户 ID ($createdId) 已复制到剪贴板")
+                            }
+                        }
+                        .setNegativeButton("好的", null)
+                        .show()
                 } catch (e: Exception) {
                     toast("创建失败: ${e.message}")
                 }

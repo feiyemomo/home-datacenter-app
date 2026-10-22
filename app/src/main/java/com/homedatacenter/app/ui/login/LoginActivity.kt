@@ -84,7 +84,26 @@ class LoginActivity : AppCompatActivity() {
                 container.prefetchIceConfig()
                 navigateToMain()
             } catch (e: Exception) {
-                showError(getString(com.homedatacenter.app.R.string.login_error) + ": ${e.message}")
+                val errorMsg = if (e is retrofit2.HttpException) {
+                    val errorBody = e.response()?.errorBody()?.string()
+                    val parsedMsg = try {
+                        if (!errorBody.isNullOrBlank()) {
+                            val json = org.json.JSONObject(errorBody)
+                            json.optString("message").ifBlank { null }
+                        } else null
+                    } catch (_: Exception) {
+                        null
+                    }
+                    parsedMsg ?: when (e.code()) {
+                        401 -> "凭据无效，请检查用户 ID 与密码"
+                        403 -> "访问被安全防御系统拦截，请稍后再试或联系管理员"
+                        502, 504 -> "无法连接至家庭服务器网关 (网关超时/错误)"
+                        else -> "HTTP ${e.code()}: ${e.message()}"
+                    }
+                } else {
+                    e.message ?: "网络连接异常"
+                }
+                showError(getString(com.homedatacenter.app.R.string.login_error) + ": $errorMsg")
             } finally {
                 showLoading(false)
             }

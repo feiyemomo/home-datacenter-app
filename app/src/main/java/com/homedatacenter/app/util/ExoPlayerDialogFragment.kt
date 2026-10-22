@@ -154,11 +154,10 @@ class ExoPlayerDialogFragment : DialogFragment() {
                     handleError(error)
                 }
             })
-
-            prepare()
         }
 
         playerView.player = player
+        player?.prepare()
         playerView.setShowBuffering(StyledPlayerView.SHOW_BUFFERING_WHEN_PLAYING)
     }
 

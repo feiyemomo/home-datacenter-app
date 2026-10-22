@@ -431,11 +431,14 @@ class MultiCameraActivity : AppCompatActivity() {
                     delay(i * 80L)
                     val opts = BitmapFactory.Options().apply {
                         inPreferredConfig = android.graphics.Bitmap.Config.RGB_565
+                        inMutable = true
                     }
+                    var reusedBitmap: android.graphics.Bitmap? = null
                     while (isActive) {
                         try {
+                            val activeBaseUrl = container.getApiBaseUrl().trimEnd('/')
                             val ts = System.currentTimeMillis()
-                            val frameUrl = "$baseUrl/api/v1/cameras/${cam.id}/frame?width=${mode.width}&quality=${mode.quality}&nocache=1&t=$ts"
+                            val frameUrl = "$activeBaseUrl/api/v1/cameras/${cam.id}/frame?width=${mode.width}&quality=${mode.quality}&nocache=1&t=$ts"
                             val req = Request.Builder()
                                 .url(frameUrl)
                                 .apply {
@@ -448,17 +451,29 @@ class MultiCameraActivity : AppCompatActivity() {
                             client.newCall(req).execute().use { resp ->
                                 if (resp.isSuccessful) {
                                     resp.body?.byteStream()?.use { stream ->
-                                        val bitmap = BitmapFactory.decodeStream(stream, null, opts)
+                                        val reusable = reusedBitmap
+                                        opts.inBitmap = if (reusable != null && !reusable.isRecycled) reusable else null
+                                        val bitmap = try {
+                                            BitmapFactory.decodeStream(stream, null, opts)
+                                        } catch (_: IllegalArgumentException) {
+                                            opts.inBitmap = null
+                                            BitmapFactory.decodeStream(stream, null, opts)
+                                        }
                                         if (bitmap != null && isActive) {
+                                            reusedBitmap = bitmap
                                             withContext(Dispatchers.Main) {
                                                 iv.setImageBitmap(bitmap)
                                                 pb.visibility = View.GONE
+                                                slot.status.text = getString(R.string.camera_online)
+                                                slot.status.setTextColor(getColor(R.color.online))
                                             }
                                         }
                                     }
                                 } else {
                                     withContext(Dispatchers.Main) {
                                         pb.visibility = View.GONE
+                                        slot.status.text = getString(R.string.camera_offline)
+                                        slot.status.setTextColor(getColor(R.color.offline))
                                     }
                                 }
                             }
@@ -466,6 +481,8 @@ class MultiCameraActivity : AppCompatActivity() {
                             if (e is CancellationException) throw e
                             withContext(Dispatchers.Main) {
                                 pb.visibility = View.GONE
+                                slot.status.text = getString(R.string.camera_offline)
+                                slot.status.setTextColor(getColor(R.color.offline))
                             }
                         }
                         delay(mode.intervalMs)

@@ -708,9 +708,9 @@ class RecordingsDialog(
                         Toast.makeText(context, "播放异常: ${error.message}", Toast.LENGTH_SHORT).show()
                     }
                 })
-                prepare()
             }
         binding.playerView.player = player
+        player?.prepare()
 
         binding.btnBack.setOnClickListener {
             if (!onBackPressedCustom()) {
@@ -946,9 +946,9 @@ class RecordingsDialog(
                     }
                 }
             })
-            prepare()
         }
         binding.playerView.player = player
+        player?.prepare()
 
         // v1.5.11: hide ExoPlayer's built-in controller scrubber in
         // playlist mode so the user doesn't see two competing

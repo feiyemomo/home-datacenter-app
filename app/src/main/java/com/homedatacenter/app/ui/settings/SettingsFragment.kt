@@ -728,22 +728,49 @@ class SettingsFragment : Fragment() {
         val context = context ?: return
         val mainActivity = activity as? MainActivity ?: return
         val apkFile = mainActivity.container.getCachedDownloadedApk()
-        val posButtonText = if (apkFile != null && apkFile.exists()) "立即安装" else "确定"
 
-        val notesText = if (info.release_notes.isNotBlank()) {
-            "\n\n【更新内容】\n${info.release_notes}"
-        } else ""
+        val dialogBinding = com.homedatacenter.app.databinding.DialogUpdateAvailableBinding.inflate(layoutInflater)
+        val currentVersion = try {
+            val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+            pInfo.versionName
+        } catch (_: Exception) {
+            "当前版本"
+        }
 
-        AlertDialog.Builder(context)
-            .setTitle("发现新版本 v${info.version_name}")
-            .setMessage("最新版本: v${info.version_name}${notesText}")
-            .setPositiveButton(posButtonText) { _, _ ->
-                if (apkFile != null && apkFile.exists()) {
-                    ApkInstaller.launchInstaller(requireActivity(), apkFile)
-                }
+        dialogBinding.tvCurrentVersion.text = currentVersion
+        dialogBinding.tvNewVersion.text = info.version_name
+        dialogBinding.tvUpdateSize.text = String.format(java.util.Locale.US, "%.1f MB", info.size_bytes / (1024.0 * 1024.0))
+
+        if (info.release_notes.isNotBlank()) {
+            dialogBinding.tvReleaseNotesLabel.visibility = View.VISIBLE
+            dialogBinding.scrollReleaseNotes.visibility = View.VISIBLE
+            dialogBinding.tvReleaseNotes.text = info.release_notes
+        }
+
+        val hasApk = apkFile != null && apkFile.exists()
+        dialogBinding.btnDownloadInstall.text = if (hasApk) "立即安装" else "下载并安装"
+
+        val dialog = com.google.android.material.dialog.MaterialAlertDialogBuilder(context)
+            .setView(dialogBinding.root)
+            .create()
+
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+
+        dialogBinding.btnCancel.setOnClickListener {
+            dialog.dismiss()
+        }
+
+        dialogBinding.btnDownloadInstall.setOnClickListener {
+            dialog.dismiss()
+            if (hasApk) {
+                ApkInstaller.launchInstaller(requireActivity(), apkFile!!)
+            } else {
+                mainActivity.container.startDownloadFor(info)
+                Toast.makeText(requireContext(), "正在后台下载新版本，完成后可在设置页安装", Toast.LENGTH_SHORT).show()
             }
-            .setNegativeButton("稍后", null)
-            .show()
+        }
+
+        dialog.show()
     }
 
     /**

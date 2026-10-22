@@ -319,6 +319,17 @@ class AppContainer(private val context: Context) {
         cachedUpdateInfo
 
     /**
+     * v1.15.1: public entry point so the custom update dialog's
+     * "下载并安装" button can kick off (or resume) the APK download
+     * on demand instead of relying solely on the startup auto-start.
+     */
+    fun startDownloadFor(info: com.homedatacenter.app.data.model.UpdateInfo) {
+        cachedUpdateInfo = info
+        downloadFailed = false
+        startBackgroundDownload(info)
+    }
+
+    /**
      * Returns the latest known release metadata fetched from the server,
      * regardless of whether an update is available or the app is already
      * at the latest version. Useful for reading release_notes.

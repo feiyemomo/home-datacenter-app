@@ -161,11 +161,15 @@ class SecurityDefenseActivity : AppCompatActivity() {
 
     private fun showManualBanDialog() {
         val dialogBinding = DialogManualBanBinding.inflate(layoutInflater)
-        val dialog = AlertDialog.Builder(this)
+        val dialog = com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
             .setView(dialogBinding.root)
-            .setPositiveButton("立即封禁", null)
-            .setNegativeButton("取消", null)
             .create()
+
+        // v1.15.1: make the window transparent so the layout's own
+        // bg_dialog_glass rounded surface is what the user sees —
+        // otherwise the platform dialog paints an opaque white
+        // square-cornered box behind our warm card.
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
 
         // v1.15.0: preset duration chips keep the common cases one tap
         // away and make "permanent" discoverable (it used to require
@@ -184,14 +188,19 @@ class SecurityDefenseActivity : AppCompatActivity() {
             }
         }
 
-        dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+        dialogBinding.btnCancelBan.setOnClickListener { dialog.dismiss() }
+
+        dialogBinding.btnConfirmBan.setOnClickListener {
                 val ip = dialogBinding.etIp.text?.toString()?.trim() ?: ""
                 val durationStr = dialogBinding.etDuration.text?.toString()?.trim() ?: "30"
                 val reason = dialogBinding.etReason.text?.toString()?.trim() ?: "管理员手动阻断"
 
                 if (!isValidIp(ip)) {
                     dialogBinding.tilIp.error = "请输入合法的 IPv4 / IPv6 地址"
+                    return@setOnClickListener
+                }
+                if (ip == "127.0.0.1" || ip == "::1" || ip == "192.168.31.1") {
+                    dialogBinding.tilIp.error = "不可封禁本地回环或局域网核心网关地址"
                     return@setOnClickListener
                 }
                 dialogBinding.tilIp.error = null
@@ -216,24 +225,25 @@ class SecurityDefenseActivity : AppCompatActivity() {
                         Toast.makeText(this@SecurityDefenseActivity, "封禁失败: ${e.message}", Toast.LENGTH_LONG).show()
                     }
                 }
-            }
         }
 
         dialog.show()
     }
 
-    /** v1.15.0: accept plain IPv4 or IPv6 (no hostnames, no DNS lookups). */
+    /** v1.15.1: robust IPv4/IPv6 validation with self/gateway lockout warning */
     private fun isValidIp(raw: String): Boolean {
         if (raw.isBlank() || raw.any { it.isWhitespace() }) return false
-        if (raw.contains(':')) {
-            // Loose IPv6 check: hex groups separated by ':', optional IPv4 tail.
-            return Regex("^[0-9a-fA-F:]+$").matches(raw) && raw.count { it == ':' } >= 2
-        }
         val parts = raw.split('.')
-        if (parts.size != 4) return false
-        return parts.all { p ->
-            p.isNotEmpty() && p.length <= 3 && p.all(Char::isDigit) && p.toInt() in 0..255
+        if (parts.size == 4) {
+            return parts.all { p ->
+                p.isNotEmpty() && p.length <= 3 && p.all(Char::isDigit) && p.toInt() in 0..255
+            }
         }
+        if (raw.contains(':')) {
+            val v6Regex = Regex("^([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$|^([0-9a-fA-F]{1,4}:)*:[0-9a-fA-F]{1,4}(:[0-9a-fA-F]{1,4})*$|^::$")
+            return v6Regex.matches(raw)
+        }
+        return false
     }
 
     private fun confirmUnban(entry: BanEntry) {

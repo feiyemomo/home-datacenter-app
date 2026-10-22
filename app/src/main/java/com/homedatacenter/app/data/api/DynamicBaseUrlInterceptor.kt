@@ -71,9 +71,16 @@ class DynamicBaseUrlInterceptor(
             return chain.proceed(request)
         }
 
+        // Preserve WebSocket schemes (ws/wss) if the incoming request is a WebSocket upgrade
+        val targetScheme = if (currentUrl.scheme.equals("ws", ignoreCase = true) || currentUrl.scheme.equals("wss", ignoreCase = true)) {
+            if (targetUrl.scheme.equals("https", ignoreCase = true)) "wss" else "ws"
+        } else {
+            targetUrl.scheme
+        }
+
         // Rewrite scheme, host, and port while keeping original path and query
         val newUrl = currentUrl.newBuilder()
-            .scheme(targetUrl.scheme)
+            .scheme(targetScheme)
             .host(targetUrl.host)
             .port(targetUrl.port)
             .build()

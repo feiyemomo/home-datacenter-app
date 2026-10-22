@@ -55,6 +55,10 @@ class RegisterCameraDialog(
         super.onCreate(savedInstanceState)
         setTitle(R.string.camera_register_title)
         setContentView(buildView())
+        // v1.15.1: transparent window so the layout's own
+        // bg_dialog_glass rounded surface shows through instead of the
+        // platform's opaque white square backdrop.
+        window?.setBackgroundDrawableResource(android.R.color.transparent)
         // Make the dialog wider so all fields fit comfortably.
         window?.setLayout(
             (context.resources.displayMetrics.widthPixels * 0.92).toInt(),

@@ -125,6 +125,125 @@ class CameraDetailActivity : AppCompatActivity() {
     private var alertsDialog: AlertsDialog? = null
     private var fullscreenHelper: PlayerFullscreenHelper? = null
 
+    /**
+     * v1.15.1: on-screen aspect (width / height) of the WebRTC stream,
+     * learned from decoded frames. Drives fullscreen letterboxing so a
+     * 16:9 camera on a 20:9 phone shows the WHOLE frame instead of
+     * being cropped to fill the screen.
+     */
+    private var knownVideoAspect: Float = 0f
+
+    /**
+     * v1.15.1: original (non-fullscreen) height of the video container
+     * chain, captured on first use so exiting fullscreen restores the
+     * exact pre-fullscreen layout instead of guessing.
+     */
+    private var originalPlayerContainerHeight: Int = android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+
+    /** Pixel height that makes the video container chain fill the
+     *  current window once the orientation change has settled. */
+    private val layoutParamsForFullscreen: Int
+        get() = runCatching {
+            val wm = getSystemService(android.content.Context.WINDOW_SERVICE)
+                as android.view.WindowManager
+            val bounds = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                wm.currentWindowMetrics.bounds
+            } else {
+                @Suppress("DEPRECATION")
+                android.graphics.Rect(0, 0, wm.defaultDisplay.width, wm.defaultDisplay.height)
+            }
+            // Fullscreen content area == the window in its current
+            // orientation; the short side is the landscape height.
+            minOf(bounds.width(), bounds.height())
+        }.getOrDefault(resources.displayMetrics.heightPixels)
+
+    /**
+     * v1.15.1: current window size in the CURRENT orientation.
+     */
+    private fun currentWindowSize(): Pair<Int, Int> = runCatching {
+        val wm = getSystemService(android.content.Context.WINDOW_SERVICE)
+            as android.view.WindowManager
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            val b = wm.currentWindowMetrics.bounds
+            b.width() to b.height()
+        } else {
+            @Suppress("DEPRECATION")
+            wm.defaultDisplay.width to wm.defaultDisplay.height
+        }
+    }.getOrDefault(resources.displayMetrics.widthPixels to resources.displayMetrics.heightPixels)
+
+    /**
+     * v1.15.1: size the WebRTC surface so the decoded frame is fully
+     * visible (letterboxed) inside the current viewport.
+     *
+     * Why this cannot be left to RendererCommon.ScalingType alone:
+     * SurfaceViewRenderer only applies its scaling type when it is free
+     * to choose its own measured size. Our layout pins the renderer to
+     * match_parent/EXACTLY specs so the adapter falls back to filling
+     * its bounds — on a phone whose aspect differs from the stream's
+     * that crops the top and bottom off the picture. Sizing the view to
+     * the stream's aspect makes "fill the view" and "show the whole
+     * frame" the same thing.
+     */
+    private fun applyVideoSurfaceAspect(fullscreen: Boolean) {
+        if (isFinishing || isDestroyed) return
+        val renderer = binding.surfaceRenderer
+        val lp = renderer.layoutParams ?: return
+        if (!fullscreen) {
+            // Restore the plain match_parent box used in portrait.
+            lp.width = android.view.ViewGroup.LayoutParams.MATCH_PARENT
+            lp.height = android.view.ViewGroup.LayoutParams.MATCH_PARENT
+            renderer.layoutParams = lp
+            return
+        }
+        val (winW, winH) = currentWindowSize()
+        val aspect = knownVideoAspect
+        if (aspect <= 0f || winW <= 0 || winH <= 0) {
+            // Aspect not learned yet — fill and let a later frame
+            // callback re-fit once we know the real shape.
+            lp.width = android.view.ViewGroup.LayoutParams.MATCH_PARENT
+            lp.height = android.view.ViewGroup.LayoutParams.MATCH_PARENT
+            renderer.layoutParams = lp
+            return
+        }
+        val viewportAspect = winW.toFloat() / winH.toFloat()
+        val (targetW, targetH) = if (aspect > viewportAspect) {
+            // Stream is wider than the screen → pillarbox.
+            winW to (winW / aspect).toInt()
+        } else {
+            // Stream is taller than the screen → letterbox.
+            (winH * aspect).toInt() to winH
+        }
+        lp.width = targetW.coerceAtLeast(1)
+        lp.height = targetH.coerceAtLeast(1)
+        renderer.layoutParams = lp
+        renderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT)
+    }
+
+    /**
+     * v1.15.1: apply a height to every wrapper between the ScrollView
+     * and the video surfaces. Without this the WebRTC renderer sits in
+     * a container still sized for portrait and the picture is clipped
+     * on phones whose aspect ratio differs from the stream's.
+     */
+    private fun applyPlayerContainerHeight(height: Int) {
+        if (isFinishing || isDestroyed) return
+        listOf(
+            binding.videoContainer,
+            binding.pinchZoomContainer,
+            binding.zoomContentContainer,
+        ).forEach { view ->
+            val lp = view.layoutParams
+            if (lp.height != height) {
+                lp.height = height
+                view.layoutParams = lp
+            }
+        }
+        // v1.15.1: (re)fit the surface to the stream's aspect inside
+        // the freshly sized viewport so nothing is cropped.
+        applyVideoSurfaceAspect(fullscreenHelper?.isFullscreen == true)
+    }
+
     private val recordAudioLauncher = registerForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -1160,6 +1279,10 @@ class CameraDetailActivity : AppCompatActivity() {
         // in WebRTC mode (when playerView is GONE, its built-in
         // controller button isn't reachable). The helper wires its
         // click listener to [toggleFullscreen] in [attach].
+        // v1.15.1: capture the pre-fullscreen container height once so
+        // exiting fullscreen restores the exact original layout.
+        originalPlayerContainerHeight = binding.videoContainer.layoutParams.height
+
         val helper = PlayerFullscreenHelper(
             playerView = binding.playerView,
             hostView = binding.root,
@@ -1178,17 +1301,36 @@ class CameraDetailActivity : AppCompatActivity() {
             secondaryPlayerView = binding.surfaceRenderer,
             fullscreenButton = binding.btnWebRtcFullscreen,
             onFullscreenChanged = { isFs ->
+                // v1.15.1: the WebRTC surface used to be resized only via
+                // PlayerFullscreenHelper's absolute-pixel height. That left
+                // the three wrapping containers (videoContainer ->
+                // pinchZoomContainer -> zoomContentContainer) at their
+                // original wrap_content size, so on phones whose aspect
+                // ratio differs from the camera's the renderer was boxed
+                // in a container smaller than the screen and the picture
+                // came out clipped / letterboxed into the wrong region.
+                //
+                // Fix: resize the whole container chain together, using an
+                // explicit pixel height computed AFTER the orientation
+                // change settles (post {}), then re-apply the renderer's
+                // FIT scaling so the frame is fully visible.
                 binding.pinchZoomContainer.resetZoom(false)
+                binding.surfaceRenderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT)
+                binding.playerView.resizeMode =
+                    com.google.android.exoplayer2.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+
                 if (isFs) {
-                    // v1.13.9: adapt to phone screen (FIT mode) rather than crop/fill (FILL mode)
-                    binding.surfaceRenderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT)
-                    binding.playerView.resizeMode = com.google.android.exoplayer2.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
                     binding.root.isNestedScrollingEnabled = false
                     binding.root.scrollTo(0, 0)
+                    binding.surfaceRenderer.setEnableHardwareScaler(true)
+                    // Defer until the rotation + relayout has completed,
+                    // otherwise we would measure the pre-rotation size and
+                    // end up with a landscape screen showing a portrait box.
+                    binding.root.post { applyPlayerContainerHeight(layoutParamsForFullscreen) }
                 } else {
-                    binding.surfaceRenderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT)
-                    binding.playerView.resizeMode = com.google.android.exoplayer2.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    binding.surfaceRenderer.setEnableHardwareScaler(false)
                     binding.root.isNestedScrollingEnabled = true
+                    binding.root.post { applyPlayerContainerHeight(originalPlayerContainerHeight) }
                 }
             }
         )
@@ -1660,6 +1802,23 @@ class CameraDetailActivity : AppCompatActivity() {
         private var steadyWindows = 0
 
         override fun onFrame(frame: org.webrtc.VideoFrame) {
+            // v1.15.1: remember the decoded frame's on-screen aspect so
+            // fullscreen can letterbox to the real stream shape instead
+            // of stretching to the phone's aspect (which cropped the
+            // picture on non-16:9 devices).
+            runCatching {
+                val w = frame.rotatedWidth
+                val h = frame.rotatedHeight
+                if (w > 0 && h > 0 && knownVideoAspect != w.toFloat() / h) {
+                    val previous = knownVideoAspect
+                    knownVideoAspect = w.toFloat() / h
+                    // Re-fit a fullscreen surface whose aspect just changed
+                    // (e.g. the camera switched from 16:9 to 4:3).
+                    if (previous != 0f && fullscreenHelper?.isFullscreen == true) {
+                        binding.root.post { applyVideoSurfaceAspect(true) }
+                    }
+                }
+            }
             val now = android.os.SystemClock.elapsedRealtime()
             if (windowStartAt == 0L) {
                 windowStartAt = now
