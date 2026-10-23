@@ -496,7 +496,7 @@ class DashboardFragment : Fragment() {
         val uptimeCard = ItemStatCardBinding.bind(binding.cardUptime.root)
         uptimeCard.tvLabel.text = getString(R.string.stat_uptime)
         uptimeCard.tvValue.text = formatUptime(status.uptimeSeconds)
-        uptimeCard.ivIcon.setImageResource(R.drawable.ic_dashboard)
+        uptimeCard.ivIcon.setImageResource(R.drawable.ic_uptime)
         uptimeCard.ivIcon.imageTintList =
             android.content.res.ColorStateList.valueOf(
                 resources.getColor(R.color.primary_dark, null))

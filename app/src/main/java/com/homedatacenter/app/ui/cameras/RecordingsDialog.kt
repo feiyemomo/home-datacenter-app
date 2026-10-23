@@ -312,18 +312,8 @@ class RecordingsDialog(
                     }
                     if (!append) allRecordings.clear()
                     allRecordings.addAll(recordings)
-                    // v1.6.2: group recordings by LOCAL day and
-                    // hand the per-day list to [dayAdapter]. Each
-                    // DayRecording aggregates the count + total
-                    // duration of all 60s buckets that fall on that
-                    // LOCAL date. Days with zero recordings are NOT
-                    // synthesized — only days that have at least
-                    // one recording appear, since the user explicitly
-                    // asked "标注每一天是否有录像数据" and the
-                    // backend only returns days with recordings
-                    // (the /recordings endpoint returns the last 7
-                    // days' buckets, omitting empty days entirely).
-                    val dayList = groupRecordingsByDay(recordings)
+                    // v1.15.2: pass allRecordings so loading earlier batches preserves already-loaded days
+                    val dayList = groupRecordingsByDay(allRecordings)
                     dayAdapter.submitList(dayList)
                     earliestDay = dayList.lastOrNull()
                     binding.btnLoadEarlier.visibility = if (dayList.isEmpty()) View.GONE else View.VISIBLE
@@ -332,7 +322,7 @@ class RecordingsDialog(
                     // v1.6.8: empty-state container holds icon +
                     // tvEmpty + tvEmptyHint — toggle as a unit.
                     binding.emptyStateContainer.visibility =
-                        if (recordings.isEmpty()) View.VISIBLE else View.GONE
+                        if (allRecordings.isEmpty()) View.VISIBLE else View.GONE
                     if (recordings.isEmpty()) {
                         binding.tvEmpty.text = if (resp.isSuccess) "暂无录像" else "加载失败"
                         binding.tvEmptyHint.text = if (resp.isSuccess)
@@ -933,16 +923,33 @@ class RecordingsDialog(
                     }
                     // v1.10.7: self-healing network retry for clip boundary transitions
                     val p = player
-                    if (p != null && recordingRetryCount < 2) {
-                        recordingRetryCount++
-                        val currentWindow = p.currentMediaItemIndex
-                        val currentPos = p.currentPosition
-                        android.util.Log.w("RecordingsDialog",
-                            "Network stutter in recording, retrying at window=$currentWindow pos=$currentPos (#$recordingRetryCount)")
-                        p.seekTo(currentWindow, currentPos)
-                        p.prepare()
-                        p.play()
-                        return
+                    if (p != null) {
+                        if (recordingRetryCount < 2) {
+                            recordingRetryCount++
+                            val currentWindow = p.currentMediaItemIndex
+                            val currentPos = p.currentPosition
+                            android.util.Log.w("RecordingsDialog",
+                                "Network stutter in recording, retrying at window=$currentWindow pos=$currentPos (#$recordingRetryCount)")
+                            p.seekTo(currentWindow, currentPos)
+                            p.prepare()
+                            p.play()
+                            return
+                        } else {
+                            // v1.15.2: clip failed repeatedly (e.g. 404 or corrupted file).
+                            // Skip to the next clip instead of permanently freezing playback.
+                            recordingRetryCount = 0
+                            val nextWindow = p.currentMediaItemIndex + 1
+                            if (nextWindow < p.mediaItemCount) {
+                                android.util.Log.w("RecordingsDialog", "Clip failed repeatedly; skipping to next clip index $nextWindow")
+                                Toast.makeText(context, "当前录像片段异常，已自动跳过", Toast.LENGTH_SHORT).show()
+                                p.seekTo(nextWindow, 0L)
+                                p.prepare()
+                                p.play()
+                                return
+                            } else {
+                                Toast.makeText(context, "录像播放结束或无法继续加载", Toast.LENGTH_SHORT).show()
+                            }
+                        }
                     }
                 }
             })

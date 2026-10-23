@@ -99,7 +99,11 @@ class HomeCenterWebSocket(
             while (isActive && isConnected) {
                 delay(heartbeatIntervalMs)
                 if (!sendHeartbeat()) {
-                    Log.w(TAG, "heartbeat send failed; connection likely dead")
+                    Log.w(TAG, "heartbeat send failed; socket dead, forcing reconnect")
+                    isConnected = false
+                    try { webSocket?.cancel() } catch (_: Exception) {}
+                    webSocket = null
+                    scheduleReconnect()
                     break
                 }
             }

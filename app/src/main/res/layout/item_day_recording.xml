@@ -44,7 +44,6 @@
         android:orientation="horizontal"
         android:gravity="center_vertical"
         android:padding="14dp"
-        android:elevation="2dp"
         android:background="@drawable/bg_glass_card_warm">
 
         <!-- Left accent stripe: warm peach, 3dp wide, full height of

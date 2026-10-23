@@ -64,6 +64,7 @@ class AlertsDialog(
     // first display. We keep [allAlerts] as the source of truth
     // and expose [visibleAlerts] (default 20) to the adapter.
     private val allAlerts = mutableListOf<Alert>()
+    private var currentFilteredAlerts: List<Alert> = emptyList()
     private val visibleAlerts = mutableListOf<Alert>()
     private var isLoadingMore = false
     private val pageBatchSize = 20
@@ -102,6 +103,7 @@ class AlertsDialog(
         } else {
             allAlerts.filter { it.label.equals(cat, ignoreCase = true) }
         }
+        currentFilteredAlerts = filtered
         visibleAlerts.clear()
         visibleAlerts.addAll(filtered.take(pageBatchSize))
         adapter.submitList(visibleAlerts.toList())
@@ -199,10 +201,11 @@ class AlertsDialog(
      */
     private fun loadMoreAlerts() {
         if (isLoadingMore) return
-        if (visibleAlerts.size >= allAlerts.size) return
+        val targetList = currentFilteredAlerts
+        if (visibleAlerts.size >= targetList.size) return
         isLoadingMore = true
-        val nextEnd = (visibleAlerts.size + pageBatchSize).coerceAtMost(allAlerts.size)
-        visibleAlerts.addAll(allAlerts.subList(visibleAlerts.size, nextEnd))
+        val nextEnd = (visibleAlerts.size + pageBatchSize).coerceAtMost(targetList.size)
+        visibleAlerts.addAll(targetList.subList(visibleAlerts.size, nextEnd))
         adapter.submitList(visibleAlerts.toList()) {
             isLoadingMore = false
         }

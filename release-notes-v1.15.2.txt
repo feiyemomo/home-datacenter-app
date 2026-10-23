@@ -1,0 +1,46 @@
+Home Datacenter Android v1.15.2 — 播放稳定性、PTZ 手感与视觉全面重塑
+=================================================================
+
+播放与实时监控
+--------------
+* 修复：CameraDetailActivity 息屏或切入后台切回后黑屏死锁的问题。
+  彻底清理 onStop 下的 Surface 状态与播放器标记，onResume 自动平滑重连拉流。
+* 修复：备用播放器非 race 模式下提前调用 prepare() 导致的 MediaCodec
+  setOutputSurface BAD_INDEX 时序崩溃隐患。
+* 新增：实时直播「抓拍」快门功能。顶栏工具栏新增快门按钮，从底层渲染表面
+  捕获无损高清画面，通过 MediaStore 自动存入系统相册 (Pictures/HomeDatacenter)。
+* 改进：云台 PTZ 控制支持按住连续旋转、松手即停 (ACTION_UP 自动发送 stop)，
+  并配备轻量弹性触觉缩放反馈，彻底杜绝无休止自转撞限位。
+* 修复：预设位删除弹窗误用退出登录标题 ("确认退出登录") 的文案问题。
+
+长连接与后台保活
+----------------
+* 修复：HomeCenterWebSocket 心跳包发送失败后陷入僵尸状态的问题。
+  失败时立即主动关闭死套接字并调度退避重连。
+* 改进：AlertKeepAliveService 增加 onTaskRemoved 处理，在多任务上滑清理后
+  通过 AlarmManager 自动拉起前台保活服务，确保安防与摔倒告警不漏报。
+
+回放与报警中心
+--------------
+* 修复：RecordingsDialog 点击「加载更早录像」后此前已加载天数被清空覆盖的 Bug。
+* 修复：录像连续播放遇损坏或缺失 (404) 切片时播放器永久卡死的问题，改为自动
+  平滑跳往下一段继续播放并弹提示。
+* 修复：AlertsDialog 列表向下滑动触发虚拟分页时泄露未过滤事件的 Bug。
+
+AI 视觉与人脸档案
+-----------------
+* 修复：FamilyFacesActivity 相机拍照后未读取 Exif Orientation 角度信息导致
+  竖拍照片横向 90° 变形上传的严重缺陷；将大图解码采样移入 Dispatchers.IO
+  避免主线程 Jank/ANR。
+
+视觉与图标现代化 (Lucide 2dp 标准)
+----------------------------------
+* 全面换装 Lucide 开源现代矢量图标 (24dp 视口、2dp 描边、圆角端点)：
+  - PTZ 云台方向盘：全面采用 Lucide chevron-up/down/left/right 及 circle-stop；
+  - 概览卡片：系统运行时间换用专属 Lucide clock 图标，告别复用 dashboard 网格；
+  - 播放条：volume-2/volume-x、mic/mic-off、video、camera、refresh 等全量重绘；
+  - 系统与管理：Lucide users、scan-face、shield-check、trash-2、x 等。
+* 修复：values-night 深色模式下漏配 warm_container 导致 M3 组件退化为冷浅紫的问题。
+* 消除：activity_main 悬浮导航胶囊 8dp 硬件阴影与 2D 玻璃阴影重合产生的发黑双重阴影。
+* 优化：全局注入 primary 琥珀暖色 indeterminateTint，彻底消灭原生冷青色转圈；
+  在用户、人脸、封禁 IP、统计卡片上增加 selectableItemBackground 水波纹反馈。

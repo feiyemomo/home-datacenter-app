@@ -20,6 +20,7 @@
         android:layout_height="match_parent"
         android:orientation="vertical"
         android:padding="14dp"
+        android:foreground="?attr/selectableItemBackground"
         android:background="@drawable/bg_glass_card">
 
         <!-- Top row: icon (left) + status dot (right). Fixed height

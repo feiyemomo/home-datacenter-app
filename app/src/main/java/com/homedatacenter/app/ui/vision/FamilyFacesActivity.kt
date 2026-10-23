@@ -60,8 +60,12 @@ class FamilyFacesActivity : AppCompatActivity() {
 
     private val pickImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         if (uri != null) {
-            val bmp = decodeSampledBitmap(uri, 1024, 1024)
-            onImagePicked(bmp)
+            lifecycleScope.launch(Dispatchers.IO) {
+                val bmp = decodeSampledBitmap(uri, 1024, 1024)
+                withContext(Dispatchers.Main) {
+                    onImagePicked(bmp)
+                }
+            }
         }
     }
 
@@ -77,11 +81,15 @@ class FamilyFacesActivity : AppCompatActivity() {
         if (success) {
             val uri = currentPhotoUri
             if (uri != null) {
-                val bmp = decodeSampledBitmap(uri, 1024, 1024)
-                if (bmp != null) {
-                    onImagePicked(bmp)
-                } else {
-                    Toast.makeText(this, "解析拍摄照片失败", Toast.LENGTH_SHORT).show()
+                lifecycleScope.launch(Dispatchers.IO) {
+                    val bmp = decodeSampledBitmap(uri, 1024, 1024)
+                    withContext(Dispatchers.Main) {
+                        if (bmp != null) {
+                            onImagePicked(bmp)
+                        } else {
+                            Toast.makeText(this@FamilyFacesActivity, "解析拍摄照片失败", Toast.LENGTH_SHORT).show()
+                        }
+                    }
                 }
             }
         }
@@ -362,6 +370,22 @@ class FamilyFacesActivity : AppCompatActivity() {
 
     private fun decodeSampledBitmap(uri: Uri, reqWidth: Int, reqHeight: Int): Bitmap? {
         return try {
+            // v1.15.2: inspect Exif orientation so camera photos taken in
+            // portrait aren't uploaded sideways (which breaks face embedding extraction).
+            val rotationDegrees = try {
+                contentResolver.openInputStream(uri)?.use { stream ->
+                    val exif = android.media.ExifInterface(stream)
+                    when (exif.getAttributeInt(android.media.ExifInterface.TAG_ORIENTATION, android.media.ExifInterface.ORIENTATION_NORMAL)) {
+                        android.media.ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+                        android.media.ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+                        android.media.ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+                        else -> 0f
+                    }
+                } ?: 0f
+            } catch (_: Exception) {
+                0f
+            }
+
             var stream: InputStream? = contentResolver.openInputStream(uri)
             val options = BitmapFactory.Options().apply {
                 inJustDecodeBounds = true
@@ -375,7 +399,17 @@ class FamilyFacesActivity : AppCompatActivity() {
             stream = contentResolver.openInputStream(uri)
             val sampled = BitmapFactory.decodeStream(stream, null, options)
             stream?.close()
-            sampled
+
+            if (sampled != null && rotationDegrees != 0f) {
+                val matrix = android.graphics.Matrix().apply { postRotate(rotationDegrees) }
+                val rotated = Bitmap.createBitmap(sampled, 0, 0, sampled.width, sampled.height, matrix, true)
+                if (rotated != sampled) {
+                    sampled.recycle()
+                }
+                rotated
+            } else {
+                sampled
+            }
         } catch (_: Exception) {
             null
         }

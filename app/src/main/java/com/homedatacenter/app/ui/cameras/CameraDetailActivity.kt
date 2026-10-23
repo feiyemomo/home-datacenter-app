@@ -367,6 +367,10 @@ class CameraDetailActivity : AppCompatActivity() {
         binding.toolbar.inflateMenu(R.menu.menu_camera_detail)
         binding.toolbar.setOnMenuItemClickListener { item ->
             when (item.itemId) {
+                R.id.action_snapshot -> {
+                    takeLiveSnapshot()
+                    true
+                }
                 R.id.action_pip -> {
                     enterPipMode()
                     true
@@ -501,7 +505,10 @@ class CameraDetailActivity : AppCompatActivity() {
     }
 
     private fun isPlaybackActive(): Boolean {
-        return (webRtcClient != null && (webRtcClient?.hasActiveStream() == true || webRtcInProgress || binding.surfaceRenderer.visibility == View.VISIBLE)) ||
+        // v1.15.2: DO NOT treat surfaceRenderer.visibility == View.VISIBLE as active
+        // playback. The view can remain visible after its player/session is torn down in onStop(),
+        // which previously tricked onResume() into skipping startPlayback() and left a dead black screen.
+        return (webRtcClient != null && (webRtcClient?.hasActiveStream() == true || webRtcInProgress)) ||
                 (player != null && (player?.isPlaying == true || player?.playbackState == Player.STATE_READY || player?.playbackState == Player.STATE_BUFFERING))
     }
 
@@ -715,6 +722,13 @@ class CameraDetailActivity : AppCompatActivity() {
         releaseSurfaceRenderer()
         try { webRtcClient?.release() } catch (_: Exception) {}
         releaseExoPlayerOnly()
+        // v1.15.2: explicitly hide surfaces and reset live owner so onResume
+        // knows the stream was torn down and properly restarts it.
+        binding.surfaceRenderer.visibility = View.GONE
+        binding.playerView.visibility = View.GONE
+        liveOwner = OWNER_NONE
+        webRtcInProgress = false
+        videoRevealed = false
         if (shouldFinish && !isFinishing) {
             finish()
         }
@@ -874,19 +888,39 @@ class CameraDetailActivity : AppCompatActivity() {
         binding.tvPtzSectionTitle.visibility = View.VISIBLE
         binding.cardPtz.visibility = View.VISIBLE
 
-        val buttons = mapOf(
+        // v1.15.2: Direction buttons support natural press-and-hold
+        // (ACTION_DOWN -> move, ACTION_UP/CANCEL -> stop). Prevents
+        // runaway continuous movement where user was forced to tap the center stop button.
+        val directions = mapOf(
             binding.btnPtzUp to "up",
             binding.btnPtzDown to "down",
             binding.btnPtzLeft to "left",
             binding.btnPtzRight to "right",
-            binding.btnPtzStop to "stop",
         )
-        // v1.6.40: PTZ controls are available to all users — the
-        // server-side endpoint enforces its own authorization. The
-        // buttons are always visible when the camera supports PTZ.
-        buttons.forEach { (btn, command) ->
+        directions.forEach { (btn, command) ->
             btn.visibility = View.VISIBLE
-            btn.setOnClickListener { sendPtz(command) }
+            btn.setOnTouchListener { v, event ->
+                when (event.action) {
+                    android.view.MotionEvent.ACTION_DOWN -> {
+                        v.animate().scaleX(0.88f).scaleY(0.88f).setDuration(80).start()
+                        sendPtz(command)
+                        true
+                    }
+                    android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                        v.animate().scaleX(1.0f).scaleY(1.0f).setDuration(120).start()
+                        sendPtz("stop")
+                        true
+                    }
+                    else -> false
+                }
+            }
+        }
+        binding.btnPtzStop.visibility = View.VISIBLE
+        binding.btnPtzStop.setOnClickListener {
+            binding.btnPtzStop.animate().scaleX(0.88f).scaleY(0.88f).setDuration(80).withEndAction {
+                binding.btnPtzStop.animate().scaleX(1.0f).scaleY(1.0f).setDuration(120).start()
+            }.start()
+            sendPtz("stop")
         }
 
         binding.seekPtzSpeed.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
@@ -1019,9 +1053,10 @@ class CameraDetailActivity : AppCompatActivity() {
         lifecycleScope.launch {
             try {
                 container.getRepository().moveCamera(token, cam.id, command, speed)
-                toast("PTZ: $command")
             } catch (e: Exception) {
-                toast("PTZ 失败: ${e.message}")
+                if (command != "stop") {
+                    toast("PTZ 失败: ${e.message}")
+                }
             }
         }
     }
@@ -1065,15 +1100,16 @@ class CameraDetailActivity : AppCompatActivity() {
     private fun deletePreset(preset: CameraPreset) {
         val cam = camera ?: return
         val token = container.prefsManager.token ?: return
-        val alias = preset.name.ifBlank { return }
-        AlertDialog.Builder(this)
-            .setTitle(R.string.confirm_logout_title)
-            .setMessage("删除预设位 \"$alias\"？")
+        val alias = preset.name.ifBlank { preset.token }
+        if (alias.isBlank()) return
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.camera_preset_delete)
+            .setMessage("确定删除预设位 \"$alias\" 吗？")
             .setPositiveButton(R.string.btn_confirm) { _, _ ->
                 lifecycleScope.launch {
                     try {
                         container.getRepository().deleteCameraPreset(token, cam.id, alias)
-                        toast("已删除")
+                        toast("预设位已删除")
                         loadPresets()
                     } catch (e: Exception) {
                         toast("删除失败: ${e.message}")
@@ -2857,13 +2893,11 @@ class CameraDetailActivity : AppCompatActivity() {
             .setLoadControl(loadControl)
             .setLivePlaybackSpeedControl(liveSpeedControl())
             .build()
-        // v1.14.15: the race player must be attached to the visible
-        // playerView BEFORE prepare() (same MediaCodec surface rule as
-        // preparePlayback), otherwise it can never render a frame and
-        // therefore never win the race.
-        if (race) {
-            binding.playerView.player = newPlayer
-        }
+        // v1.15.2: the player must be attached to playerView BEFORE prepare()
+        // (same MediaCodec surface rule as preparePlayback), otherwise promoting it
+        // later by setting binding.playerView.player = fb triggers
+        // MediaCodec: setOutputSurface BAD_INDEX on various SoCs.
+        binding.playerView.player = newPlayer
         newPlayer.setAudioAttributes(
             com.google.android.exoplayer2.audio.AudioAttributes.Builder()
                 .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
@@ -3262,6 +3296,88 @@ class CameraDetailActivity : AppCompatActivity() {
         override fun getItemCount(): Int = items.size
 
         class VH(itemView: View) : RecyclerView.ViewHolder(itemView)
+    }
+
+    /**
+     * v1.15.2: captures the current live stream frame (either from
+     * SurfaceViewRenderer via EglRenderer.FrameListener, or from
+     * ExoPlayer's TextureView / preview poster) and saves it to the
+     * phone's gallery (Pictures/HomeDatacenter).
+     */
+    private fun takeLiveSnapshot() {
+        val cam = camera ?: return
+        if (binding.surfaceRenderer.visibility == View.VISIBLE) {
+            val listener = object : org.webrtc.EglRenderer.FrameListener {
+                override fun onFrame(bitmap: android.graphics.Bitmap?) {
+                    // EglRenderer enforces that removeFrameListener must NOT be called
+                    // on the render thread itself (it synchronizes with a CountDownLatch),
+                    // so we dispatch removal to the main handler.
+                    binding.root.post {
+                        try { binding.surfaceRenderer.removeFrameListener(this) } catch (_: Exception) {}
+                    }
+                    if (bitmap != null) {
+                        saveSnapshotToGallery(cam, bitmap)
+                    } else {
+                        runOnUiThread { toast("抓拍失败：画面帧未就绪") }
+                    }
+                }
+            }
+            binding.surfaceRenderer.addFrameListener(listener, 1.0f)
+        } else {
+            val bmp = (binding.playerView.videoSurfaceView as? android.view.TextureView)?.bitmap
+                ?: (binding.ivPreviewFrame.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+            if (bmp != null) {
+                saveSnapshotToGallery(cam, bmp)
+            } else {
+                toast("抓拍失败：当前无可用画面")
+            }
+        }
+    }
+
+    private fun saveSnapshotToGallery(cam: Camera, bitmap: android.graphics.Bitmap) {
+        lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val timeStr = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault()).format(java.util.Date())
+                val cleanName = cam.name.replace(Regex("[^a-zA-Z0-9_\\-\\u4e00-\\u9fa5]"), "_")
+                val fileName = "snapshot_${cleanName}_$timeStr.jpg"
+                val values = android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, fileName)
+                    put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, android.os.Environment.DIRECTORY_PICTURES + "/HomeDatacenter")
+                        put(android.provider.MediaStore.Images.Media.IS_PENDING, 1)
+                    }
+                }
+                val uri = contentResolver.insert(
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+                        android.provider.MediaStore.Images.Media.getContentUri(android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                    else
+                        android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                    values
+                ) ?: throw java.io.IOException("无法创建相册媒体文件")
+
+                contentResolver.openOutputStream(uri)?.use { out ->
+                    bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, out)
+                }
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    values.clear()
+                    values.put(android.provider.MediaStore.Images.Media.IS_PENDING, 0)
+                    contentResolver.update(uri, values, null, null)
+                } else {
+                    @Suppress("DEPRECATION")
+                    sendBroadcast(Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, uri))
+                }
+
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    toast("抓拍已保存至系统相册 (Pictures/HomeDatacenter)")
+                }
+            } catch (e: Exception) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    toast("保存截图失败: ${e.message}")
+                }
+            }
+        }
     }
 
     companion object {

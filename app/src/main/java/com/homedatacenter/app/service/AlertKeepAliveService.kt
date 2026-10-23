@@ -64,6 +64,27 @@ class AlertKeepAliveService : Service() {
         return START_STICKY
     }
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        // v1.15.2: auto-restart foreground service via AlarmManager when task is cleared
+        val app = application as? HomeCenterApp
+        if (app?.container?.prefsManager?.keepAliveEnabled == true) {
+            val restartIntent = Intent(applicationContext, AlertKeepAliveService::class.java)
+            val pendingIntent = android.app.PendingIntent.getService(
+                applicationContext,
+                1,
+                restartIntent,
+                android.app.PendingIntent.FLAG_ONE_SHOT or android.app.PendingIntent.FLAG_IMMUTABLE
+            )
+            val alarmManager = getSystemService(android.content.Context.ALARM_SERVICE) as? android.app.AlarmManager
+            alarmManager?.set(
+                android.app.AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                android.os.SystemClock.elapsedRealtime() + 1000L,
+                pendingIntent
+            )
+        }
+    }
+
     override fun onDestroy() {
         if (reachabilityRegistered) {
             try {

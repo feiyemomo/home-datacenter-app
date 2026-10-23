@@ -62,7 +62,7 @@
         android:layout_marginTop="8dp"
         android:layout_marginBottom="12dp"
         android:background="@drawable/bg_bottom_nav_container"
-        android:elevation="8dp"
+        android:elevation="0dp"
         app:layout_constraintWidth_max="@dimen/bottom_nav_max_width"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
