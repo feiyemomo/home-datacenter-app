@@ -5,25 +5,55 @@
     android:layout_height="wrap_content"
     android:orientation="vertical"
     android:background="@drawable/bg_dialog_glass"
-    android:padding="20dp">
+    android:padding="22dp">
 
-    <TextView
-        android:id="@+id/tvCreateTitle"
-        android:layout_width="wrap_content"
+    <!-- Header with Lucide user-plus icon -->
+    <LinearLayout
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="@string/users_create"
-        android:textSize="18sp"
-        android:textStyle="bold"
-        android:textColor="@color/text_primary" />
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="18dp">
 
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="添加家庭或系统成员账号与初始凭据"
-        android:textSize="12sp"
-        android:textColor="@color/text_secondary"
-        android:layout_marginTop="4dp"
-        android:layout_marginBottom="16dp" />
+        <FrameLayout
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:background="@drawable/bg_circle_avatar"
+            android:layout_marginEnd="12dp">
+
+            <ImageView
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_user_plus"
+                app:tint="@color/text_on_primary"
+                android:contentDescription="user plus" />
+        </FrameLayout>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/tvCreateTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/users_create"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                android:textColor="@color/text_primary" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="添加家庭或系统成员账号与初始凭据"
+                android:textSize="12sp"
+                android:textColor="@color/text_secondary"
+                android:layout_marginTop="2dp" />
+        </LinearLayout>
+    </LinearLayout>
 
     <!-- Username Input -->
     <com.google.android.material.textfield.TextInputLayout
@@ -32,9 +62,14 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:hint="@string/user_name_label"
+        app:boxCornerRadiusTopStart="14dp"
+        app:boxCornerRadiusTopEnd="14dp"
+        app:boxCornerRadiusBottomStart="14dp"
+        app:boxCornerRadiusBottomEnd="14dp"
         app:boxStrokeColor="@color/primary"
-        app:hintTextColor="@color/text_secondary"
-        app:startIconDrawable="@drawable/ic_admin_users"
+        app:hintTextColor="@color/text_hint"
+        app:boxBackgroundColor="@android:color/transparent"
+        app:startIconDrawable="@drawable/ic_user"
         app:startIconTint="@color/primary"
         android:layout_marginBottom="12dp">
 
@@ -44,6 +79,7 @@
             android:layout_height="wrap_content"
             android:inputType="textPersonName"
             android:singleLine="true"
+            android:textColor="@color/text_primary"
             android:textSize="14sp" />
     </com.google.android.material.textfield.TextInputLayout>
 
@@ -53,11 +89,18 @@
         style="@style/Widget.Material3.TextInputLayout.OutlinedBox"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:hint="初始密码（支持特殊符号）"
+        android:hint="初始密码（至少 6 位）"
+        app:boxCornerRadiusTopStart="14dp"
+        app:boxCornerRadiusTopEnd="14dp"
+        app:boxCornerRadiusBottomStart="14dp"
+        app:boxCornerRadiusBottomEnd="14dp"
         app:boxStrokeColor="@color/primary"
-        app:hintTextColor="@color/text_secondary"
-        app:passwordToggleEnabled="true"
-        app:passwordToggleTint="@color/text_hint"
+        app:hintTextColor="@color/text_hint"
+        app:boxBackgroundColor="@android:color/transparent"
+        app:startIconDrawable="@drawable/ic_lock"
+        app:startIconTint="@color/primary"
+        app:endIconMode="password_toggle"
+        app:endIconTint="@color/primary"
         android:layout_marginBottom="16dp">
 
         <com.google.android.material.textfield.TextInputEditText
@@ -66,6 +109,7 @@
             android:layout_height="wrap_content"
             android:inputType="textPassword"
             android:singleLine="true"
+            android:textColor="@color/text_primary"
             android:textSize="14sp" />
     </com.google.android.material.textfield.TextInputLayout>
 
@@ -75,8 +119,8 @@
         android:layout_height="wrap_content"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:background="@drawable/bg_glass_card"
-        android:padding="12dp"
+        android:background="@drawable/bg_glass_subtle_row"
+        android:padding="14dp"
         android:layout_marginBottom="20dp">
 
         <LinearLayout
@@ -105,7 +149,8 @@
         <com.google.android.material.switchmaterial.SwitchMaterial
             android:id="@+id/switchIsAdmin"
             android:layout_width="wrap_content"
-            android:layout_height="wrap_content" />
+            android:layout_height="wrap_content"
+            app:useMaterialThemeColors="true" />
     </LinearLayout>
 
     <!-- Action Buttons -->
@@ -117,11 +162,12 @@
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnCancel"
-            style="@style/Widget.Material3.Button.OutlinedButton"
+            style="@style/Widget.Material3.Button.TextButton"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="@string/btn_cancel"
-            android:layout_marginEnd="10dp" />
+            android:textColor="@color/text_secondary"
+            android:layout_marginEnd="8dp" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnConfirm"
@@ -129,8 +175,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="@string/action_create"
-            app:icon="@drawable/ic_add"
-            app:iconSize="16dp" />
+            app:cornerRadius="14dp" />
     </LinearLayout>
 
 </LinearLayout>

@@ -1,0 +1,24 @@
+Home Datacenter Android v1.15.3 — 存储配额管理与新建用户卡片视觉重塑
+===================================================================
+
+存储配额与云端归档管理
+----------------------
+* 全新打造「存储配额与云端归档」液态玻璃管理弹窗 (dialog_storage_quota.xml)，
+  彻底告别原先 Android 4.4 时代的纯文本丑陋系统 AlertDialog。
+* 新增可视化录像存储池占用容量进度条，实时展示已用容量与百分比 (例如 389.7 GB / 400 GB 97.4%)，
+  配以专属 progress_storage_warm 琥珀暖色圆角进度轨道。
+* 录像存储配额上限、每日归档时间、本地冷录像保留门限三大设置项卡片化，
+  配置 Lucide hard-drive / cloud-sync / uptime 线性圆角图标与胶囊数值显示。
+* 「立即归档」与「清理转码缓存」集成入卡片底部，点击提供实时禁用与正在处理加载态反馈。
+* 优化：主页仪表盘「宿主机与存储监控」卡片支持水波纹点击直接跳转至设置中心，
+  配额进度条升级为暖色圆角渐变条。
+
+新建与编辑用户卡片
+------------------
+* 重塑「新建用户」与「编辑用户」弹窗卡片 (dialog_create_user.xml / dialog_edit_user.xml)：
+  - 顶部增加圆形暖色头像背景，配备专属 Lucide user-plus / user 矢量图标；
+  - 用户名与密码输入框统一采用 14dp 圆角 OutlinedBox，增加 boxBackgroundColor 透光与 primary 描边；
+  - 用户名与初始密码两行分别搭载 Lucide user 与 lock 描边图标，彻底解决原先左侧边距参差不齐的问题；
+  - 密码输入框升级为 Material 3 标准 endIconMode="password_toggle"，并着色琥珀金；
+  - 管理员开关行改用轻量无阴影的 bg_glass_subtle_row，消除弹窗内卡片叠加 drop shadow 导致的视觉冲突；
+  - 底部操作按钮标准化为 TextButton 取消与 TonalButton 确定，圆角 14dp。

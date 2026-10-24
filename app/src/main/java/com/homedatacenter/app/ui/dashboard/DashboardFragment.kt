@@ -153,6 +153,11 @@ class DashboardFragment : Fragment() {
         binding.btnGuardHome.setOnClickListener { setGuardMode("armed_home") }
         binding.btnGuardDisarmed.setOnClickListener { setGuardMode("disarmed") }
         binding.btnCleanCache.setOnClickListener { cleanTranscodeCache() }
+        binding.cardSystemMetrics.setOnClickListener {
+            (activity as? MainActivity)?.let {
+                it.binding.bottomNav.selectedItemId = R.id.nav_settings
+            }
+        }
 
         updateAdminUiVisibility()
 

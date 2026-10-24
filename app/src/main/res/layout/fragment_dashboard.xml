@@ -702,6 +702,7 @@
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
                 android:background="@drawable/bg_card_rounded"
+                android:foreground="?attr/selectableItemBackground"
                 android:padding="14dp"
                 android:layout_marginTop="10dp">
 
@@ -723,12 +724,13 @@
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnCleanCache"
-                        style="@style/Widget.MaterialComponents.Button.TextButton"
+                        style="@style/Widget.Material3.Button.TextButton"
                         android:layout_width="wrap_content"
                         android:layout_height="32dp"
                         android:paddingStart="8dp"
                         android:paddingEnd="8dp"
                         android:textSize="11sp"
+                        android:textColor="@color/primary"
                         android:text="清理转码缓存" />
                 </LinearLayout>
 
@@ -791,11 +793,11 @@
                         android:id="@+id/pbStorageQuota"
                         style="@android:style/Widget.ProgressBar.Horizontal"
                         android:layout_width="match_parent"
-                        android:layout_height="6dp"
-                        android:layout_marginTop="4dp"
+                        android:layout_height="8dp"
+                        android:layout_marginTop="6dp"
                         android:max="100"
                         android:progress="0"
-                        android:progressTint="@color/accent" />
+                        android:progressDrawable="@drawable/progress_storage_warm" />
                 </LinearLayout>
 
                 <!-- Transcode cache info -->

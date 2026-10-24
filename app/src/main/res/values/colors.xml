@@ -34,12 +34,11 @@
     <!-- Glass effect — frosted warm white with top edge hint; matches web glass:
          backdrop white at 45-62% + warm tint -->
     <color name="glass_bg">#CCFFFFFF</color>
-    <!-- v1.15.1: dialog surface. Dialogs float over a dimmed backdrop
-         with hard-contrast content behind them, so the card-level
-         80% white bled the screen underneath through and hurt
-         legibility. 96% keeps the frosted hint while staying solid
-         enough to read. -->
-    <color name="glass_bg_dialog">#F5FFFCF8</color>
+    <!-- v1.15.1: dialog surface. Fully opaque so high-contrast text on the
+         activity underneath cannot bleed through the modal dialog card, while
+         the liquid glass feel is carried by the 26dp rounded shape, border stroke,
+         drop shadow, and top-edge light refraction gradient. -->
+    <color name="glass_bg_dialog">#FFFCF8</color>
     <!-- Bottom nav body. Fully opaque: the bar floats over scrolling
          lists, and even a few percent of see-through made dense text
          (log rows, camera thumbnails) readable behind the tab labels.
@@ -64,6 +63,7 @@
 
     <!-- Icon circle warm tint (28% alpha of primary amber) -->
     <color name="icon_circle_bg">#47D7A064</color>
+    <color name="glass_subtle_fill">#0DD7A064</color>
     <color name="chip_warm_bg_checked">#33D7A064</color>
     <color name="chip_warm_text_checked">#B58049</color>
 

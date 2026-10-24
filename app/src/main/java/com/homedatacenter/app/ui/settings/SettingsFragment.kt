@@ -399,134 +399,159 @@ class SettingsFragment : Fragment() {
             try {
                 val json = repo.getStorageConfig(token)
                 if (json != null) {
-                    quotaGb = json["quota_gb"]?.toString()?.toIntOrNull() ?: 400
-                    scheduleHour = json["archive_schedule_hour"]?.toString()?.toIntOrNull() ?: 3
-                    minAgeDays = json["archive_min_age_days"]?.toString()?.toIntOrNull() ?: 7
+                    quotaGb = json["quota_gb"]?.toString()?.toDoubleOrNull()?.toInt() ?: 400
+                    scheduleHour = json["archive_schedule_hour"]?.toString()?.toDoubleOrNull()?.toInt() ?: 3
+                    minAgeDays = json["archive_min_age_days"]?.toString()?.toDoubleOrNull()?.toInt() ?: 7
                 }
             } catch (e: Exception) {
                 android.util.Log.w("SettingsFragment", "getStorageConfig: ${e.message}")
             }
 
-            val items = arrayOf(
-                "录像存储配额上限: ${quotaGb} GB",
-                "每日归档同步时间: %02d:00 (蓝奏云)".format(scheduleHour),
-                "冷归档门限: 超过 ${minAgeDays} 天录像",
-                "⚡ 立即执行一次蓝奏云归档",
-                "🧹 一键清理本地转码缓存"
-            )
+            val dialogBinding = com.homedatacenter.app.databinding.DialogStorageQuotaBinding.inflate(layoutInflater)
+            var currentQuota = quotaGb
+            var currentHour = scheduleHour
+            var currentMinAge = minAgeDays
 
-            AlertDialog.Builder(requireContext())
-                .setTitle("存储配额与云端归档管理")
-                .setItems(items) { _, which ->
-                    when (which) {
-                        0 -> showEditQuotaDialog(quotaGb, scheduleHour, minAgeDays)
-                        1 -> showPickArchiveTimeDialog(quotaGb, scheduleHour, minAgeDays)
-                        2 -> showEditMinAgeDialog(quotaGb, scheduleHour, minAgeDays)
-                        3 -> {
-                            lifecycleScope.launch {
-                                try {
-                                    repo.triggerArchiveSync(token)
-                                    Toast.makeText(requireContext(), "已触发蓝奏云录像归档任务！", Toast.LENGTH_SHORT).show()
-                                } catch (e: Exception) {
-                                    Toast.makeText(requireContext(), "触发归档失败: ${e.message}", Toast.LENGTH_SHORT).show()
-                                }
+            dialogBinding.tvQuotaValue.text = "${currentQuota} GB"
+            dialogBinding.tvArchiveTimeValue.text = "%02d:00".format(currentHour)
+            dialogBinding.tvMinAgeValue.text = "超过 ${currentMinAge} 天"
+
+            try {
+                val status = repo.getSystemStatus(token, useCache = true)
+                val m = status.metrics
+                if (m != null) {
+                    dialogBinding.tvDialogStorageUsage.text = String.format(
+                        java.util.Locale.getDefault(),
+                        "%.1f GB / %.0f GB (%.1f%%)",
+                        m.effectiveRecordingsUsedGb,
+                        m.effectiveRecordingsLimitGb,
+                        m.effectiveRecordingsPercent
+                    )
+                    dialogBinding.pbDialogStorageQuota.progress = m.effectiveRecordingsPercent.toInt().coerceIn(0, 100)
+                } else {
+                    dialogBinding.tvDialogStorageUsage.text = "-- / ${currentQuota} GB"
+                }
+            } catch (_: Exception) {
+                dialogBinding.tvDialogStorageUsage.text = "-- / ${currentQuota} GB"
+            }
+
+            val dialog = com.google.android.material.dialog.MaterialAlertDialogBuilder(requireContext())
+                .setView(dialogBinding.root)
+                .create()
+            dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+
+            dialogBinding.cardEditQuota.setOnClickListener {
+                val quotas = arrayOf("200 GB", "300 GB", "400 GB (推荐)", "600 GB", "800 GB", "1000 GB")
+                val values = intArrayOf(200, 300, 400, 600, 800, 1000)
+                val selectedIdx = values.indexOf(currentQuota).let { if (it >= 0) it else 2 }
+
+                com.google.android.material.dialog.MaterialAlertDialogBuilder(requireContext())
+                    .setTitle("调整监控录像存储配额")
+                    .setSingleChoiceItems(quotas, selectedIdx) { qDialog, idx ->
+                        val newQuota = values[idx]
+                        currentQuota = newQuota
+                        dialogBinding.tvQuotaValue.text = "${newQuota} GB"
+                        qDialog.dismiss()
+                        lifecycleScope.launch {
+                            try {
+                                repo.updateStorageConfig(token, currentQuota, currentHour, currentMinAge)
+                                Toast.makeText(requireContext(), "录像配额已调整为 ${newQuota} GB", Toast.LENGTH_SHORT).show()
+                            } catch (e: Exception) {
+                                Toast.makeText(requireContext(), "设置失败: ${e.message}", Toast.LENGTH_SHORT).show()
                             }
                         }
-                        4 -> {
-                            lifecycleScope.launch {
-                                try {
-                                    repo.cleanSystemCache(token)
-                                    Toast.makeText(requireContext(), "转码切片缓存已清理！", Toast.LENGTH_SHORT).show()
-                                } catch (e: Exception) {
-                                    Toast.makeText(requireContext(), "清理缓存失败: ${e.message}", Toast.LENGTH_SHORT).show()
-                                }
-                            }
+                    }
+                    .setNegativeButton("取消", null)
+                    .show()
+            }
+
+            dialogBinding.cardPickArchiveTime.setOnClickListener {
+                val picker = MaterialTimePicker.Builder()
+                    .setTimeFormat(TimeFormat.CLOCK_24H)
+                    .setHour(currentHour)
+                    .setMinute(0)
+                    .setTitleText("选择每日云端归档时间")
+                    .build()
+
+                picker.addOnPositiveButtonClickListener {
+                    val selectedHour = picker.hour
+                    currentHour = selectedHour
+                    dialogBinding.tvArchiveTimeValue.text = "%02d:00".format(selectedHour)
+                    lifecycleScope.launch {
+                        try {
+                            repo.updateStorageConfig(token, currentQuota, currentHour, currentMinAge)
+                            Toast.makeText(requireContext(), "每日归档时间已更新为 %02d:00".format(selectedHour), Toast.LENGTH_SHORT).show()
+                        } catch (e: Exception) {
+                            Toast.makeText(requireContext(), "更新失败: ${e.message}", Toast.LENGTH_SHORT).show()
                         }
                     }
                 }
-                .setNegativeButton("关闭", null)
-                .show()
-        }
-    }
+                picker.show(parentFragmentManager, "archive_time_picker")
+            }
 
-    private fun showEditQuotaDialog(currentQuota: Int, hour: Int, minAge: Int) {
-        val mainActivity = activity as? MainActivity ?: return
-        val token = mainActivity.container.prefsManager.token ?: return
-        val repo = mainActivity.container.getRepository()
+            dialogBinding.cardEditMinAge.setOnClickListener {
+                val options = arrayOf("保留 3 天后归档", "保留 5 天后归档", "保留 7 天后归档 (推荐)", "保留 14 天后归档", "保留 30 天后归档")
+                val values = intArrayOf(3, 5, 7, 14, 30)
+                val selectedIdx = values.indexOf(currentMinAge).let { if (it >= 0) it else 2 }
 
-        val quotas = arrayOf("200 GB", "300 GB", "400 GB (推荐)", "600 GB", "800 GB", "1000 GB")
-        val values = intArrayOf(200, 300, 400, 600, 800, 1000)
-        val selectedIdx = values.indexOf(currentQuota).let { if (it >= 0) it else 2 }
+                com.google.android.material.dialog.MaterialAlertDialogBuilder(requireContext())
+                    .setTitle("选择本地保留归档门限")
+                    .setSingleChoiceItems(options, selectedIdx) { mDialog, idx ->
+                        val newMinAge = values[idx]
+                        currentMinAge = newMinAge
+                        dialogBinding.tvMinAgeValue.text = "超过 ${newMinAge} 天"
+                        mDialog.dismiss()
+                        lifecycleScope.launch {
+                            try {
+                                repo.updateStorageConfig(token, currentQuota, currentHour, currentMinAge)
+                                Toast.makeText(requireContext(), "冷归档门限已设置为 ${newMinAge} 天", Toast.LENGTH_SHORT).show()
+                            } catch (e: Exception) {
+                                Toast.makeText(requireContext(), "设置失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                    .setNegativeButton("取消", null)
+                    .show()
+            }
 
-        AlertDialog.Builder(requireContext())
-            .setTitle("调整监控录像池软配额")
-            .setSingleChoiceItems(quotas, selectedIdx) { dialog, idx ->
-                val newQuota = values[idx]
-                dialog.dismiss()
+            dialogBinding.btnTriggerArchive.setOnClickListener {
+                dialogBinding.btnTriggerArchive.isEnabled = false
+                dialogBinding.btnTriggerArchive.text = "正在归档…"
                 lifecycleScope.launch {
                     try {
-                        repo.updateStorageConfig(token, newQuota, hour, minAge)
-                        Toast.makeText(requireContext(), "录像配额已调整为 ${newQuota} GB", Toast.LENGTH_SHORT).show()
+                        repo.triggerArchiveSync(token)
+                        Toast.makeText(requireContext(), "已触发蓝奏云录像归档任务！", Toast.LENGTH_SHORT).show()
                     } catch (e: Exception) {
-                        Toast.makeText(requireContext(), "设置失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(requireContext(), "触发归档失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                    } finally {
+                        dialogBinding.btnTriggerArchive.isEnabled = true
+                        dialogBinding.btnTriggerArchive.text = "立即归档"
                     }
                 }
             }
-            .setNegativeButton("取消", null)
-            .show()
-    }
 
-    private fun showPickArchiveTimeDialog(quota: Int, currentHour: Int, minAge: Int) {
-        val mainActivity = activity as? MainActivity ?: return
-        val token = mainActivity.container.prefsManager.token ?: return
-        val repo = mainActivity.container.getRepository()
-
-        val picker = MaterialTimePicker.Builder()
-            .setTimeFormat(TimeFormat.CLOCK_24H)
-            .setHour(currentHour)
-            .setMinute(0)
-            .setTitleText("选择每日归档执行时间")
-            .build()
-
-        picker.addOnPositiveButtonClickListener {
-            val selectedHour = picker.hour
-            lifecycleScope.launch {
-                try {
-                    repo.updateStorageConfig(token, quota, selectedHour, minAge)
-                    Toast.makeText(requireContext(), "每日归档时间已更新为 %02d:00".format(selectedHour), Toast.LENGTH_SHORT).show()
-                } catch (e: Exception) {
-                    Toast.makeText(requireContext(), "更新失败: ${e.message}", Toast.LENGTH_SHORT).show()
-                }
-            }
-        }
-        picker.show(parentFragmentManager, "archive_time_picker")
-    }
-
-    private fun showEditMinAgeDialog(quota: Int, hour: Int, currentMinAge: Int) {
-        val mainActivity = activity as? MainActivity ?: return
-        val token = mainActivity.container.prefsManager.token ?: return
-        val repo = mainActivity.container.getRepository()
-
-        val options = arrayOf("保留 3 天后归档", "保留 5 天后归档", "保留 7 天后归档 (推荐)", "保留 14 天后归档", "保留 30 天后归档")
-        val values = intArrayOf(3, 5, 7, 14, 30)
-        val selectedIdx = values.indexOf(currentMinAge).let { if (it >= 0) it else 2 }
-
-        AlertDialog.Builder(requireContext())
-            .setTitle("选择本地保留归档门限")
-            .setSingleChoiceItems(options, selectedIdx) { dialog, idx ->
-                val newMinAge = values[idx]
-                dialog.dismiss()
+            dialogBinding.btnCleanCache.setOnClickListener {
+                dialogBinding.btnCleanCache.isEnabled = false
+                dialogBinding.btnCleanCache.text = "清理中…"
                 lifecycleScope.launch {
                     try {
-                        repo.updateStorageConfig(token, quota, hour, newMinAge)
-                        Toast.makeText(requireContext(), "冷归档门限已设置为 ${newMinAge} 天", Toast.LENGTH_SHORT).show()
+                        repo.cleanSystemCache(token)
+                        Toast.makeText(requireContext(), "转码切片缓存已清理！", Toast.LENGTH_SHORT).show()
                     } catch (e: Exception) {
-                        Toast.makeText(requireContext(), "设置失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(requireContext(), "清理缓存失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                    } finally {
+                        dialogBinding.btnCleanCache.isEnabled = true
+                        dialogBinding.btnCleanCache.text = "清理缓存"
                     }
                 }
             }
-            .setNegativeButton("取消", null)
-            .show()
+
+            dialogBinding.btnClose.setOnClickListener {
+                dialog.dismiss()
+            }
+
+            dialog.show()
+        }
     }
 
     private fun setupVersion() {
