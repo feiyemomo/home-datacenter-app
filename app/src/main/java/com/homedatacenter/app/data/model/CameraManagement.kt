@@ -53,6 +53,12 @@ data class SetPresetRequest(
 )
 
 @Serializable
+data class CreatePresetRequest(
+    val name: String,
+    val token: String? = null,
+)
+
+@Serializable
 data class GotoPresetRequest(
     val speed: Double = 0.25,
 )

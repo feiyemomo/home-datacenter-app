@@ -63,6 +63,11 @@ interface HomeCenterApi {
         @Query("limit") limit: Int = 50,
         @Query("offset") offset: Int = 0,
         @Query("event_type") eventType: String? = null,
+        @Query("level") level: String? = null,
+        @Query("source") source: String? = null,
+        @Query("keyword") keyword: String? = null,
+        @Query("start_ts") startTs: Long? = null,
+        @Query("end_ts") endTs: Long? = null,
     ): ApiResponse
 
     // v1.8.14: delete a single system log entry after manual
@@ -117,6 +122,10 @@ interface HomeCenterApi {
     suspend fun listAlerts(
         @Header("Authorization") auth: String,
         @Query("limit") limit: Int = 50,
+        @Query("camera_id") cameraId: Long? = null,
+        @Query("label") label: String? = null,
+        @Query("after") after: Long? = null,
+        @Query("before") before: Long? = null,
     ): ApiResponse
 
     // v1.6.0: motion ranges for the day-playback SeekBar overlay.
@@ -178,6 +187,13 @@ interface HomeCenterApi {
     suspend fun listCameraPresets(
         @Header("Authorization") auth: String,
         @Path("id") id: Long,
+    ): ApiResponse
+
+    @POST("api/v1/cameras/{id}/presets")
+    suspend fun createCameraPreset(
+        @Header("Authorization") auth: String,
+        @Path("id") id: Long,
+        @Body request: com.homedatacenter.app.data.model.CreatePresetRequest,
     ): ApiResponse
 
     @PUT("api/v1/cameras/{id}/presets/{alias}")
@@ -251,6 +267,21 @@ interface HomeCenterApi {
     suspend fun preheat(
         @Header("Authorization") auth: String,
         @Path("id") id: Long,
+    ): ApiResponse
+
+    @GET("api/v1/cameras/ai-source")
+    suspend fun getAISource(@Header("Authorization") auth: String): ApiResponse
+
+    @PUT("api/v1/cameras/ai-source")
+    suspend fun setAISource(
+        @Header("Authorization") auth: String,
+        @Body request: com.homedatacenter.app.data.model.SetAISourceRequest,
+    ): ApiResponse
+
+    @PUT("api/v1/cameras/motion-fallback")
+    suspend fun setMotionFallback(
+        @Header("Authorization") auth: String,
+        @Body request: com.homedatacenter.app.data.model.SetMotionFallbackRequest,
     ): ApiResponse
 
     // --- User management (admin except /me) ---
@@ -436,6 +467,13 @@ interface HomeCenterApi {
         @Body req: com.homedatacenter.app.data.model.ManualBanRequest
     ): ApiResponse
 
+    @PUT("api/v1/security/ban/{ip}")
+    suspend fun updateBan(
+        @Header("Authorization") auth: String,
+        @Path("ip") ip: String,
+        @Body req: com.homedatacenter.app.data.model.UpdateBanRequest
+    ): ApiResponse
+
     @DELETE("api/v1/security/ban/{ip}")
     suspend fun manualUnban(
         @Header("Authorization") auth: String,
@@ -444,6 +482,67 @@ interface HomeCenterApi {
 
     @POST("api/v1/security/test-alert")
     suspend fun testAlertEmail(
+        @Header("Authorization") auth: String
+    ): ApiResponse
+
+    @PUT("api/v1/security/alert-email")
+    suspend fun updateAlertEmail(
+        @Header("Authorization") auth: String,
+        @Body body: Map<String, String>
+    ): ApiResponse
+
+    @POST("api/v1/security/alert-recipients")
+    suspend fun addAlertRecipient(
+        @Header("Authorization") auth: String,
+        @Body body: Map<String, String>
+    ): ApiResponse
+
+    @DELETE("api/v1/security/alert-recipients/{email}")
+    suspend fun deleteAlertRecipient(
+        @Header("Authorization") auth: String,
+        @Path("email") email: String
+    ): ApiResponse
+
+    @GET("api/v1/security/events")
+    suspend fun getSecurityEvents(
+        @Header("Authorization") auth: String,
+        @Query("limit") limit: Int = 50,
+        @Query("type") type: String? = null,
+        @Query("ip") ip: String? = null,
+        @Query("keyword") keyword: String? = null
+    ): ApiResponse
+
+    @DELETE("api/v1/security/events/prune")
+    suspend fun pruneSecurityEvents(
+        @Header("Authorization") auth: String,
+        @Query("days") days: Int = 30
+    ): ApiResponse
+
+    @GET("api/v1/security/whitelist")
+    suspend fun getSecurityWhitelist(
+        @Header("Authorization") auth: String
+    ): ApiResponse
+
+    @POST("api/v1/security/whitelist")
+    suspend fun addSecurityWhitelist(
+        @Header("Authorization") auth: String,
+        @Body req: com.homedatacenter.app.data.model.AddWhitelistRequest
+    ): ApiResponse
+
+    @DELETE("api/v1/security/whitelist/{entry}")
+    suspend fun deleteSecurityWhitelist(
+        @Header("Authorization") auth: String,
+        @Path("entry") entry: String
+    ): ApiResponse
+
+    @PUT("api/v1/security/config")
+    suspend fun updateSecurityConfig(
+        @Header("Authorization") auth: String,
+        @Body req: com.homedatacenter.app.data.model.UpdateSecurityConfigRequest
+    ): ApiResponse
+
+    @GET("api/v1/security/host-logs")
+    suspend fun getHostLogs(
         @Header("Authorization") auth: String
     ): ApiResponse
 }

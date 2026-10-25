@@ -99,17 +99,88 @@
                     android:paddingTop="8dp"
                     android:clipToPadding="false" />
 
-                <!-- "全部报警" section title -->
-                <TextView
-                    android:id="@+id/tvAllAlertsTitle"
-                    android:layout_width="wrap_content"
+                <!-- "全部报警" section title & filters -->
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/all_alerts"
-                    android:textSize="18sp"
-                    android:textStyle="bold"
-                    android:textColor="@color/text_primary"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
                     android:layout_marginTop="24dp"
-                    android:layout_marginStart="20dp" />
+                    android:layout_marginHorizontal="20dp">
+
+                    <TextView
+                        android:id="@+id/tvAllAlertsTitle"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/all_alerts"
+                        android:textSize="18sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/text_primary" />
+
+                    <TextView
+                        android:id="@+id/btnResetAlertFilter"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="重置筛选"
+                        android:textSize="12sp"
+                        android:textColor="@color/primary"
+                        android:padding="4dp"
+                        android:visibility="gone" />
+                </LinearLayout>
+
+                <HorizontalScrollView
+                    android:id="@+id/scrollAlertFilters"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:scrollbars="none"
+                    android:layout_marginTop="6dp"
+                    android:paddingHorizontal="16dp"
+                    android:clipToPadding="false">
+
+                    <LinearLayout
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal">
+
+                        <com.google.android.material.chip.Chip
+                            android:id="@+id/chipFilterCamera"
+                            style="@style/Widget.Material3.Chip.Assist"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginEnd="6dp"
+                            android:text="来源: 全部 ▾"
+                            android:textSize="11sp"
+                            app:chipIcon="@drawable/ic_camera"
+                            app:chipIconSize="14dp"
+                            app:chipIconTint="@color/text_secondary" />
+
+                        <com.google.android.material.chip.Chip
+                            android:id="@+id/chipFilterDate"
+                            style="@style/Widget.Material3.Chip.Assist"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginEnd="6dp"
+                            android:text="日期: 全部 ▾"
+                            android:textSize="11sp"
+                            app:chipIcon="@drawable/ic_history"
+                            app:chipIconSize="14dp"
+                            app:chipIconTint="@color/text_secondary" />
+
+                        <com.google.android.material.chip.Chip
+                            android:id="@+id/chipFilterLabel"
+                            style="@style/Widget.Material3.Chip.Assist"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginEnd="6dp"
+                            android:text="目标: 全部 ▾"
+                            android:textSize="11sp"
+                            app:chipIcon="@drawable/ic_alerts"
+                            app:chipIconSize="14dp"
+                            app:chipIconTint="@color/text_secondary" />
+
+                    </LinearLayout>
+                </HorizontalScrollView>
 
                 <androidx.recyclerview.widget.RecyclerView
                     android:id="@+id/rvAllAlerts"

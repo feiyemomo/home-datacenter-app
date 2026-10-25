@@ -412,12 +412,18 @@ class WebRtcClient(
             // and made the OS show the microphone indicator even while
             // only listening.
             audioManager?.mode = android.media.AudioManager.MODE_NORMAL
+            // Mute incoming camera speaker during talkback to completely eliminate acoustic feedback/echo
+            try {
+                audioTrack?.setEnabled(false)
+                audioTrack?.setVolume(0.0)
+                audioDeviceModule?.setSpeakerMute(true)
+            } catch (_: Exception) {}
             // Explicitly allow recording only for the duration of the
             // press; released again in stopTalkback().
             runCatching { peerConnection?.setAudioRecording(true) }
             localAudioTrack?.setEnabled(true)
             isTalkingBack = true
-            Log.i(TAG, "Talkback started (mic attached, ${talkbackMicGain}x gain, AEC on, recording=true)")
+            Log.i(TAG, "Talkback started (mic attached, ${talkbackMicGain}x gain, AEC on, recording=true, speaker auto-muted)")
             null
         } catch (e: Exception) {
             Log.e(TAG, "startTalkback failed: ${e.message}", e)
@@ -455,7 +461,15 @@ class WebRtcClient(
             localAudioSource = null
             val audioManager = context.getSystemService(android.content.Context.AUDIO_SERVICE) as? android.media.AudioManager
             audioManager?.mode = android.media.AudioManager.MODE_NORMAL
-            Log.i(TAG, "Talkback stopped (recording=false, mic detached + released)")
+            // Restore incoming audio if user previously had audio enabled
+            if (audioEnabledByUser) {
+                try {
+                    audioTrack?.setEnabled(true)
+                    audioTrack?.setVolume(1.0)
+                    audioDeviceModule?.setSpeakerMute(false)
+                } catch (_: Exception) {}
+            }
+            Log.i(TAG, "Talkback stopped (recording=false, mic detached + released, speaker restored: $audioEnabledByUser)")
         } catch (e: Exception) {
             Log.w(TAG, "stopTalkback failed: ${e.message}")
         }

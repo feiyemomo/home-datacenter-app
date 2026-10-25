@@ -54,6 +54,11 @@ class ServiceLogsFragment : Fragment() {
     private val otherLogs = mutableListOf<SystemLog>()
     private var otherCollapsed = false
 
+    // Filters
+    private var selectedLevel: String? = null
+    private var searchKeyword: String? = null
+    private var searchDebounceJob: kotlinx.coroutines.Job? = null
+
     private var logsWebSocket: HomeCenterWebSocket? = null
 
     override fun onCreateView(
@@ -91,8 +96,61 @@ class ServiceLogsFragment : Fragment() {
             }
         })
 
+        setupFilterControls()
         setupWebSocket()
         resetAndLoad()
+    }
+
+    private fun setupFilterControls() {
+        binding.chipGroupLevel.setOnCheckedStateChangeListener { _, checkedIds ->
+            selectedLevel = when (checkedIds.firstOrNull()) {
+                R.id.chipLevelCritical -> "critical"
+                R.id.chipLevelWarning -> "warning"
+                R.id.chipLevelNormal -> "normal"
+                R.id.chipLevelInfo -> "info"
+                else -> null
+            }
+            resetAndLoad()
+        }
+
+        binding.etSearchKeyword.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) {
+                val kw = s?.toString()?.trim()
+                binding.btnClearSearch.visibility = if (!kw.isNullOrEmpty()) View.VISIBLE else View.GONE
+                searchDebounceJob?.cancel()
+                searchDebounceJob = lifecycleScope.launch {
+                    kotlinx.coroutines.delay(300L)
+                    val target = kw?.ifEmpty { null }
+                    if (target != searchKeyword) {
+                        searchKeyword = target
+                        resetAndLoad()
+                    }
+                }
+            }
+        })
+
+        binding.etSearchKeyword.setOnEditorActionListener { _, actionId, event ->
+            if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH ||
+                actionId == android.view.inputmethod.EditorInfo.IME_ACTION_DONE ||
+                (event != null && event.keyCode == android.view.KeyEvent.KEYCODE_ENTER && event.action == android.view.KeyEvent.ACTION_DOWN)
+            ) {
+                searchDebounceJob?.cancel()
+                val kw = binding.etSearchKeyword.text.toString().trim()
+                searchKeyword = kw.ifEmpty { null }
+                resetAndLoad()
+                true
+            } else false
+        }
+
+        binding.btnClearSearch.setOnClickListener {
+            searchDebounceJob?.cancel()
+            binding.etSearchKeyword.setText("")
+            searchKeyword = null
+            binding.btnClearSearch.visibility = View.GONE
+            resetAndLoad()
+        }
     }
 
     override fun onHiddenChanged(hidden: Boolean) {
@@ -128,42 +186,58 @@ class ServiceLogsFragment : Fragment() {
         isLoading = true
         if (currentOffset > 0) binding.progressLoadMore.visibility = View.VISIBLE
 
-        // Check cache before making API call
-        val cacheKey = "logs.page.${currentOffset / pageLimit}"
-        val cached = CacheManager.getInstance(requireContext()).get<List<SystemLog>>(cacheKey, 60_000L)
-        if (cached != null) {
-            for (log in cached) {
-                if (log.level == SystemLogLevel.CRITICAL) {
-                    criticalLogs.add(log)
-                } else {
-                    otherLogs.add(log)
+        // Check cache before making API call (only for unfiltered default page)
+        val isFiltered = selectedLevel != null || !searchKeyword.isNullOrBlank()
+        val cacheKey = "logs.page.${currentOffset / pageLimit}.${selectedLevel ?: "all"}.${searchKeyword ?: ""}"
+        if (!isFiltered) {
+            val cached = CacheManager.getInstance(requireContext()).get<List<SystemLog>>(cacheKey, 60_000L)
+            if (cached != null) {
+                for (log in cached) {
+                    if (log.level == SystemLogLevel.CRITICAL) {
+                        criticalLogs.add(log)
+                    } else {
+                        otherLogs.add(log)
+                    }
                 }
+                rebuildDisplayList()
+                currentOffset += cached.size
+                hasMore = cached.size >= pageLimit
+                isLoading = false
+                if (view != null) {
+                    binding.progressLoadMore.visibility = View.GONE
+                    binding.swipeRefresh.isRefreshing = false
+                }
+                return
             }
-            rebuildDisplayList()
-            currentOffset += cached.size
-            hasMore = cached.size >= pageLimit
-            isLoading = false
-            // v1.8.21: must stop the swipe-refresh spinner on the
-            // cache-hit path too — previously this early return
-            // skipped the finally block, leaving the spinner
-            // spinning forever after a pull-to-refresh.
-            if (view != null) {
-                binding.progressLoadMore.visibility = View.GONE
-                binding.swipeRefresh.isRefreshing = false
-            }
-            return
         }
 
         lifecycleScope.launch {
             try {
                 val auth = "Bearer $token"
+                val reqLimit = if (!searchKeyword.isNullOrBlank()) 100 else pageLimit
                 val resp = mainActivity.container.getApi()
-                    .listSystemLogs(auth, limit = pageLimit, offset = currentOffset)
+                    .listSystemLogs(
+                        auth,
+                        limit = reqLimit,
+                        offset = currentOffset,
+                        level = selectedLevel,
+                        keyword = searchKeyword
+                    )
                 val data = if (resp.isSuccess) {
                     resp.decodeData<SystemLogListData>()
                 } else null
-                val logs = data?.logs ?: emptyList()
+                val rawLogs = data?.logs ?: emptyList()
                 if (data != null) totalKnown = data.total
+
+                val kw = searchKeyword
+                val logs = if (!kw.isNullOrBlank()) {
+                    rawLogs.filter { log ->
+                        log.message.contains(kw, ignoreCase = true) ||
+                        log.event_type.contains(kw, ignoreCase = true) ||
+                        log.source.contains(kw, ignoreCase = true) ||
+                        log.payload.contains(kw, ignoreCase = true)
+                    }
+                } else rawLogs
 
                 // v1.6.39: route each log to its section by level.
                 for (log in logs) {
@@ -175,12 +249,15 @@ class ServiceLogsFragment : Fragment() {
                 }
                 rebuildDisplayList()
 
-                // Cache the fetched page
-                CacheManager.getInstance(requireContext()).set(cacheKey, logs)
+                // Cache the fetched page if not filtered
+                if (!isFiltered) {
+                    CacheManager.getInstance(requireContext()).set(cacheKey, logs)
+                }
 
-                currentOffset += logs.size
-                hasMore = logs.size >= pageLimit && (criticalLogs.size + otherLogs.size) < totalKnown
-                showEmpty(criticalLogs.isEmpty() && otherLogs.isEmpty())
+                currentOffset += rawLogs.size
+                hasMore = rawLogs.size >= reqLimit && (criticalLogs.size + otherLogs.size) < totalKnown
+                val emptyMsg = if (!kw.isNullOrBlank()) "未搜索到与「$kw」相关的系统日志" else getString(R.string.no_logs)
+                showEmpty(criticalLogs.isEmpty() && otherLogs.isEmpty(), emptyMsg)
                 if (!hasMore && (criticalLogs.isNotEmpty() || otherLogs.isNotEmpty())) {
                     Toast.makeText(requireContext(),
                         R.string.logs_all_loaded, Toast.LENGTH_SHORT).show()
@@ -259,8 +336,9 @@ class ServiceLogsFragment : Fragment() {
         }
     }
 
-    private fun showEmpty(show: Boolean) {
+    private fun showEmpty(show: Boolean, message: String = getString(R.string.no_logs)) {
         binding.tvEmpty.visibility = if (show) View.VISIBLE else View.GONE
+        binding.tvEmpty.text = message
         binding.recyclerView.visibility = if (show) View.GONE else View.VISIBLE
     }
 
@@ -364,6 +442,17 @@ class ServiceLogsFragment : Fragment() {
         if (criticalLogs.any { it.id == log.id && log.id != 0L }) return
         if (otherLogs.any { it.id == log.id && log.id != 0L }) return
 
+        selectedLevel?.let { filterLvl ->
+            if (log.level != filterLvl) return
+        }
+        searchKeyword?.let { kw ->
+            val match = log.message.contains(kw, ignoreCase = true) ||
+                    log.source.contains(kw, ignoreCase = true) ||
+                    log.event_type.contains(kw, ignoreCase = true) ||
+                    log.payload.contains(kw, ignoreCase = true)
+            if (!match) return
+        }
+
         // v1.6.39: route to the appropriate section.
         if (log.level == SystemLogLevel.CRITICAL) {
             criticalLogs.add(0, log)
@@ -388,6 +477,8 @@ class ServiceLogsFragment : Fragment() {
     }
 
     override fun onDestroyView() {
+        searchDebounceJob?.cancel()
+        searchDebounceJob = null
         logsWebSocket?.disconnect()
         logsWebSocket = null
         binding.recyclerView.adapter = null

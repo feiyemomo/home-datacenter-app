@@ -19,7 +19,8 @@
 
     <string name="nav_dashboard">主页</string>
     <string name="nav_cameras">摄像头</string>
-    <string name="nav_logs">日志</string>
+    <string name="nav_ops">运维</string>
+    <string name="nav_logs">运维</string>
     <string name="no_logs">暂无日志</string>
     <string name="logs_all_loaded">已加载全部</string>
     <string name="log_verified_deleted">已核查并删除</string>
@@ -183,7 +184,7 @@
     <string name="notification_channel_security_desc">接收摄像头人形、车辆、宠物识别等安防报警通知</string>
     <string name="notification_channel_system">系统运维通知</string>
     <string name="notification_channel_system_desc">接收存储配额、摄像头上下线等系统运行状态通知</string>
-    <string name="camera_ptz_section">云台控制 (PTZ)</string>
+    <string name="camera_ptz_section">云台控制 (PTZ · 按住方向键持续转动)</string>
     <string name="camera_ptz_up">上</string>
     <string name="camera_ptz_down">下</string>
     <string name="camera_ptz_left">左</string>
@@ -194,6 +195,8 @@
     <string name="camera_presets_section">预设位</string>
     <string name="camera_presets_empty">暂无预设位</string>
     <string name="camera_preset_add">添加预设</string>
+    <string name="camera_preset_save_current">保存当前位置为预设</string>
+    <string name="camera_preset_name">预设位名称</string>
     <string name="camera_preset_alias">别名</string>
     <string name="camera_preset_token">预设位 token</string>
     <string name="camera_preset_goto">前往</string>
@@ -218,6 +221,13 @@
     <string name="camera_share_empty">暂无共享用户</string>
     <string name="camera_share_add">添加共享</string>
     <string name="camera_share_revoke">取消共享</string>
+
+    <!-- AI Alert Source -->
+    <string name="ai_alert_source_title">AI 告警来源模式</string>
+    <string name="ai_alert_source_summary">配置人形/安防报警的识别与去重来源</string>
+    <string name="ai_alert_source_dialog_title">选择 AI 告警来源模式</string>
+    <string name="ai_alert_source_success">已切换 AI 告警来源为：%1$s</string>
+    <string name="ai_alert_source_failed">切换 AI 告警来源失败：%1$s</string>
 
     <!-- Security defense center (admin) -->
     <string name="security_defense_title">安全防御中心</string>

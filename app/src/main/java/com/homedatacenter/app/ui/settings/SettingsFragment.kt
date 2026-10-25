@@ -18,6 +18,7 @@ import com.homedatacenter.app.databinding.FragmentSettingsBinding
 import com.homedatacenter.app.ui.admin.SecurityDefenseActivity
 import com.homedatacenter.app.ui.admin.UsersActivity
 import com.homedatacenter.app.ui.automations.AutomationsActivity
+import com.homedatacenter.app.ui.ops.OpsFragment
 import com.homedatacenter.app.ui.vision.FamilyFacesActivity
 import com.homedatacenter.app.ui.main.MainActivity
 import com.google.android.material.timepicker.MaterialTimePicker
@@ -382,8 +383,148 @@ class SettingsFragment : Fragment() {
         binding.btnSettingsStorage.setOnClickListener {
             showStorageConfigDialog()
         }
+        binding.btnSettingsAISource.setOnClickListener {
+            showAISourceDialog()
+        }
+        binding.switchMotionFallback.setOnCheckedChangeListener { _, isChecked ->
+            val mainActivity = activity as? MainActivity ?: return@setOnCheckedChangeListener
+            val token = mainActivity.container.prefsManager.token ?: return@setOnCheckedChangeListener
+            val repo = mainActivity.container.getRepository()
+            lifecycleScope.launch {
+                try {
+                    repo.setMotionFallback(token, isChecked)
+                    binding.tvMotionFallbackSummary.text = if (isChecked) {
+                        "已开启：兼容普通移动侦测并报警（防漏报）"
+                    } else {
+                        "已关闭：严格只认摄像头人体硬件标签"
+                    }
+                } catch (e: Exception) {
+                    Toast.makeText(requireContext(), "设置失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+        loadAISourceStatus()
         binding.btnSettingsSecurity.setOnClickListener {
-            startActivity(Intent(requireContext(), SecurityDefenseActivity::class.java))
+            (activity as? MainActivity)?.let {
+                OpsFragment.targetSubTab = OpsFragment.TAB_SECURITY
+                it.binding.bottomNav.selectedItemId = R.id.nav_logs
+            } ?: startActivity(Intent(requireContext(), SecurityDefenseActivity::class.java))
+        }
+    }
+
+    private fun loadAISourceStatus() {
+        val mainActivity = activity as? MainActivity ?: return
+        val token = mainActivity.container.prefsManager.token ?: return
+        val repo = mainActivity.container.getRepository()
+        lifecycleScope.launch {
+            try {
+                val status = repo.getAISource(token)
+                val label = when (status.currentSource) {
+                    "frigate" -> "Frigate NVR 软件检测"
+                    "both" -> "双路冗余互备 (智能去重)"
+                    else -> "摄像头自带AI (默认)"
+                }
+                binding.tvAISourceSummary.text = "当前模式：$label"
+                binding.switchMotionFallback.setOnCheckedChangeListener(null)
+                binding.switchMotionFallback.isChecked = status.motionFallback
+                binding.tvMotionFallbackSummary.text = if (status.motionFallback) {
+                    "已开启：兼容普通移动侦测并报警（防漏报）"
+                } else {
+                    "已关闭：严格只认摄像头人体硬件标签"
+                }
+                binding.switchMotionFallback.setOnCheckedChangeListener { _, isChecked ->
+                    val mAct = activity as? MainActivity ?: return@setOnCheckedChangeListener
+                    val tok = mAct.container.prefsManager.token ?: return@setOnCheckedChangeListener
+                    val r = mAct.container.getRepository()
+                    lifecycleScope.launch {
+                        try {
+                            r.setMotionFallback(tok, isChecked)
+                            binding.tvMotionFallbackSummary.text = if (isChecked) {
+                                "已开启：兼容普通移动侦测并报警（防漏报）"
+                            } else {
+                                "已关闭：严格只认摄像头人体硬件标签"
+                            }
+                        } catch (e: Exception) {
+                            Toast.makeText(requireContext(), "设置失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun showAISourceDialog() {
+        val mainActivity = activity as? MainActivity ?: return
+        val token = mainActivity.container.prefsManager.token ?: return
+        val repo = mainActivity.container.getRepository()
+
+        lifecycleScope.launch {
+            var currentSource = "camera"
+            var sourceList: List<com.homedatacenter.app.data.model.AISourceInfo> = emptyList()
+            try {
+                val status = repo.getAISource(token)
+                currentSource = status.currentSource
+                sourceList = status.availableSources
+            } catch (e: Exception) {
+                Toast.makeText(requireContext(), "获取模式失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
+
+            val keys = if (sourceList.isNotEmpty()) {
+                sourceList.map { it.key }.toTypedArray()
+            } else {
+                arrayOf("camera", "frigate", "both")
+            }
+            val displayNames = if (sourceList.isNotEmpty()) {
+                sourceList.map { "${it.name}\n${it.description}" }.toTypedArray()
+            } else {
+                arrayOf(
+                    "摄像头自带硬件AI (默认)\n只推摄像头人形，0% NAS CPU开销，无重复",
+                    "Frigate NVR 软件检测\n由NAS主机运行模型，支持精细防区与跌倒检测",
+                    "双路冗余互备 (智能去重)\n两边都接收，6秒内同相机自动合并去重"
+                )
+            }
+
+            val selectedIdx = keys.indexOf(currentSource).let { if (it >= 0) it else 0 }
+
+            com.google.android.material.dialog.MaterialAlertDialogBuilder(requireContext())
+                .setTitle(getString(R.string.ai_alert_source_dialog_title))
+                .setSingleChoiceItems(displayNames, selectedIdx) { dialog, which ->
+                    val chosenKey = keys[which]
+                    dialog.dismiss()
+                    val targetLabel = when (chosenKey) {
+                        "frigate" -> "Frigate NVR 软件检测"
+                        "both" -> "双路冗余互备 (智能去重)"
+                        else -> "摄像头自带硬件AI"
+                    }
+                    binding.tvAISourceSummary.text = "当前模式：$targetLabel"
+                    if (chosenKey == currentSource) return@setSingleChoiceItems
+
+                    lifecycleScope.launch {
+                        try {
+                            val updated = repo.setAISource(token, chosenKey)
+                            val label = when (updated.currentSource) {
+                                "frigate" -> "Frigate NVR 软件检测"
+                                "both" -> "双路冗余互备 (智能去重)"
+                                else -> "摄像头自带硬件AI"
+                            }
+                            binding.tvAISourceSummary.text = "当前模式：$label"
+                            Toast.makeText(
+                                requireContext(),
+                                getString(R.string.ai_alert_source_success, label),
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        } catch (e: Exception) {
+                            Toast.makeText(
+                                requireContext(),
+                                getString(R.string.ai_alert_source_failed, e.message),
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    }
+                }
+                .setNegativeButton(R.string.btn_cancel, null)
+                .show()
         }
     }
 
@@ -411,6 +552,7 @@ class SettingsFragment : Fragment() {
             var currentQuota = quotaGb
             var currentHour = scheduleHour
             var currentMinAge = minAgeDays
+            var metrics: com.homedatacenter.app.data.model.SystemStatusMetrics? = null
 
             dialogBinding.tvQuotaValue.text = "${currentQuota} GB"
             dialogBinding.tvArchiveTimeValue.text = "%02d:00".format(currentHour)
@@ -419,6 +561,7 @@ class SettingsFragment : Fragment() {
             try {
                 val status = repo.getSystemStatus(token, useCache = true)
                 val m = status.metrics
+                metrics = m
                 if (m != null) {
                     dialogBinding.tvDialogStorageUsage.text = String.format(
                         java.util.Locale.getDefault(),
@@ -441,28 +584,80 @@ class SettingsFragment : Fragment() {
             dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
 
             dialogBinding.cardEditQuota.setOnClickListener {
-                val quotas = arrayOf("200 GB", "300 GB", "400 GB (推荐)", "600 GB", "800 GB", "1000 GB")
-                val values = intArrayOf(200, 300, 400, 600, 800, 1000)
-                val selectedIdx = values.indexOf(currentQuota).let { if (it >= 0) it else 2 }
+                val editBinding = com.homedatacenter.app.databinding.DialogEditQuotaBinding.inflate(layoutInflater)
+                editBinding.etQuota.setText(currentQuota.toString())
+                editBinding.etQuota.setSelection(editBinding.etQuota.text?.length ?: 0)
 
-                com.google.android.material.dialog.MaterialAlertDialogBuilder(requireContext())
-                    .setTitle("调整监控录像存储配额")
-                    .setSingleChoiceItems(quotas, selectedIdx) { qDialog, idx ->
-                        val newQuota = values[idx]
-                        currentQuota = newQuota
-                        dialogBinding.tvQuotaValue.text = "${newQuota} GB"
-                        qDialog.dismiss()
-                        lifecycleScope.launch {
-                            try {
-                                repo.updateStorageConfig(token, currentQuota, currentHour, currentMinAge)
-                                Toast.makeText(requireContext(), "录像配额已调整为 ${newQuota} GB", Toast.LENGTH_SHORT).show()
-                            } catch (e: Exception) {
-                                Toast.makeText(requireContext(), "设置失败: ${e.message}", Toast.LENGTH_SHORT).show()
-                            }
+                fun updateQuotaStep(delta: Int) {
+                    val cur = editBinding.etQuota.text?.toString()?.toIntOrNull() ?: currentQuota
+                    val next = (cur + delta).coerceIn(50, 5000)
+                    editBinding.etQuota.setText(next.toString())
+                    editBinding.etQuota.setSelection(editBinding.etQuota.text?.length ?: 0)
+                    editBinding.tilQuota.error = null
+                }
+
+                fun setQuotaPreset(preset: Int) {
+                    editBinding.etQuota.setText(preset.toString())
+                    editBinding.etQuota.setSelection(editBinding.etQuota.text?.length ?: 0)
+                    editBinding.tilQuota.error = null
+                }
+
+                editBinding.btnMinus10.setOnClickListener { updateQuotaStep(-10) }
+                editBinding.btnMinus1.setOnClickListener { updateQuotaStep(-1) }
+                editBinding.btnPlus1.setOnClickListener { updateQuotaStep(1) }
+                editBinding.btnPlus10.setOnClickListener { updateQuotaStep(10) }
+
+                editBinding.btnPreset200.setOnClickListener { setQuotaPreset(200) }
+                editBinding.btnPreset400.setOnClickListener { setQuotaPreset(400) }
+                editBinding.btnPreset600.setOnClickListener { setQuotaPreset(600) }
+                editBinding.btnPreset1000.setOnClickListener { setQuotaPreset(1000) }
+
+                val quotaDialog = com.google.android.material.dialog.MaterialAlertDialogBuilder(requireContext())
+                    .setView(editBinding.root)
+                    .create()
+                quotaDialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+
+                editBinding.btnCancelQuota.setOnClickListener {
+                    quotaDialog.dismiss()
+                }
+
+                editBinding.btnSaveQuota.setOnClickListener {
+                    val input = editBinding.etQuota.text?.toString()?.trim()?.toIntOrNull()
+                    if (input == null || input < 50 || input > 5000) {
+                        editBinding.tilQuota.error = "请输入 50 ~ 5000 之间的整数"
+                        return@setOnClickListener
+                    }
+                    val newQuota = input
+                    currentQuota = newQuota
+                    dialogBinding.tvQuotaValue.text = "${newQuota} GB"
+
+                    val m = metrics
+                    if (m != null) {
+                        val pct = (m.effectiveRecordingsUsedGb / newQuota * 100.0).coerceIn(0.0, 100.0)
+                        dialogBinding.tvDialogStorageUsage.text = String.format(
+                            java.util.Locale.getDefault(),
+                            "%.1f GB / %d GB (%.1f%%)",
+                            m.effectiveRecordingsUsedGb,
+                            newQuota,
+                            pct
+                        )
+                        dialogBinding.pbDialogStorageQuota.progress = pct.toInt()
+                    } else {
+                        dialogBinding.tvDialogStorageUsage.text = "-- / ${newQuota} GB"
+                    }
+
+                    quotaDialog.dismiss()
+                    lifecycleScope.launch {
+                        try {
+                            repo.updateStorageConfig(token, currentQuota, currentHour, currentMinAge)
+                            Toast.makeText(requireContext(), "录像配额已调整为 ${newQuota} GB", Toast.LENGTH_SHORT).show()
+                        } catch (e: Exception) {
+                            Toast.makeText(requireContext(), "设置失败: ${e.message}", Toast.LENGTH_SHORT).show()
                         }
                     }
-                    .setNegativeButton("取消", null)
-                    .show()
+                }
+
+                quotaDialog.show()
             }
 
             dialogBinding.cardPickArchiveTime.setOnClickListener {
@@ -944,6 +1139,7 @@ class SettingsFragment : Fragment() {
             val mainActivity = activity as? MainActivity
             if (mainActivity != null) {
                 setupJwtInfo(mainActivity.container.prefsManager)
+                loadAISourceStatus()
                 val resolver = mainActivity.container.baseUrlResolver
                 val custom = resolver.getCustomLanUrl()
                 val effective = custom ?: BaseUrlResolver.LAN_URL

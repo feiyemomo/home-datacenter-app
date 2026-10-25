@@ -74,6 +74,8 @@ log_*.txt
 # Screenshots / captures
 captures/
 /captures
+screenshots/
+/screenshots
 
 # Backups
 *.bak

@@ -309,16 +309,19 @@
                     android:layout_height="44dp"
                     android:layout_marginStart="4dp"
                     android:layout_marginEnd="4dp"
-                    android:paddingHorizontal="4dp"
+                    android:paddingHorizontal="2dp"
                     android:paddingVertical="0dp"
                     android:insetTop="0dp"
                     android:insetBottom="0dp"
-                    android:text="拾音"
-                    android:textSize="13sp"
+                    android:singleLine="true"
+                    android:maxLines="1"
+                    android:ellipsize="none"
+                    android:text="拾音开"
+                    android:textSize="12sp"
                     android:textStyle="bold"
                     app:icon="@drawable/ic_volume_on"
-                    app:iconSize="18dp"
-                    app:iconPadding="4dp"
+                    app:iconSize="16dp"
+                    app:iconPadding="3dp"
                     app:iconGravity="textStart"
                     app:cornerRadius="12dp" />
 
@@ -426,116 +429,126 @@
                     android:textColor="@color/text_hint"
                     android:visibility="gone" />
 
-                <!-- D-pad: 3x3 grid -->
-                <GridLayout
+                <!-- Dial D-pad: Unified circular gimbal compass -->
+                <FrameLayout
                     android:id="@+id/ptzGrid"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
+                    android:layout_width="210dp"
+                    android:layout_height="210dp"
                     android:layout_gravity="center"
-                    android:columnCount="3"
-                    android:rowCount="3"
-                    android:useDefaultMargins="true">
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnPtzUpLeft"
-                        style="@style/Widget.Material3.Button.IconButton.Outlined"
-                        android:layout_width="56dp"
-                        android:layout_height="56dp"
-                        android:visibility="invisible" />
+                    android:background="@drawable/bg_ptz_dial">
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnPtzUp"
-                        style="@style/Widget.Material3.Button.IconButton.Outlined"
-                        android:layout_width="56dp"
-                        android:layout_height="56dp"
+                        style="@style/Widget.Material3.Button.IconButton"
+                        android:layout_width="54dp"
+                        android:layout_height="54dp"
+                        android:layout_gravity="top|center_horizontal"
+                        android:layout_marginTop="8dp"
+                        android:background="@drawable/bg_ptz_btn_ripple"
                         app:icon="@drawable/ic_ptz_up"
-                        app:iconTint="@color/text_primary" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnPtzUpRight"
-                        style="@style/Widget.Material3.Button.IconButton.Outlined"
-                        android:layout_width="56dp"
-                        android:layout_height="56dp"
-                        android:visibility="invisible" />
+                        app:iconSize="28dp"
+                        app:iconTint="@color/text_primary"
+                        android:contentDescription="@string/camera_ptz_up" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnPtzLeft"
-                        style="@style/Widget.Material3.Button.IconButton.Outlined"
-                        android:layout_width="56dp"
-                        android:layout_height="56dp"
+                        style="@style/Widget.Material3.Button.IconButton"
+                        android:layout_width="54dp"
+                        android:layout_height="54dp"
+                        android:layout_gravity="start|center_vertical"
+                        android:layout_marginStart="8dp"
+                        android:background="@drawable/bg_ptz_btn_ripple"
                         app:icon="@drawable/ic_ptz_left"
-                        app:iconTint="@color/text_primary" />
+                        app:iconSize="28dp"
+                        app:iconTint="@color/text_primary"
+                        android:contentDescription="@string/camera_ptz_left" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnPtzStop"
-                        style="@style/Widget.Material3.Button.IconButton.Outlined"
-                        android:layout_width="56dp"
-                        android:layout_height="56dp"
+                        style="@style/Widget.Material3.Button.IconButton"
+                        android:layout_width="58dp"
+                        android:layout_height="58dp"
+                        android:layout_gravity="center"
+                        android:background="@drawable/bg_ptz_stop_btn"
                         app:icon="@drawable/ic_ptz_stop"
-                        app:iconTint="@color/error" />
+                        app:iconSize="30dp"
+                        app:iconTint="@color/error"
+                        android:contentDescription="@string/camera_ptz_stop" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnPtzRight"
-                        style="@style/Widget.Material3.Button.IconButton.Outlined"
-                        android:layout_width="56dp"
-                        android:layout_height="56dp"
+                        style="@style/Widget.Material3.Button.IconButton"
+                        android:layout_width="54dp"
+                        android:layout_height="54dp"
+                        android:layout_gravity="end|center_vertical"
+                        android:layout_marginEnd="8dp"
+                        android:background="@drawable/bg_ptz_btn_ripple"
                         app:icon="@drawable/ic_ptz_right"
-                        app:iconTint="@color/text_primary" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnPtzDownLeft"
-                        style="@style/Widget.Material3.Button.IconButton.Outlined"
-                        android:layout_width="56dp"
-                        android:layout_height="56dp"
-                        android:visibility="invisible" />
+                        app:iconSize="28dp"
+                        app:iconTint="@color/text_primary"
+                        android:contentDescription="@string/camera_ptz_right" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnPtzDown"
-                        style="@style/Widget.Material3.Button.IconButton.Outlined"
-                        android:layout_width="56dp"
-                        android:layout_height="56dp"
+                        style="@style/Widget.Material3.Button.IconButton"
+                        android:layout_width="54dp"
+                        android:layout_height="54dp"
+                        android:layout_gravity="bottom|center_horizontal"
+                        android:layout_marginBottom="8dp"
+                        android:background="@drawable/bg_ptz_btn_ripple"
                         app:icon="@drawable/ic_ptz_down"
-                        app:iconTint="@color/text_primary" />
+                        app:iconSize="28dp"
+                        app:iconTint="@color/text_primary"
+                        android:contentDescription="@string/camera_ptz_down" />
+                </FrameLayout>
 
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnPtzDownRight"
-                        style="@style/Widget.Material3.Button.IconButton.Outlined"
-                        android:layout_width="56dp"
-                        android:layout_height="56dp"
-                        android:visibility="invisible" />
-                </GridLayout>
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center_horizontal"
+                    android:layout_marginTop="8dp"
+                    android:text="长按方向键持续调整 · 松开即停"
+                    android:textSize="11sp"
+                    android:textColor="@color/text_hint" />
 
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
                     android:gravity="center_vertical"
-                    android:layout_marginTop="12dp">
+                    android:layout_marginTop="14dp"
+                    android:paddingHorizontal="14dp"
+                    android:paddingVertical="10dp"
+                    android:background="@drawable/bg_glass_subtle_row">
 
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="@string/camera_ptz_speed"
                         android:textSize="13sp"
-                        android:textColor="@color/text_secondary" />
+                        android:textStyle="bold"
+                        android:textColor="@color/text_primary" />
 
                     <SeekBar
                         android:id="@+id/seekPtzSpeed"
                         android:layout_width="0dp"
                         android:layout_weight="1"
                         android:layout_height="wrap_content"
-                        android:layout_marginStart="8dp"
-                        android:layout_marginEnd="8dp"
+                        android:layout_marginStart="10dp"
+                        android:layout_marginEnd="10dp"
                         android:max="100"
-                        android:progress="25" />
+                        android:progress="25"
+                        android:progressTint="@color/primary"
+                        android:thumbTint="@color/primary" />
 
                     <TextView
                         android:id="@+id/tvPtzSpeed"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="0.25"
+                        android:text="0.25x"
                         android:textSize="12sp"
-                        android:textColor="@color/text_secondary" />
+                        android:textStyle="bold"
+                        android:textColor="@color/primary" />
                 </LinearLayout>
             </LinearLayout>
 
@@ -572,14 +585,28 @@
                     android:textSize="13sp"
                     android:textColor="@color/text_hint" />
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnAddPreset"
-                    style="@style/Widget.Material3.Button.TonalButton"
-                    android:layout_width="wrap_content"
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
-                    android:text="@string/camera_preset_add"
-                    app:icon="@drawable/ic_add" />
+                    android:orientation="horizontal">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnSaveCurrentPreset"
+                        style="@style/Widget.Material3.Button.TonalButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/camera_preset_save_current"
+                        app:icon="@drawable/ic_add" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnAddPreset"
+                        style="@style/Widget.Material3.Button.TextButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:text="@string/camera_preset_add" />
+                </LinearLayout>
             </LinearLayout>
 
             <!-- Settings section: share / audio / recording / codec / delete -->
@@ -624,6 +651,7 @@
                     android:textColor="@color/text_primary" />
 
                 <TextView
+                    android:id="@+id/tvAudioSummary"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="56dp"

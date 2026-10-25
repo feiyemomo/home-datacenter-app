@@ -1,6 +1,7 @@
 package com.homedatacenter.app.data.repository
 
 import com.homedatacenter.app.data.api.HomeCenterApi
+import com.homedatacenter.app.data.model.ApiResponse
 import com.homedatacenter.app.data.model.ApiException
 import com.homedatacenter.app.data.model.BindData
 import com.homedatacenter.app.data.model.BindRequest
@@ -347,6 +348,15 @@ class HomeCenterRepository(
         return resp.decodeData<List<com.homedatacenter.app.data.model.CameraPreset>>() ?: emptyList()
     }
 
+    suspend fun createCameraPreset(token: String, cameraId: Long, name: String, presetToken: String? = null) {
+        val resp = api.createCameraPreset(
+            bearer(token),
+            cameraId,
+            com.homedatacenter.app.data.model.CreatePresetRequest(name, presetToken),
+        )
+        ensureSuccess(resp)
+    }
+
     suspend fun setCameraPreset(token: String, cameraId: Long, alias: String, presetToken: String) {
         val resp = api.setCameraPreset(
             bearer(token),
@@ -390,6 +400,33 @@ class HomeCenterRepository(
         )
         ensureSuccess(resp)
         prefsManager.lastCamerasFetchTime = 0L
+    }
+
+    suspend fun getAISource(token: String): com.homedatacenter.app.data.model.AISourceStatus {
+        val resp = api.getAISource(bearer(token))
+        ensureSuccess(resp)
+        return resp.decodeData<com.homedatacenter.app.data.model.AISourceStatus>()
+            ?: com.homedatacenter.app.data.model.AISourceStatus()
+    }
+
+    suspend fun setAISource(token: String, source: String): com.homedatacenter.app.data.model.AISourceStatus {
+        val resp = api.setAISource(
+            bearer(token),
+            com.homedatacenter.app.data.model.SetAISourceRequest(source = source)
+        )
+        ensureSuccess(resp)
+        return resp.decodeData<com.homedatacenter.app.data.model.AISourceStatus>()
+            ?: com.homedatacenter.app.data.model.AISourceStatus(currentSource = source)
+    }
+
+    suspend fun setMotionFallback(token: String, enabled: Boolean): com.homedatacenter.app.data.model.AISourceStatus {
+        val resp = api.setMotionFallback(
+            bearer(token),
+            com.homedatacenter.app.data.model.SetMotionFallbackRequest(enabled)
+        )
+        ensureSuccess(resp)
+        return resp.decodeData<com.homedatacenter.app.data.model.AISourceStatus>()
+            ?: com.homedatacenter.app.data.model.AISourceStatus(motionFallback = enabled)
     }
 
     /**
@@ -696,6 +733,111 @@ class HomeCenterRepository(
     suspend fun testAlertEmail(token: String) {
         val resp = api.testAlertEmail(bearer(token))
         ensureSuccess(resp)
+    }
+
+    suspend fun updateAlertEmail(token: String, recipient: String): ApiResponse {
+        val resp = api.updateAlertEmail(bearer(token), mapOf("recipient" to recipient))
+        ensureSuccess(resp)
+        return resp
+    }
+
+    suspend fun addAlertRecipient(token: String, email: String): ApiResponse {
+        val resp = api.addAlertRecipient(bearer(token), mapOf("recipient" to email))
+        ensureSuccess(resp)
+        return resp
+    }
+
+    suspend fun deleteAlertRecipient(token: String, email: String): ApiResponse {
+        val resp = api.deleteAlertRecipient(bearer(token), email)
+        ensureSuccess(resp)
+        return resp
+    }
+
+    suspend fun listSystemLogs(
+        token: String,
+        limit: Int = 50,
+        offset: Int = 0,
+        eventType: String? = null,
+        level: String? = null,
+        source: String? = null,
+        keyword: String? = null,
+        startTs: Long? = null,
+        endTs: Long? = null,
+    ): com.homedatacenter.app.data.model.SystemLogListData {
+        val resp = api.listSystemLogs(
+            bearer(token),
+            limit,
+            offset,
+            eventType,
+            level,
+            source,
+            keyword,
+            startTs,
+            endTs
+        )
+        ensureSuccess(resp)
+        return resp.decodeDataOrThrow()
+    }
+
+    suspend fun updateBan(token: String, ip: String, durationMinutes: Int, permanent: Boolean) {
+        val resp = api.updateBan(
+            bearer(token),
+            ip,
+            com.homedatacenter.app.data.model.UpdateBanRequest(durationMinutes, permanent)
+        )
+        ensureSuccess(resp)
+    }
+
+    suspend fun getSecurityEvents(
+        token: String,
+        limit: Int = 50,
+        type: String? = null,
+        ip: String? = null,
+        keyword: String? = null
+    ): List<com.homedatacenter.app.data.model.SecurityEventItem> {
+        val resp = api.getSecurityEvents(bearer(token), limit, type, ip, keyword)
+        ensureSuccess(resp)
+        return resp.decodeData<List<com.homedatacenter.app.data.model.SecurityEventItem>>() ?: emptyList()
+    }
+
+    suspend fun pruneSecurityEvents(token: String, days: Int = 30): Pair<Int, Int> {
+        val resp = api.pruneSecurityEvents(bearer(token), days)
+        ensureSuccess(resp)
+        val data = resp.decodeData<Map<String, Int>>() ?: emptyMap()
+        return Pair(data["deleted"] ?: 0, data["retention_days"] ?: days)
+    }
+
+    suspend fun getSecurityWhitelist(token: String): List<com.homedatacenter.app.data.model.SecurityWhitelistEntry> {
+        val resp = api.getSecurityWhitelist(bearer(token))
+        ensureSuccess(resp)
+        return resp.decodeData<List<com.homedatacenter.app.data.model.SecurityWhitelistEntry>>() ?: emptyList()
+    }
+
+    suspend fun addSecurityWhitelist(token: String, entry: String, note: String = "") {
+        val resp = api.addSecurityWhitelist(
+            bearer(token),
+            com.homedatacenter.app.data.model.AddWhitelistRequest(entry, note)
+        )
+        ensureSuccess(resp)
+    }
+
+    suspend fun deleteSecurityWhitelist(token: String, entry: String) {
+        val resp = api.deleteSecurityWhitelist(bearer(token), entry)
+        ensureSuccess(resp)
+    }
+
+    suspend fun updateSecurityConfig(token: String, maxFailures: Int, windowMins: Int, banDurationMins: Int) {
+        val resp = api.updateSecurityConfig(
+            bearer(token),
+            com.homedatacenter.app.data.model.UpdateSecurityConfigRequest(maxFailures, windowMins, banDurationMins)
+        )
+        ensureSuccess(resp)
+    }
+
+    suspend fun getHostLogs(token: String): com.homedatacenter.app.data.model.HostLogStatus {
+        val resp = api.getHostLogs(bearer(token))
+        ensureSuccess(resp)
+        return resp.decodeDataOrThrow()
     }
 
     private fun bearer(token: String): String = "Bearer $token"

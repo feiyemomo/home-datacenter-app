@@ -155,24 +155,24 @@ class CameraAdapter(
             }
 
             val entry = cachedThumb(camera.id)
-            val fresh = entry != null && entry.isFresh(SystemClock.elapsedRealtime())
 
             if (cameraChanged) {
                 thumbnailJob?.cancel()
                 thumbnailError = false
-                if (fresh) {
-                    thumbnail = entry!!.bitmap
+                if (entry != null) {
+                    thumbnail = entry.bitmap
                     thumbnailLoading = false
                 } else {
                     thumbnail = null
                     loadThumbnail(camera)
                 }
-            } else if (!fresh) {
-                // Same camera bound to the same holder but the cached
-                // frame has expired: refresh in place without blanking
-                // the tile, so a stale frame (or a go2rtc error
-                // placeholder) is replaced silently on the next tick.
-                loadThumbnail(camera, silent = true)
+            } else if (thumbnail == null) {
+                if (entry != null) {
+                    thumbnail = entry.bitmap
+                    thumbnailLoading = false
+                } else {
+                    loadThumbnail(camera)
+                }
             }
         }
 

@@ -35,6 +35,7 @@ import com.homedatacenter.app.ui.cameras.CameraDetailActivity
 import com.homedatacenter.app.ui.cameras.CamerasFragment
 import com.homedatacenter.app.ui.main.MainActivity
 import com.homedatacenter.app.ui.network.NetworkDetailActivity
+import com.homedatacenter.app.ui.ops.OpsFragment
 import com.homedatacenter.app.util.AnimationHelper
 import com.homedatacenter.app.util.CacheManager
 import com.homedatacenter.app.util.NetworkMonitor
@@ -136,9 +137,8 @@ class DashboardFragment : Fragment() {
             }
         }
         binding.btnViewAllLogs.setOnClickListener {
-            // Mirrors btnViewAllAlerts: jump to the "服务日志" tab so
-            // the user can browse the full log history.
             (activity as? MainActivity)?.let {
+                OpsFragment.targetSubTab = OpsFragment.TAB_LOGS
                 it.binding.bottomNav.selectedItemId = R.id.nav_logs
             }
         }
@@ -152,12 +152,6 @@ class DashboardFragment : Fragment() {
         binding.btnGuardAway.setOnClickListener { setGuardMode("armed_away") }
         binding.btnGuardHome.setOnClickListener { setGuardMode("armed_home") }
         binding.btnGuardDisarmed.setOnClickListener { setGuardMode("disarmed") }
-        binding.btnCleanCache.setOnClickListener { cleanTranscodeCache() }
-        binding.cardSystemMetrics.setOnClickListener {
-            (activity as? MainActivity)?.let {
-                it.binding.bottomNav.selectedItemId = R.id.nav_settings
-            }
-        }
 
         updateAdminUiVisibility()
 
@@ -230,8 +224,6 @@ class DashboardFragment : Fragment() {
     private fun updateAdminUiVisibility() {
         if (_binding == null) return
         val isAdmin = (activity as? MainActivity)?.container?.prefsManager?.isAdmin == true
-        binding.gridStats.visibility = if (isAdmin) View.VISIBLE else View.GONE
-        binding.cardSystemMetrics.visibility = if (isAdmin) View.VISIBLE else View.GONE
         binding.cardAutomationLinkage.visibility = if (isAdmin) View.VISIBLE else View.GONE
         binding.layoutGuardButtons.visibility = if (isAdmin) View.VISIBLE else View.GONE
         binding.tvRecentLogsTitle.visibility = if (isAdmin) View.VISIBLE else View.GONE
@@ -439,81 +431,12 @@ class DashboardFragment : Fragment() {
 
     private fun updateStats(status: SystemStatus) {
         latestSystemStatus = status
+        updateSystemStatusUI(status)
+    }
 
-        // v1.6.12: stat card icons use WHITE tint (not primary/online/etc).
-        // The bg_icon_circle background is @color/primary (warm peach
-        // #FF8A65). Previously each card used a different tint color
-        // (primary for devices, online for mqtt, etc) — but the devices
-        // card's tint was ALSO primary, making foreground + background
-        // the same color so the icon "disappeared". Unified to white
-        // for all four cards: high contrast against the peach circle
-        // in both light and dark mode, and visually consistent across
-        // the grid. setImageTintList (NOT setColorFilter) only tints
-        // the foreground drawable, leaving the bg_icon_circle intact.
-        val devicesCard = ItemStatCardBinding.bind(binding.cardDevices.root)
-        // v1.6.14: label was "设备总数" but the value shown was
-        // onlineDeviceCount (mismatch). Now the label is "在线设备"
-        // and the value is "online / total" so the user can see at a
-        // glance how many of their registered devices are currently
-        // connected. Total comes from the cached device list in
-        // PrefsManager (no extra network call); if the cache is empty
-        // we fall back to just showing the online count.
-        devicesCard.tvLabel.text = getString(R.string.stat_devices_online)
-        val totalDevices = try {
-            val mainActivity = activity as? com.homedatacenter.app.ui.main.MainActivity
-            val raw = mainActivity?.container?.prefsManager?.cachedDevices
-            if (raw != null) {
-                NetworkFactory.json.decodeFromString<DeviceList>(raw).devices.size
-            } else 0
-        } catch (_: Exception) { 0 }
-        devicesCard.tvValue.text = if (totalDevices > 0) {
-            "${status.onlineDeviceCount} / $totalDevices"
-        } else {
-            status.onlineDeviceCount.toString()
-        }
-        devicesCard.ivIcon.setImageResource(R.drawable.ic_devices)
-        devicesCard.ivIcon.imageTintList =
-            android.content.res.ColorStateList.valueOf(
-                resources.getColor(R.color.primary_dark, null))
-        // Status dot: green if any devices online, gray otherwise.
-        applyStatCardDot(devicesCard.statusDot, status.onlineDeviceCount > 0)
-
-        val mqttCard = ItemStatCardBinding.bind(binding.cardMqtt.root)
-        mqttCard.tvLabel.text = getString(R.string.stat_mqtt)
-        mqttCard.tvValue.text = if (status.mqttConnected)
-            getString(R.string.status_online) else getString(R.string.status_offline)
-        mqttCard.ivIcon.setImageResource(R.drawable.ic_mqtt)
-        mqttCard.ivIcon.imageTintList =
-            android.content.res.ColorStateList.valueOf(
-                resources.getColor(R.color.primary_dark, null))
-        applyStatCardDot(mqttCard.statusDot, status.mqttConnected)
-
-        val wsCard = ItemStatCardBinding.bind(binding.cardWs.root)
-        wsCard.tvLabel.text = getString(R.string.stat_ws_clients)
-        wsCard.tvValue.text = status.wsClients.toString()
-        wsCard.ivIcon.setImageResource(R.drawable.ic_ws)
-        wsCard.ivIcon.imageTintList =
-            android.content.res.ColorStateList.valueOf(
-                resources.getColor(R.color.primary_dark, null))
-        // WS clients dot: green if >0 clients, gray otherwise.
-        applyStatCardDot(wsCard.statusDot, status.wsClients > 0)
-
-        val uptimeCard = ItemStatCardBinding.bind(binding.cardUptime.root)
-        uptimeCard.tvLabel.text = getString(R.string.stat_uptime)
-        uptimeCard.tvValue.text = formatUptime(status.uptimeSeconds)
-        uptimeCard.ivIcon.setImageResource(R.drawable.ic_uptime)
-        uptimeCard.ivIcon.imageTintList =
-            android.content.res.ColorStateList.valueOf(
-                resources.getColor(R.color.primary_dark, null))
-        // Uptime dot: green if uptime > 1h, yellow otherwise (recently started).
-        applyStatCardDot(uptimeCard.statusDot, on = status.uptimeSeconds >= 3_600,
-            warning = status.uptimeSeconds in 1 until 3_600)
-
+    private fun updateSystemStatusUI(status: SystemStatus) {
         // Top status banner — aggregates MQTT + WS + devices into one pill.
         updateStatusBanner(status)
-
-        // Update Host & Storage monitoring metrics (v1.11.0)
-        updateMetricsUI(status.metrics)
     }
 
     /** Update the top-right compact status pill based on overall system health. */
@@ -722,8 +645,23 @@ class DashboardFragment : Fragment() {
                 if (isMuted) return
                 val name = message.payload?.get("name")?.toString()?.replace("\"", "") ?: "家庭成员"
                 val camName = message.payload?.get("camera_name")?.toString()?.replace("\"", "") ?: ""
+                val camId = message.payload?.get("camera_id")?.toString()?.replace("\"", "")?.toLongOrNull()
+                val camSlug = message.payload?.get("camera_slug")?.toString()?.replace("\"", "") ?: ""
+                val startTs = message.payload?.get("ts")?.toString()?.replace("\"", "")?.toLongOrNull()
+                    ?: (System.currentTimeMillis() / 1000L)
+                val alertId = message.payload?.get("id")?.toString()?.replace("\"", "") ?: ""
+                val isUpdate = message.payload?.get("is_update")?.toString()?.toBooleanStrictOrNull() == true
+                val serverCount = message.payload?.get("count")?.toString()?.replace("\"", "")?.toIntOrNull() ?: 0
                 context?.let { ctx ->
-                    NotificationHelper.showPersonRecognizedNotification(ctx, name, camName)
+                    NotificationHelper.showPersonRecognizedNotification(
+                        ctx, name, camName,
+                        cameraId = camId,
+                        cameraSlug = camSlug,
+                        startTs = startTs,
+                        alertId = alertId,
+                        isUpdate = isUpdate,
+                        serverCount = serverCount
+                    )
                 }
             }
             message.topic == "system.log" -> {
@@ -781,7 +719,10 @@ class DashboardFragment : Fragment() {
             }
         }
         binding.quotaAlertBanner.setOnClickListener {
-            (activity as? MainActivity)?.let { it.binding.bottomNav.selectedItemId = R.id.nav_logs }
+            (activity as? MainActivity)?.let {
+                OpsFragment.targetSubTab = OpsFragment.TAB_SYSTEM
+                it.binding.bottomNav.selectedItemId = R.id.nav_logs
+            }
         }
     }
 
@@ -1118,52 +1059,6 @@ class DashboardFragment : Fragment() {
             },
             onError = { msg ->
                 if (isAdded) {
-                    android.widget.Toast.makeText(requireContext(), msg, android.widget.Toast.LENGTH_SHORT).show()
-                }
-            }
-        )
-    }
-
-    private fun updateMetricsUI(metrics: com.homedatacenter.app.data.model.SystemStatusMetrics?) {
-        if (_binding == null || metrics == null) return
-        binding.tvCpuPercent.text = String.format(Locale.getDefault(), "CPU: %.1f%%", metrics.effectiveCpuPercent)
-        binding.tvMemoryPercent.text = String.format(
-            Locale.getDefault(),
-            "内存: %dMB / %dMB (%.1f%%)",
-            metrics.effectiveMemoryUsedMb,
-            metrics.effectiveMemoryTotalMb,
-            metrics.effectiveMemoryPercent
-        )
-        binding.tvStorageQuotaText.text = String.format(
-            Locale.getDefault(),
-            "%.1f GB / %.0f GB (%.1f%%)",
-            metrics.effectiveRecordingsUsedGb,
-            metrics.effectiveRecordingsLimitGb,
-            metrics.effectiveRecordingsPercent
-        )
-        binding.pbStorageQuota.progress = metrics.effectiveRecordingsPercent.toInt().coerceIn(0, 100)
-        binding.tvTranscodeCache.text = String.format(
-            Locale.getDefault(),
-            "转码缓存占用: %d MB",
-            metrics.effectiveTranscodeCacheMb
-        )
-    }
-
-    private fun cleanTranscodeCache() {
-        val mainActivity = activity as? MainActivity ?: return
-        val token = mainActivity.container.prefsManager.token ?: return
-        binding.btnCleanCache.isEnabled = false
-        viewModel.cleanSystemCache(
-            token = token,
-            onSuccess = {
-                if (_binding != null) {
-                    binding.btnCleanCache.isEnabled = true
-                    android.widget.Toast.makeText(requireContext(), "转码缓存已清理", android.widget.Toast.LENGTH_SHORT).show()
-                }
-            },
-            onError = { msg ->
-                if (_binding != null) {
-                    binding.btnCleanCache.isEnabled = true
                     android.widget.Toast.makeText(requireContext(), msg, android.widget.Toast.LENGTH_SHORT).show()
                 }
             }

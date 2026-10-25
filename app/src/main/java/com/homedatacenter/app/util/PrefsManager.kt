@@ -189,6 +189,26 @@ class PrefsManager(context: Context) {
         get() = prefs.getInt(KEY_NOTIFY_DND_END_MINUTE, 0)
         set(value) = prefs.edit().putInt(KEY_NOTIFY_DND_END_MINUTE, value).apply()
 
+    // Alert coalescing: when the same camera fires repeatedly, bursts within
+    // notifyMergeWindowSec are folded into one notification that is refreshed
+    // in place; a refresh only re-alerts (sound/heads-up) after at least
+    // notifyMinIntervalSec since the last audible alert for that camera.
+    var notifyMergeEnabled: Boolean
+        get() = prefs.getBoolean(KEY_NOTIFY_MERGE_ENABLED, true)
+        set(value) = prefs.edit().putBoolean(KEY_NOTIFY_MERGE_ENABLED, value).apply()
+
+    var notifyMergeWindowSec: Int
+        get() = prefs.getInt(KEY_NOTIFY_MERGE_WINDOW_SEC, 30)
+        set(value) = prefs.edit().putInt(KEY_NOTIFY_MERGE_WINDOW_SEC, value).apply()
+
+    var notifyMinIntervalSec: Int
+        get() = prefs.getInt(KEY_NOTIFY_MIN_INTERVAL_SEC, 6)
+        set(value) = prefs.edit().putInt(KEY_NOTIFY_MIN_INTERVAL_SEC, value).apply()
+
+    var customAlertRecipients: Set<String>
+        get() = prefs.getStringSet(KEY_CUSTOM_ALERT_RECIPIENTS, emptySet()) ?: emptySet()
+        set(value) = prefs.edit().putStringSet(KEY_CUSTOM_ALERT_RECIPIENTS, value).apply()
+
     fun isDndActive(): Boolean {
         if (!notifyDndEnabled) return false
         val now = java.util.Calendar.getInstance()
@@ -248,6 +268,10 @@ class PrefsManager(context: Context) {
         private const val KEY_NOTIFY_DND_START_MINUTE = "notify_dnd_start_minute"
         private const val KEY_NOTIFY_DND_END_HOUR = "notify_dnd_end_hour"
         private const val KEY_NOTIFY_DND_END_MINUTE = "notify_dnd_end_minute"
+        private const val KEY_NOTIFY_MERGE_ENABLED = "notify_merge_enabled"
+        private const val KEY_NOTIFY_MERGE_WINDOW_SEC = "notify_merge_window_sec"
+        private const val KEY_NOTIFY_MIN_INTERVAL_SEC = "notify_min_interval_sec"
+        private const val KEY_CUSTOM_ALERT_RECIPIENTS = "custom_alert_recipients"
         private const val KEY_CACHED_DEVICES = "cached_devices"
         private const val KEY_CACHED_CAMERAS = "cached_cameras"
         private const val KEY_CACHED_SYSTEM_STATUS = "cached_system_status"

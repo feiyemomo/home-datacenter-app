@@ -208,6 +208,13 @@ class AlertKeepAliveService : Service() {
                     if (isMuted) return
                     val isIntrusion = payload["is_intrusion"]?.jsonPrimitive?.booleanOrNull == true
                     val camName = payload["camera_name"]?.jsonPrimitive?.contentOrNull ?: ""
+                    val camSlug = payload["camera_slug"]?.jsonPrimitive?.contentOrNull ?: ""
+                    val camId = payload["camera_id"]?.jsonPrimitive?.contentOrNull?.toLongOrNull()
+                    val startTs = payload["ts"]?.jsonPrimitive?.contentOrNull?.toLongOrNull()
+                        ?: payload["start_time"]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull()?.toLong()
+                        ?: System.currentTimeMillis() / 1000L
+                    val alertId = payload["id"]?.jsonPrimitive?.contentOrNull
+                        ?: payload["event_id"]?.jsonPrimitive?.contentOrNull ?: ""
                     val personsArray = payload["persons"]?.let { el ->
                         try {
                             (el as? kotlinx.serialization.json.JsonArray)?.mapNotNull {
@@ -216,8 +223,16 @@ class AlertKeepAliveService : Service() {
                         } catch (_: Exception) { null }
                     } ?: emptyList()
                     val name = payload["name"]?.jsonPrimitive?.contentOrNull ?: ""
+                    val isUpdate = payload["is_update"]?.jsonPrimitive?.booleanOrNull == true
+                    val serverCount = payload["count"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: 0
                     NotificationHelper.showPersonRecognizedNotification(
-                        applicationContext, name, camName, isIntrusion, personsArray
+                        applicationContext, name, camName, isIntrusion, personsArray,
+                        cameraId = camId,
+                        cameraSlug = camSlug,
+                        startTs = startTs,
+                        alertId = alertId,
+                        isUpdate = isUpdate,
+                        serverCount = serverCount
                     )
                 }
                 "system.alert" -> {

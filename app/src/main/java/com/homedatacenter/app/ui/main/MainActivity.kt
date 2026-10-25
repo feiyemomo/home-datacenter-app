@@ -22,6 +22,7 @@ import com.homedatacenter.app.ui.cameras.CamerasFragment
 import com.homedatacenter.app.ui.dashboard.DashboardFragment
 import com.homedatacenter.app.ui.login.LoginActivity
 import com.homedatacenter.app.ui.logs.ServiceLogsFragment
+import com.homedatacenter.app.ui.ops.OpsFragment
 import com.homedatacenter.app.ui.settings.SettingsFragment
 import com.homedatacenter.app.data.model.Alert
 import com.homedatacenter.app.data.model.SystemLog
@@ -219,7 +220,7 @@ class MainActivity : AppCompatActivity() {
         super.onRestoreInstanceState(savedInstanceState)
         when (binding.bottomNav.selectedItemId) {
             R.id.nav_cameras -> showFragmentByTag(TAG_CAMERAS) { CamerasFragment() }
-            R.id.nav_logs -> showFragmentByTag(TAG_LOGS) { ServiceLogsFragment() }
+            R.id.nav_logs -> showFragmentByTag(TAG_LOGS) { OpsFragment() }
             R.id.nav_users -> showFragmentByTag(TAG_USERS) { UsersFragment() }
             R.id.nav_settings -> showFragmentByTag(TAG_SETTINGS) { SettingsFragment() }
             else -> showFragmentByTag(TAG_DASHBOARD) { DashboardFragment() }
@@ -277,7 +278,7 @@ class MainActivity : AppCompatActivity() {
             when (item.itemId) {
                 R.id.nav_dashboard -> { showFragmentByTag(TAG_DASHBOARD) { DashboardFragment() }; true }
                 R.id.nav_cameras -> { showFragmentByTag(TAG_CAMERAS) { CamerasFragment() }; true }
-                R.id.nav_logs -> { showFragmentByTag(TAG_LOGS) { ServiceLogsFragment() }; true }
+                R.id.nav_logs -> { showFragmentByTag(TAG_LOGS) { OpsFragment() }; true }
                 R.id.nav_users -> { showFragmentByTag(TAG_USERS) { UsersFragment() }; true }
                 R.id.nav_settings -> { showFragmentByTag(TAG_SETTINGS) { SettingsFragment() }; true }
                 else -> false

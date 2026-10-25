@@ -54,6 +54,7 @@ class MultiCameraActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMultiCameraBinding
     private lateinit var container: AppContainer
     private var allCameras: List<Camera> = emptyList()
+    private val slotMapping = IntArray(9) { it }
     private var currentGridMode: GridMode = GridMode.FOUR
     private var previousGridMode: GridMode = GridMode.FOUR
     private var focusedCameraIndex: Int = 0
@@ -82,6 +83,11 @@ class MultiCameraActivity : AppCompatActivity() {
         }
         binding.btnAspectRatio.setOnClickListener { toggleAspectRatio() }
         binding.btnFloatingAspectRatio.setOnClickListener { toggleAspectRatio() }
+
+        binding.btnPrevCamera.setOnClickListener { switchToPrevCamera() }
+        binding.btnNextCamera.setOnClickListener { switchToNextCamera() }
+        binding.btnCameraSwitchPill.setOnClickListener { showSelectCameraDialogForOneGrid() }
+        binding.btnFloatingSwitchCamera.setOnClickListener { showSelectCameraDialogForOneGrid() }
 
         updateLayoutForOrientation(resources.configuration.orientation)
         applyGridModeLayout()
@@ -118,6 +124,9 @@ class MultiCameraActivity : AppCompatActivity() {
             GridMode.ONE -> GridMode.FOUR
         }
         binding.btnGridMode.text = currentGridMode.label
+        val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        binding.btnFloatingSwitchCamera.visibility =
+            if (isLandscape && currentGridMode == GridMode.ONE && allCameras.isNotEmpty()) View.VISIBLE else View.GONE
         applyGridModeLayout()
         applyGridRowHeights()
         bindSlots()
@@ -137,6 +146,8 @@ class MultiCameraActivity : AppCompatActivity() {
         val isLandscape = orientation == Configuration.ORIENTATION_LANDSCAPE
         binding.toolbar.visibility = if (isLandscape) View.GONE else View.VISIBLE
         binding.layoutFloatingControls.visibility = if (isLandscape) View.VISIBLE else View.GONE
+        binding.btnFloatingSwitchCamera.visibility =
+            if (isLandscape && currentGridMode == GridMode.ONE && allCameras.isNotEmpty()) View.VISIBLE else View.GONE
 
         val windowInsetsController = WindowCompat.getInsetsController(window, window.decorView)
         val density = resources.displayMetrics.density
@@ -295,6 +306,9 @@ class MultiCameraActivity : AppCompatActivity() {
                     container.getRepository().listCameras(token, useCache = false, refreshCache = true)
                 }
                 allCameras = list
+                for (idx in 0 until 9) {
+                    slotMapping[idx] = if (idx < list.size) idx else -1
+                }
                 bindSlots()
                 startFramePolling()
             } catch (e: Exception) {
@@ -328,10 +342,22 @@ class MultiCameraActivity : AppCompatActivity() {
     private fun bindSlots() {
         val activeSlots = getActiveSlots()
         val hasNoCameras = allCameras.isEmpty()
+        val isOneGrid = currentGridMode == GridMode.ONE
+
+        binding.layoutOneGridNav.visibility = if (isOneGrid && allCameras.isNotEmpty()) View.VISIBLE else View.GONE
+        if (isOneGrid && allCameras.isNotEmpty()) {
+            binding.layoutOneGridNav.bringToFront()
+            val cam = allCameras.getOrNull(focusedCameraIndex)
+            val name = cam?.name ?: "摄像头"
+            binding.tvOneGridCameraName.text = "$name (${focusedCameraIndex + 1}/${allCameras.size})"
+            binding.btnPrevCamera.visibility = if (allCameras.size > 1) View.VISIBLE else View.GONE
+            binding.btnNextCamera.visibility = if (allCameras.size > 1) View.VISIBLE else View.GONE
+        }
+
         for (i in activeSlots.indices) {
             val s = activeSlots[i]
-            val camIndex = if (currentGridMode == GridMode.ONE) focusedCameraIndex else i
-            val cam = allCameras.getOrNull(camIndex)
+            val camIndex = if (isOneGrid) focusedCameraIndex else slotMapping.getOrElse(i) { -1 }
+            val cam = if (camIndex >= 0) allCameras.getOrNull(camIndex) else null
             if (cam != null) {
                 s.empty.visibility = View.GONE
                 s.overlay.visibility = View.VISIBLE
@@ -341,6 +367,8 @@ class MultiCameraActivity : AppCompatActivity() {
                 s.status.setTextColor(if (isOnline) 0xFF5CB880.toInt() else 0xFFE07070.toInt())
 
                 val gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+                    override fun onDown(e: MotionEvent): Boolean = true
+
                     override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
                         openCameraDetail(cam)
                         return true
@@ -349,32 +377,117 @@ class MultiCameraActivity : AppCompatActivity() {
                         toggleFocusSlot(camIndex)
                         return true
                     }
+                    override fun onFling(
+                        e1: MotionEvent?,
+                        e2: MotionEvent,
+                        velocityX: Float,
+                        velocityY: Float
+                    ): Boolean {
+                        if (e1 == null) return false
+                        val diffX = e2.x - e1.x
+                        val diffY = e2.y - e1.y
+                        if (Math.abs(diffX) > Math.abs(diffY) && Math.abs(diffX) > 80 && Math.abs(velocityX) > 80) {
+                            if (currentGridMode == GridMode.ONE && allCameras.size > 1) {
+                                if (diffX < 0) {
+                                    switchToNextCamera()
+                                } else {
+                                    switchToPrevCamera()
+                                }
+                                return true
+                            }
+                        }
+                        return false
+                    }
+                    override fun onLongPress(e: MotionEvent) {
+                        if (currentGridMode == GridMode.ONE) {
+                            showSelectCameraDialogForOneGrid()
+                        } else {
+                            showSelectCameraDialogForSlot(i)
+                        }
+                    }
                 })
                 s.card.setOnTouchListener { _, event ->
                     gestureDetector.onTouchEvent(event)
                     true
                 }
+                s.overlay.setOnClickListener {
+                    if (currentGridMode == GridMode.ONE) {
+                        showSelectCameraDialogForOneGrid()
+                    } else {
+                        showSelectCameraDialogForSlot(i)
+                    }
+                }
             } else {
                 s.empty.visibility = View.VISIBLE
-                s.empty.text = if (hasNoCameras && i == 0) "暂无分配的摄像头\n(请联系管理员分享权限)" else "未配置"
+                s.empty.text = if (hasNoCameras && i == 0) "暂无分配的摄像头\n(请联系管理员分享权限)" else "未配置 · 点击选择"
                 s.progress.visibility = View.GONE
                 s.overlay.visibility = View.GONE
                 s.preview.setImageDrawable(null)
                 s.card.setOnTouchListener(null)
-                s.card.setOnClickListener(null)
+                s.card.setOnClickListener {
+                    showSelectCameraDialogForSlot(i)
+                }
             }
         }
+    }
+
+    private fun switchToNextCamera() {
+        if (allCameras.isEmpty()) return
+        focusedCameraIndex = (focusedCameraIndex + 1) % allCameras.size
+        bindSlots()
+        startFramePolling()
+    }
+
+    private fun switchToPrevCamera() {
+        if (allCameras.isEmpty()) return
+        focusedCameraIndex = (focusedCameraIndex - 1 + allCameras.size) % allCameras.size
+        bindSlots()
+        startFramePolling()
+    }
+
+    private fun showSelectCameraDialogForOneGrid() {
+        if (allCameras.isEmpty()) return
+        val names = allCameras.map { it.name }.toTypedArray()
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+            .setTitle("切换摄像头")
+            .setSingleChoiceItems(names, focusedCameraIndex.coerceIn(0, names.size - 1)) { d, which ->
+                focusedCameraIndex = which
+                d.dismiss()
+                bindSlots()
+                startFramePolling()
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    private fun showSelectCameraDialogForSlot(slotIndex: Int) {
+        if (allCameras.isEmpty()) return
+        val currentCamIdx = slotMapping.getOrElse(slotIndex) { 0 }
+        val names = allCameras.map { it.name }.toTypedArray()
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+            .setTitle("为窗口 ${slotIndex + 1} 选择摄像头")
+            .setSingleChoiceItems(names, currentCamIdx.coerceIn(0, names.size - 1)) { d, which ->
+                slotMapping[slotIndex] = which
+                d.dismiss()
+                bindSlots()
+                startFramePolling()
+            }
+            .setNegativeButton("取消", null)
+            .show()
     }
 
     private fun toggleFocusSlot(camIndex: Int) {
         if (currentGridMode != GridMode.ONE) {
             previousGridMode = currentGridMode
-            focusedCameraIndex = camIndex
+            focusedCameraIndex = camIndex.coerceIn(0, maxOf(0, allCameras.size - 1))
             currentGridMode = GridMode.ONE
         } else {
             currentGridMode = previousGridMode
         }
         binding.btnGridMode.text = currentGridMode.label
+        val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        binding.btnFloatingSwitchCamera.visibility =
+            if (isLandscape && currentGridMode == GridMode.ONE && allCameras.isNotEmpty()) View.VISIBLE else View.GONE
         applyGridModeLayout()
         applyGridRowHeights()
         bindSlots()
@@ -421,7 +534,8 @@ class MultiCameraActivity : AppCompatActivity() {
             val mode = currentGridMode
 
             for (i in activeSlots.indices) {
-                val camIndex = if (mode == GridMode.ONE) focusedCameraIndex else i
+                val camIndex = if (mode == GridMode.ONE) focusedCameraIndex else slotMapping.getOrElse(i) { -1 }
+                if (camIndex < 0) continue
                 val cam = allCameras.getOrNull(camIndex) ?: continue
                 val slot = activeSlots[i]
                 val iv = slot.preview

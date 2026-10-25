@@ -237,6 +237,11 @@ fun CameraCard(
                             text = "音频",
                             color = OnlineColor,
                         )
+                    } else {
+                        StatusBadge(
+                            text = "静音",
+                            color = Color(0xFFA0968B),
+                        )
                     }
                 }
             }

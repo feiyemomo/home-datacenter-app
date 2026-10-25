@@ -24,9 +24,38 @@ object NotificationHelper {
     private const val NOTIFICATION_ID_SYSTEM_BASE = 2000
     private var systemNotificationCounter = 0
 
-    // 5-second deduplication map by camera ID or slug to avoid spamming user
-    private val lastAlertTimeMap = ConcurrentHashMap<String, Long>()
-    private const val ALERT_DEDUP_WINDOW_MS = 5000L
+    // Notification Group Key for Android Notification Stacking / Bundling
+    const val GROUP_KEY_ALERTS = "com.homedatacenter.ALERTS_GROUP"
+    const val NOTIFICATION_ID_SUMMARY = 9990
+
+    // Per-camera rate-limiting & burst suppression
+    // If the same camera triggers multiple alerts within BURST_WINDOW_MS, we coalesce them
+    // and update the notification with an aggregated summary (InboxStyle) rather than firing noisy new ones.
+    private const val ALERT_DEDUP_WINDOW_MS = 6000L
+    private const val BURST_WINDOW_MS = 30000L
+
+    data class CameraAlertState(
+        var count: Int = 1,
+        var lastNotifiedTime: Long = 0L,
+        var firstBurstTime: Long = 0L,
+        val recentEvents: MutableList<String> = mutableListOf()
+    )
+
+    private val cameraAlertStateMap = ConcurrentHashMap<String, CameraAlertState>()
+
+    // Cross-service duplicate alert deduplication (e.g. AlertKeepAliveService + DashboardFragment)
+    private val processedAlertIds = object : java.util.LinkedHashMap<String, Long>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Long>?): Boolean {
+            return size > 120
+        }
+    }
+
+    data class AlertSummaryEntry(
+        val cameraName: String,
+        val label: String,
+        val timeMs: Long
+    )
+    private val recentAlertHistory = java.util.Collections.synchronizedList(mutableListOf<AlertSummaryEntry>())
 
     fun createChannels(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -101,25 +130,74 @@ object NotificationHelper {
             return
         }
 
-        val key = alert.cameraId?.toString() ?: alert.cameraSlug.ifEmpty { alert.cameraName }
         val now = System.currentTimeMillis()
-        val last = lastAlertTimeMap[key] ?: 0L
-        if (now - last < ALERT_DEDUP_WINDOW_MS) {
-            return
+        if (alert.id.isNotEmpty()) {
+            synchronized(processedAlertIds) {
+                val prev = processedAlertIds[alert.id]
+                if (prev != null && (now - prev < 15_000L)) {
+                    // Suppress duplicate alert event already handled
+                    return
+                }
+                processedAlertIds[alert.id] = now
+            }
         }
-        lastAlertTimeMap[key] = now
 
+        val key = alert.cameraId?.toString() ?: alert.cameraSlug.ifEmpty { alert.cameraName }
         val cameraTitle = alert.cameraName.ifBlank { alert.cameraSlug.ifBlank { "摄像头" } }
         val labelName = formatDetectionLabel(context, alert.label)
-        val title = "$cameraTitle 发现 $labelName"
+
+        val state = cameraAlertStateMap.compute(key) { _, current ->
+            if (current == null || (now - current.lastNotifiedTime > BURST_WINDOW_MS)) {
+                CameraAlertState(
+                    count = 1,
+                    lastNotifiedTime = now,
+                    firstBurstTime = now,
+                    recentEvents = mutableListOf(labelName)
+                )
+            } else {
+                current.count++
+                if (current.recentEvents.size >= 5) {
+                    current.recentEvents.removeAt(0)
+                }
+                if (!current.recentEvents.contains(labelName) || current.recentEvents.size < 3) {
+                    current.recentEvents.add(labelName)
+                }
+                current
+            }
+        } ?: CameraAlertState()
+
+        val isThrottled = (state.count > 1) && (now - state.lastNotifiedTime < ALERT_DEDUP_WINDOW_MS)
+        if (!isThrottled) {
+            state.lastNotifiedTime = now
+        }
+
+        // Add to aggregated recent history for Group Summary
+        synchronized(recentAlertHistory) {
+            if (recentAlertHistory.size >= 20) {
+                recentAlertHistory.removeAt(0)
+            }
+            recentAlertHistory.add(AlertSummaryEntry(cameraTitle, labelName, now))
+        }
+
+        val title = if (state.count > 1) {
+            "$cameraTitle 持续活动告警 (${state.count}次检测)"
+        } else {
+            "$cameraTitle 发现 $labelName"
+        }
 
         val contentText = buildString {
-            if (alert.confidence > 0.0) {
-                append("置信度: ${(alert.confidence * 100).toInt()}%")
-            }
-            if (alert.zones.isNotEmpty()) {
-                if (isNotEmpty()) append(" · ")
-                append("区域: ${alert.zones.joinToString(", ")}")
+            if (state.count > 1) {
+                append("最近检测到: ${state.recentEvents.joinToString("、")}")
+                val elapsedSec = ((now - state.firstBurstTime) / 1000).coerceAtLeast(1)
+                append(" · 持续 ${elapsedSec} 秒")
+            } else {
+                if (alert.confidence > 0.0) {
+                    append("置信度: ${(alert.confidence * 100).toInt()}%")
+                }
+                if (alert.zones.isNotEmpty()) {
+                    if (isNotEmpty()) append(" · ")
+                    append("区域: ${alert.zones.joinToString(", ")}")
+                }
             }
         }.ifBlank { "检测到活动，点击查看回放" }
 
@@ -130,9 +208,10 @@ object NotificationHelper {
             putExtra(EXTRA_ALERT_START_TS, alert.startTime.toLong())
         }
 
+        val notificationId = 1000 + (Math.abs(key.hashCode()) % 4000)
         val pendingIntent = PendingIntent.getActivity(
             context,
-            (alert.cameraId?.toInt() ?: alert.hashCode()),
+            notificationId,
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -144,6 +223,8 @@ object NotificationHelper {
                 .setContentText(contentText)
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setCategory(NotificationCompat.CATEGORY_ALARM)
+                .setGroup(GROUP_KEY_ALERTS)
+                .setOnlyAlertOnce(isThrottled)
                 .setAutoCancel(true)
                 .setContentIntent(pendingIntent)
                 .addAction(
@@ -216,9 +297,47 @@ object NotificationHelper {
             }
 
             try {
-                val notificationId = 1000 + (alert.cameraId?.toInt() ?: (alert.id.hashCode() % 1000))
-                NotificationManagerCompat.from(context).notify(notificationId, builder.build())
-                wakeScreen(context, 3000L)
+                val nm = NotificationManagerCompat.from(context)
+                nm.notify(notificationId, builder.build())
+
+                // Post or update Group Summary so multiple cameras/alerts bundle cleanly
+                val summaryIntent = Intent(context, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    putExtra(EXTRA_NAVIGATE_TAB, R.id.nav_cameras)
+                }
+                val summaryPendingIntent = PendingIntent.getActivity(
+                    context,
+                    NOTIFICATION_ID_SUMMARY,
+                    summaryIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+
+                val inboxStyle = NotificationCompat.InboxStyle()
+                    .setBigContentTitle("家庭安防报警汇总")
+                val historySnapshot = synchronized(recentAlertHistory) {
+                    recentAlertHistory.toList()
+                }
+                historySnapshot.takeLast(6).reversed().forEach { item ->
+                    val timeStr = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(item.timeMs))
+                    inboxStyle.addLine("${item.cameraName}: 发现 ${item.label} ($timeStr)")
+                }
+                inboxStyle.setSummaryText("${historySnapshot.size} 条告警")
+
+                val summary = NotificationCompat.Builder(context, CHANNEL_SECURITY_ALERTS)
+                    .setSmallIcon(R.drawable.ic_camera)
+                    .setStyle(inboxStyle)
+                    .setPriority(NotificationCompat.PRIORITY_HIGH)
+                    .setGroup(GROUP_KEY_ALERTS)
+                    .setGroupSummary(true)
+                    .setAutoCancel(true)
+                    .setOnlyAlertOnce(true)
+                    .setContentIntent(summaryPendingIntent)
+                    .build()
+                nm.notify(NOTIFICATION_ID_SUMMARY, summary)
+
+                if (!isThrottled) {
+                    wakeScreen(context, 3000L)
+                }
             } catch (_: SecurityException) {
                 // Android 13+ permission might not be granted yet
             }
@@ -323,12 +442,29 @@ object NotificationHelper {
         name: String,
         cameraName: String,
         isIntrusion: Boolean = false,
-        persons: List<String> = emptyList()
+        persons: List<String> = emptyList(),
+        cameraId: Long? = null,
+        cameraSlug: String = "",
+        startTs: Long = 0L,
+        alertId: String = "",
+        isUpdate: Boolean = false,
+        serverCount: Int = 0
     ) {
         val prefs = PrefsManager(context)
         if (!prefs.notificationsEnabled || !prefs.notifyPerson || prefs.isDndActive()) return
 
-        val camDisplay = cameraName.ifBlank { "安防监控" }
+        val now = System.currentTimeMillis()
+        if (alertId.isNotEmpty()) {
+            synchronized(processedAlertIds) {
+                val prev = processedAlertIds[alertId]
+                if (prev != null && (now - prev < 15_000L)) {
+                    return
+                }
+                processedAlertIds[alertId] = now
+            }
+        }
+
+        val camDisplay = cameraName.ifBlank { cameraSlug.ifBlank { "安防监控" } }
         val title: String
         val message: String
         val priority: Int
@@ -357,36 +493,198 @@ object NotificationHelper {
             }
         }
 
+        val camKey = cameraId?.toString() ?: cameraSlug.ifEmpty { cameraName }
+        val notifId = 1000 + (Math.abs(camKey.hashCode()) % 4000)
+
+        // Per-camera burst coalescing (mirrors showSecurityAlertNotification).
+        // A server-side update (isUpdate) or a repeat within the min-interval is
+        // folded into the existing per-camera notification and refreshed silently.
+        val mergeEnabled = prefs.notifyMergeEnabled
+        val mergeWindowMs = prefs.notifyMergeWindowSec * 1000L
+        val minIntervalMs = prefs.notifyMinIntervalSec * 1000L
+
+        val state = if (mergeEnabled) {
+            cameraAlertStateMap.compute(camKey) { _, current ->
+                if (current == null || (now - current.lastNotifiedTime > mergeWindowMs)) {
+                    CameraAlertState(
+                        count = 1,
+                        lastNotifiedTime = now,
+                        firstBurstTime = now,
+                        recentEvents = mutableListOf(title)
+                    )
+                } else {
+                    current.count++
+                    current
+                }
+            } ?: CameraAlertState()
+        } else null
+
+        val isThrottled = mergeEnabled &&
+            (isUpdate || (state != null && state.count > 1 && (now - state.lastNotifiedTime < minIntervalMs)))
+        if (state != null && !isThrottled) {
+            state.lastNotifiedTime = now
+        }
+        val effectiveCount = maxOf(serverCount, state?.count ?: 0)
+
+        val finalTitle = if (effectiveCount > 1) "$title (${effectiveCount}次)" else title
+        val finalMessage = if (effectiveCount > 1) {
+            val elapsedSec = ((now - (state?.firstBurstTime ?: now)) / 1000).coerceAtLeast(1)
+            "$message · 持续 ${elapsedSec} 秒"
+        } else {
+            message
+        }
+
+        // Add to aggregated recent history for Group Summary
+        synchronized(recentAlertHistory) {
+            if (recentAlertHistory.size >= 20) {
+                recentAlertHistory.removeAt(0)
+            }
+            recentAlertHistory.add(AlertSummaryEntry(camDisplay, title, now))
+        }
+
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             putExtra(EXTRA_NAVIGATE_TAB, R.id.nav_cameras)
+            cameraId?.let { putExtra(EXTRA_ALERT_CAMERA_ID, it) }
+            if (startTs > 0L) {
+                putExtra(EXTRA_ALERT_START_TS, startTs)
+            }
         }
         val pendingIntent = PendingIntent.getActivity(
             context,
-            9998,
+            notifId,
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val builder = NotificationCompat.Builder(context, CHANNEL_SECURITY_ALERTS)
-            .setSmallIcon(R.drawable.ic_camera)
-            .setContentTitle(title)
-            .setContentText(message)
-            .setPriority(priority)
-            .setAutoCancel(true)
-            .setContentIntent(pendingIntent)
-        if (isIntrusion) {
-            builder.setCategory(NotificationCompat.CATEGORY_ALARM)
-            builder.setVibrate(longArrayOf(0, 500, 200, 500))
-        }
-        val notification = builder.build()
 
-        try {
-            NotificationManagerCompat.from(context).notify(9998, notification)
-            if (priority >= NotificationCompat.PRIORITY_HIGH) {
-                wakeScreen(context, 3000L)
+        scope.launch {
+            val builder = NotificationCompat.Builder(context, CHANNEL_SECURITY_ALERTS)
+                .setSmallIcon(R.drawable.ic_camera)
+                .setContentTitle(finalTitle)
+                .setContentText(finalMessage)
+                .setPriority(priority)
+                .setGroup(GROUP_KEY_ALERTS)
+                .setOnlyAlertOnce(isThrottled)
+                .setAutoCancel(true)
+                .setContentIntent(pendingIntent)
+                .addAction(
+                    R.drawable.ic_video,
+                    "查看录像",
+                    pendingIntent
+                )
+
+            if (isIntrusion && !isThrottled) {
+                builder.setCategory(NotificationCompat.CATEGORY_ALARM)
+                builder.setVibrate(longArrayOf(0, 500, 200, 500))
+            } else if (isIntrusion) {
+                builder.setCategory(NotificationCompat.CATEGORY_ALARM)
             }
-        } catch (_: SecurityException) {
-            // Android 13+ permission might not be granted yet
+
+            // Attach snapshot picture if available
+            if (prefs.notifyIncludeSnapshot) {
+                var bitmap: android.graphics.Bitmap? = null
+                val container = (context.applicationContext as? com.homedatacenter.app.HomeCenterApp)?.container
+                val rawBaseUrl = container?.getApiBaseUrl() ?: prefs.baseUrl
+                val baseUrl = rawBaseUrl?.trimEnd('/')
+                val token = prefs.token
+                if (!baseUrl.isNullOrEmpty()) {
+                    val candidateUrls = mutableListOf<String>()
+                    if (alertId.isNotEmpty()) {
+                        candidateUrls.add("$baseUrl/api/v1/cameras/alerts/$alertId/thumbnail")
+                        candidateUrls.add("$baseUrl/api/v1/cameras/alerts/$alertId/snapshot")
+                        candidateUrls.add("$baseUrl/api/v1/alerts/$alertId/thumbnail")
+                    }
+                    if (cameraId != null) {
+                        candidateUrls.add("$baseUrl/api/v1/cameras/$cameraId/frame?quality=30")
+                    }
+
+                    val client = container?.okHttpClient ?: okhttp3.OkHttpClient.Builder()
+                        .connectTimeout(2, java.util.concurrent.TimeUnit.SECONDS)
+                        .readTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
+                        .build()
+
+                    for (url in candidateUrls) {
+                        try {
+                            val req = okhttp3.Request.Builder()
+                                .url(url)
+                                .apply {
+                                    if (!token.isNullOrEmpty()) {
+                                        header("Authorization", "Bearer $token")
+                                    }
+                                }
+                                .build()
+                            client.newCall(req).execute().use { resp ->
+                                if (resp.isSuccessful) {
+                                    val bytes = resp.body?.bytes()
+                                    if (bytes != null && bytes.isNotEmpty()) {
+                                        val opts = android.graphics.BitmapFactory.Options().apply {
+                                            inSampleSize = 2
+                                        }
+                                        bitmap = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+                                            ?: android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                                    }
+                                }
+                            }
+                            if (bitmap != null) break
+                        } catch (_: Exception) {}
+                    }
+                }
+
+                if (bitmap != null) {
+                    builder.setLargeIcon(bitmap)
+                    builder.setStyle(
+                        NotificationCompat.BigPictureStyle()
+                            .bigPicture(bitmap)
+                            .bigLargeIcon(null as android.graphics.Bitmap?)
+                            .setSummaryText(finalMessage)
+                    )
+                }
+            }
+
+            try {
+                val nm = NotificationManagerCompat.from(context)
+                nm.notify(notifId, builder.build())
+
+                // Post or update Group Summary
+                val summaryIntent = Intent(context, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    putExtra(EXTRA_NAVIGATE_TAB, R.id.nav_cameras)
+                }
+                val summaryPendingIntent = PendingIntent.getActivity(
+                    context,
+                    NOTIFICATION_ID_SUMMARY,
+                    summaryIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+                val inboxStyle = NotificationCompat.InboxStyle()
+                    .setBigContentTitle("家庭安防报警汇总")
+                val historySnapshot = synchronized(recentAlertHistory) {
+                    recentAlertHistory.toList()
+                }
+                historySnapshot.takeLast(6).reversed().forEach { item ->
+                    val timeStr = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(item.timeMs))
+                    inboxStyle.addLine("${item.cameraName}: ${item.label} ($timeStr)")
+                }
+                inboxStyle.setSummaryText("${historySnapshot.size} 条告警")
+
+                val summary = NotificationCompat.Builder(context, CHANNEL_SECURITY_ALERTS)
+                    .setSmallIcon(R.drawable.ic_camera)
+                    .setStyle(inboxStyle)
+                    .setPriority(NotificationCompat.PRIORITY_HIGH)
+                    .setGroup(GROUP_KEY_ALERTS)
+                    .setGroupSummary(true)
+                    .setAutoCancel(true)
+                    .setOnlyAlertOnce(true)
+                    .setContentIntent(summaryPendingIntent)
+                    .build()
+                nm.notify(NOTIFICATION_ID_SUMMARY, summary)
+
+                if (!isThrottled && priority >= NotificationCompat.PRIORITY_HIGH) {
+                    wakeScreen(context, 3000L)
+                }
+            } catch (_: SecurityException) {
+                // Android 13+ permission might not be granted yet
+            }
         }
     }
 

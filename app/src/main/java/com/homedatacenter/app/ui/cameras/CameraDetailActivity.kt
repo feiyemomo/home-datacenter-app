@@ -926,7 +926,7 @@ class CameraDetailActivity : AppCompatActivity() {
         binding.seekPtzSpeed.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seek: SeekBar?, progress: Int, fromUser: Boolean) {
                 val speed = progress / 100.0
-                binding.tvPtzSpeed.text = String.format("%.2f", speed)
+                binding.tvPtzSpeed.text = String.format(java.util.Locale.getDefault(), "%.2fx", speed)
             }
             override fun onStartTrackingTouch(seek: SeekBar?) {}
             override fun onStopTrackingTouch(seek: SeekBar?) {}
@@ -941,6 +941,9 @@ class CameraDetailActivity : AppCompatActivity() {
         )
         binding.rvPresets.layoutManager = LinearLayoutManager(this)
         binding.rvPresets.adapter = presetAdapter
+
+        binding.btnSaveCurrentPreset.visibility = if (isAdmin) View.VISIBLE else View.GONE
+        binding.btnSaveCurrentPreset.setOnClickListener { showSaveCurrentPresetDialog() }
 
         binding.btnAddPreset.visibility = if (isAdmin) View.VISIBLE else View.GONE
         binding.btnAddPreset.setOnClickListener { showAddPresetDialog() }
@@ -970,6 +973,8 @@ class CameraDetailActivity : AppCompatActivity() {
         // Available to all users (both admins and standard viewers).
         binding.switchAudio.isChecked = cam.hasAudio
         binding.switchAudio.isEnabled = true
+        binding.switchAudio.text = if (cam.hasAudio) "摄像头拾音 (已开启)" else "摄像头拾音 (已关闭)"
+        binding.tvAudioSummary.text = if (cam.hasAudio) "麦克风已启用，直播与录像包含音频" else "麦克风已物理静音，保护隐私且录像无声"
         binding.switchAudio.setOnCheckedChangeListener { _, isChecked ->
             if (isChecked != (camera?.hasAudio == true)) {
                 updateAudio(isChecked)
@@ -1120,6 +1125,42 @@ class CameraDetailActivity : AppCompatActivity() {
             .show()
     }
 
+    private fun showSaveCurrentPresetDialog() {
+        val cam = camera ?: return
+        val token = container.prefsManager.token ?: return
+
+        val dialogContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(50, 30, 50, 10)
+        }
+        val nameEdit = EditText(this).apply { hint = getString(R.string.camera_preset_name) }
+        dialogContainer.addView(nameEdit)
+
+        AlertDialog.Builder(this)
+            .setTitle(R.string.camera_preset_save_current)
+            .setMessage("将摄像头当前视角角度保存为一个新的预设位")
+            .setView(dialogContainer)
+            .setPositiveButton(R.string.action_save) { _, _ ->
+                val name = nameEdit.text.toString().trim()
+                if (name.isEmpty()) {
+                    toast("预设位名称不能为空")
+                    return@setPositiveButton
+                }
+                lifecycleScope.launch {
+                    try {
+                        this@CameraDetailActivity.container.getRepository()
+                            .createCameraPreset(token, cam.id, name)
+                        toast("已保存预设位")
+                        loadPresets()
+                    } catch (e: Exception) {
+                        toast("保存失败: ${e.message}")
+                    }
+                }
+            }
+            .setNegativeButton(R.string.btn_cancel, null)
+            .show()
+    }
+
     private fun showAddPresetDialog() {
         val cam = camera ?: return
         val token = container.prefsManager.token ?: return
@@ -1164,6 +1205,7 @@ class CameraDetailActivity : AppCompatActivity() {
 
         // 1. Immediately apply to local audio state so the user experiences zero lag
         audioEnabled = enabled
+        camera = cam.copy(capabilities = cam.capabilities + ("audio" to enabled))
         try {
             webRtcClient?.setAudioEnabled(enabled && !webRtcMuted)
         } catch (_: Exception) {}
@@ -1171,24 +1213,25 @@ class CameraDetailActivity : AppCompatActivity() {
             player?.volume = if (enabled && !webRtcMuted) 1.0f else 0.0f
         } catch (_: Exception) {}
         updateAudioPickupUi(enabled)
-        binding.switchAudio.isChecked = enabled
         updateWebRtcControlButtons()
 
         lifecycleScope.launch {
             try {
                 binding.btnAudioPickup.isEnabled = false
+                binding.switchAudio.isEnabled = false
                 container.getRepository().updateCameraAudio(token, cam.id, enabled)
-                camera = cam.copy(capabilities = cam.capabilities + ("audio" to enabled))
                 toast(if (enabled) "已开启摄像头拾音" else "已关闭摄像头拾音")
-                // Force tear down previous WebRTC connection and reload stream
+                // Wait briefly for go2rtc to re-register the RTSP stream sources before reconnecting
+                delay(800L)
                 try {
+                    webRtcClient?.setAudioEnabled(false)
                     webRtcClient?.stopPlayoutImmediately()
-                    webRtcClient?.release()
                 } catch (_: Exception) {}
                 webRtcInProgress = false
                 startPlayback()
             } catch (e: Exception) {
                 toast("拾音切换失败: ${e.message}")
+                camera = cam
                 audioEnabled = cam.hasAudio
                 try {
                     webRtcClient?.setAudioEnabled(cam.hasAudio && !webRtcMuted)
@@ -1197,10 +1240,10 @@ class CameraDetailActivity : AppCompatActivity() {
                     player?.volume = if (cam.hasAudio && !webRtcMuted) 1.0f else 0.0f
                 } catch (_: Exception) {}
                 updateAudioPickupUi(cam.hasAudio)
-                binding.switchAudio.isChecked = cam.hasAudio
                 updateWebRtcControlButtons()
             } finally {
                 binding.btnAudioPickup.isEnabled = true
+                binding.switchAudio.isEnabled = true
             }
         }
     }
@@ -1407,8 +1450,25 @@ class CameraDetailActivity : AppCompatActivity() {
         binding.btnAudioPickup.setIconResource(
             if (hasAudio) R.drawable.ic_volume_on else R.drawable.ic_volume_off
         )
-        binding.btnAudioPickup.text = if (hasAudio) "拾音" else "拾音关"
-        binding.btnAudioPickup.alpha = if (hasAudio) 1.0f else 0.75f
+        binding.btnAudioPickup.text = if (hasAudio) "拾音开" else "拾音关"
+        binding.btnAudioPickup.setIconTintResource(
+            if (hasAudio) R.color.online else R.color.error
+        )
+        binding.btnAudioPickup.setTextColor(
+            getColor(if (hasAudio) R.color.text_primary else R.color.text_secondary)
+        )
+        binding.btnAudioPickup.alpha = 1.0f
+
+        // Also update settings switch text & summary
+        binding.switchAudio.setOnCheckedChangeListener(null)
+        binding.switchAudio.isChecked = hasAudio
+        binding.switchAudio.text = if (hasAudio) "摄像头拾音 (已开启)" else "摄像头拾音 (已关闭)"
+        binding.tvAudioSummary.text = if (hasAudio) "麦克风已启用，直播与录像包含音频" else "麦克风已物理静音，保护隐私且录像无声"
+        binding.switchAudio.setOnCheckedChangeListener { _, isChecked ->
+            if (isChecked != (camera?.hasAudio == true)) {
+                updateAudio(isChecked)
+            }
+        }
     }
 
     private fun setupPinchZoom() {
@@ -1478,7 +1538,7 @@ class CameraDetailActivity : AppCompatActivity() {
                         v.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
                         binding.btnTalkback.text = "松开"
                         binding.btnTalkback.setIconResource(R.drawable.ic_mic)
-                        binding.tvTalkbackHint.text = "正在向摄像机讲话 (已开启5x功放)..."
+                        binding.tvTalkbackHint.text = "正在向摄像机讲话..."
                         binding.tvTalkbackHint.setTextColor(resources.getColor(R.color.online, theme))
                     } else {
                         android.widget.Toast.makeText(this, "对讲启动失败：$err", android.widget.Toast.LENGTH_SHORT).show()
@@ -1488,6 +1548,7 @@ class CameraDetailActivity : AppCompatActivity() {
                 android.view.MotionEvent.ACTION_UP,
                 android.view.MotionEvent.ACTION_CANCEL -> {
                     binding.btnTalkback.text = "对讲"
+                    binding.btnTalkback.setIconResource(R.drawable.ic_mic)
                     binding.tvTalkbackHint.text = "按住「对讲」向摄像机喊话"
                     binding.tvTalkbackHint.setTextColor(resources.getColor(R.color.text_hint, theme))
                     webRtcClient?.stopTalkback()

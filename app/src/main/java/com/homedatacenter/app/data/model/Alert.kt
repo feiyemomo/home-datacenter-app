@@ -16,7 +16,11 @@ data class Alert(
     val zones: List<String> = emptyList(),
     @SerialName("has_clip") val hasClip: Boolean = false,
     @SerialName("has_snapshot") val hasSnapshot: Boolean = false,
-    val thumbnail: String = ""
+    val thumbnail: String = "",
+    @SerialName("is_update") val isUpdate: Boolean = false,
+    val count: Int = 0,
+    @SerialName("first_ts") val firstTs: Double = 0.0,
+    @SerialName("session_id") val sessionId: String = ""
 )
 
 @Serializable

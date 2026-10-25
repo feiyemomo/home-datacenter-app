@@ -53,6 +53,19 @@ class CamerasViewModel(
 
     private var alertsLimit = 20
 
+    var filterCameraId: Long? = null
+        private set
+    var filterLabel: String? = null
+        private set
+    var filterDays: Int = 0 // 0 = all, 1 = today, 3 = last 3 days, 7 = last 7 days
+        private set
+
+    fun updateFilters(cameraId: Long?, label: String?, days: Int) {
+        filterCameraId = cameraId
+        filterLabel = label
+        filterDays = days
+    }
+
     /** Cache-first paint, then silent refresh (onResume / tab show). */
     fun loadCameras(token: String?) {
         if (token.isNullOrEmpty()) return
@@ -116,7 +129,26 @@ class CamerasViewModel(
         viewModelScope.launch {
             _alertsLoading.value = true
             try {
-                val resp = api.listAlerts("Bearer $token", limit = alertsLimit)
+                val afterTs: Long? = if (filterDays > 0) {
+                    val cal = java.util.Calendar.getInstance()
+                    if (filterDays == 1) {
+                        cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
+                        cal.set(java.util.Calendar.MINUTE, 0)
+                        cal.set(java.util.Calendar.SECOND, 0)
+                        cal.set(java.util.Calendar.MILLISECOND, 0)
+                    } else {
+                        cal.add(java.util.Calendar.DAY_OF_YEAR, -filterDays)
+                    }
+                    cal.timeInMillis / 1000L
+                } else null
+
+                val resp = api.listAlerts(
+                    "Bearer $token",
+                    limit = alertsLimit,
+                    cameraId = filterCameraId,
+                    label = filterLabel,
+                    after = afterTs
+                )
                 val alerts = if (resp.isSuccess) {
                     resp.decodeData<AlertListData>()?.alerts ?: emptyList()
                 } else {

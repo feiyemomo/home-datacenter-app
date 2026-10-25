@@ -13,7 +13,8 @@ import com.homedatacenter.app.databinding.ItemBannedIpBinding
  * Adapter for presenting banned IP entries in [SecurityDefenseActivity].
  */
 class BannedIpAdapter(
-    private val onUnbanClick: (BanEntry) -> Unit
+    private val onUnbanClick: (BanEntry) -> Unit,
+    private val onEditClick: ((BanEntry) -> Unit)? = null
 ) : ListAdapter<BanEntry, BannedIpAdapter.VH>(DiffCallback()) {
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
@@ -31,6 +32,12 @@ class BannedIpAdapter(
                 val pos = bindingAdapterPosition
                 if (pos != RecyclerView.NO_POSITION) {
                     onUnbanClick(getItem(pos))
+                }
+            }
+            binding.root.setOnClickListener {
+                val pos = bindingAdapterPosition
+                if (pos != RecyclerView.NO_POSITION) {
+                    onEditClick?.invoke(getItem(pos))
                 }
             }
         }
