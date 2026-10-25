@@ -69,8 +69,9 @@ def connect():
     import paramiko
 
     pw = os.environ.get("NAS_PASSWORD")
-    if not pw:
-        sys.exit("ERROR: set NAS_PASSWORD in the environment")
+    key_file = os.path.expanduser("~/.ssh/id_ed25519")
+    if not pw and not os.path.isfile(key_file):
+        sys.exit("ERROR: set NAS_PASSWORD in the environment or configure ~/.ssh/id_ed25519")
     user = os.environ.get("NAS_USER", "momo")
     targets = [
         (os.environ.get("NAS_HOST", "100.90.67.71"), int(os.environ.get("NAS_PORT", "22"))),
@@ -81,7 +82,12 @@ def connect():
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         try:
-            ssh.connect(host, port=port, username=user, password=pw, timeout=10)
+            connect_kwargs = {"username": user, "timeout": 10}
+            if os.path.isfile(key_file):
+                connect_kwargs["key_filename"] = key_file
+            if pw:
+                connect_kwargs["password"] = pw
+            ssh.connect(host, port=port, **connect_kwargs)
             print(f"==> connected to {host}:{port}")
             return ssh
         except Exception as e:  # try next path
