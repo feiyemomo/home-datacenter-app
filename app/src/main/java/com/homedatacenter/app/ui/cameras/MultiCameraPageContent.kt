@@ -37,6 +37,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -62,6 +63,9 @@ import androidx.compose.ui.window.DialogProperties
 import com.homedatacenter.app.R
 import com.homedatacenter.app.data.model.Camera
 import com.homedatacenter.app.di.AppContainer
+import com.homedatacenter.app.ui.glass.AmbientFluidBackground
+import com.homedatacenter.app.ui.glass.GlassTheme
+import com.homedatacenter.app.util.ThemeManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -87,11 +91,15 @@ fun MultiCameraPageContent(
     val configuration = LocalConfiguration.current
     val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
 
-    val cyberCyan = Color(0xFF38BDF8)
-    val cardBg = Color(0xF0131927)
-    val borderCol = Color(0x3338BDF8)
-    val textPrimary = Color.White
-    val textSecondary = Color(0xFF94A3B8)
+    val preset by ThemeManager.themePresetFlow.collectAsState()
+    val isDark = preset.isDark
+    val tokens = GlassTheme.tokens
+
+    val textPrimary = tokens.textColor
+    val textSecondary = tokens.textSecondaryColor
+    val cyberCyan = if (isDark) Color(0xFFFFC38B) else Color(0xFFD7A064)
+    val cardBg = tokens.surfaceColor.copy(alpha = if (isDark) 0.35f else 0.82f)
+    val borderCol = tokens.borderColors.firstOrNull()?.copy(alpha = 0.35f) ?: Color(0x33D7A064)
     val onlineGreen = Color(0xFF10B981)
     val offlineRed = Color(0xFFEF4444)
 
@@ -200,26 +208,21 @@ fun MultiCameraPageContent(
         }
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    listOf(
-                        Color(0xFF0F172A),
-                        Color(0xFF131A2E),
-                        Color(0xFF0A0F1D)
-                    )
-                )
-            )
-    ) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        // Fluid Ambient Background adapting dynamically to current preset
+        AmbientFluidBackground(
+            modifier = Modifier.fillMaxSize(),
+            preset = preset
+        )
+
         val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
         Column(modifier = Modifier.fillMaxSize()) {
             Spacer(modifier = Modifier.height(statusBarTop))
-            // Header Toolbar
+            // Liquid Glass Header Toolbar
             Surface(
-                color = Color(0x990F172A),
-                border = BorderStroke(1.dp, Color(0x2238BDF8)),
+                color = cardBg,
+                border = BorderStroke(1.dp, borderCol),
+                shape = RoundedCornerShape(bottomStart = 18.dp, bottomEnd = 18.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
@@ -253,8 +256,8 @@ fun MultiCameraPageContent(
                     // Mode Toggle Pill
                     Surface(
                         shape = RoundedCornerShape(14.dp),
-                        color = Color(0x331E293B),
-                        border = BorderStroke(1.dp, Color(0x3338BDF8)),
+                        color = if (isDark) Color(0x331E293B) else Color(0x66FFFFFF),
+                        border = BorderStroke(1.dp, borderCol),
                         modifier = Modifier
                             .clickable {
                                 gridMode = when (gridMode) {
@@ -282,8 +285,8 @@ fun MultiCameraPageContent(
                     // Aspect Ratio Pill
                     Surface(
                         shape = RoundedCornerShape(14.dp),
-                        color = Color(0x331E293B),
-                        border = BorderStroke(1.dp, Color(0x3338BDF8)),
+                        color = if (isDark) Color(0x331E293B) else Color(0x66FFFFFF),
+                        border = BorderStroke(1.dp, borderCol),
                         modifier = Modifier
                             .clickable { isFillCrop = !isFillCrop }
                             .padding(horizontal = 8.dp, vertical = 4.dp)
@@ -430,7 +433,9 @@ fun MultiCameraPageContent(
             // 1-Grid bottom switcher pill
             if (gridMode == MultiCameraGridMode.ONE && allCameras.size > 1) {
                 Surface(
-                    color = Color(0x990F172A),
+                    color = cardBg,
+                    border = BorderStroke(1.dp, borderCol),
+                    shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
@@ -488,9 +493,9 @@ fun MultiCameraPageContent(
             properties = DialogProperties(usePlatformDefaultWidth = false)
         ) {
             Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = cardBg,
-                border = BorderStroke(1.dp, borderCol),
+                shape = RoundedCornerShape(22.dp),
+                color = tokens.surfaceColor.copy(alpha = if (isDark) 0.88f else 0.96f),
+                border = BorderStroke(1.2.dp, borderCol),
                 modifier = Modifier
                     .padding(24.dp)
                     .fillMaxWidth()
@@ -501,14 +506,14 @@ fun MultiCameraPageContent(
 
                     LazyColumn(
                         modifier = Modifier.height(240.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         items(allCameras.indices.toList()) { idx ->
                             val c = allCameras[idx]
                             Surface(
-                                shape = RoundedCornerShape(10.dp),
-                                color = Color(0x221E293B),
-                                border = BorderStroke(1.dp, Color(0x2238BDF8)),
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (isDark) Color(0x331E293B) else Color(0x40FFFFFF),
+                                border = BorderStroke(1.dp, borderCol.copy(alpha = 0.5f)),
                                 onClick = {
                                     if (gridMode == MultiCameraGridMode.ONE) {
                                         focusedCamIndex = idx
@@ -527,7 +532,8 @@ fun MultiCameraPageContent(
                                     Text(
                                         if (c.status == "online") "在线" else "离线",
                                         color = if (c.status == "online") onlineGreen else offlineRed,
-                                        fontSize = 12.sp
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold
                                     )
                                 }
                             }
@@ -560,18 +566,31 @@ fun SlotTile(
     onDoubleTap: () -> Unit,
     onLongPress: () -> Unit,
 ) {
-    val cyberCyan = Color(0xFF38BDF8)
-    val cardBg = Color(0xFF0F172A)
-    val borderCol = Color(0x3338BDF8)
+    val preset by ThemeManager.themePresetFlow.collectAsState()
+    val isDark = preset.isDark
+    val tokens = GlassTheme.tokens
+    val textPrimary = tokens.textColor
+    val textSecondary = tokens.textSecondaryColor
+    val cyberCyan = if (isDark) Color(0xFFFFC38B) else Color(0xFFD7A064)
+    val cardBg = if (camera != null) {
+        if (isDark) Color(0xFF0F172A) else Color(0xCCFFFFFF)
+    } else {
+        if (isDark) Color(0x221E293B) else Color(0x33FFFFFF)
+    }
+    val borderCol = if (camera != null) {
+        tokens.borderColors.firstOrNull()?.copy(alpha = 0.4f) ?: Color(0x40FFFFFF)
+    } else {
+        if (isDark) Color(0x26FFFFFF) else Color(0x40D7A064)
+    }
     val onlineGreen = Color(0xFF10B981)
     val offlineRed = Color(0xFFEF4444)
 
     Surface(
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(14.dp),
         color = cardBg,
-        border = BorderStroke(1.dp, borderCol),
+        border = BorderStroke(1.2.dp, borderCol),
         modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(14.dp))
             .pointerInput(camera?.id) {
                 detectTapGestures(
                     onTap = {
@@ -597,9 +616,9 @@ fun SlotTile(
                     }
                 }
 
-                // Overlay Tag
+                // Overlay Tag with Camera Name
                 Surface(
-                    shape = RoundedCornerShape(bottomEnd = 8.dp),
+                    shape = RoundedCornerShape(bottomEnd = 10.dp),
                     color = Color(0xB3000000),
                     modifier = Modifier.align(Alignment.TopStart)
                 ) {
@@ -626,11 +645,23 @@ fun SlotTile(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = "+ 点击配置摄像头",
-                        color = Color(0xFF94A3B8),
-                        fontSize = 12.sp
-                    )
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_camera),
+                            contentDescription = null,
+                            tint = textSecondary.copy(alpha = 0.6f),
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Text(
+                            text = "+ 轻触配置监控",
+                            color = textSecondary,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
                 }
             }
         }

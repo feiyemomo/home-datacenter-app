@@ -14,8 +14,8 @@ android {
         applicationId = "com.homedatacenter.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = 214
-        versionName = "1.17.5"
+        versionCode = 215
+        versionName = "1.17.6"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -136,6 +136,7 @@ dependencies {
     implementation(libs.androidx.webkit)
 
     implementation(platform(libs.androidx.compose.bom))
+    implementation("androidx.compose.foundation:foundation")
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)

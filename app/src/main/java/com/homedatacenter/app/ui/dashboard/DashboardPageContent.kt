@@ -2,12 +2,16 @@ package com.homedatacenter.app.ui.dashboard
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -121,6 +125,7 @@ fun DashboardPageContent(
     onNavigateAutomations: () -> Unit,
     onNavigateNetworkDetail: () -> Unit,
     onNavigateCameras: () -> Unit,
+    onCameraClick: (Camera) -> Unit = {},
     onMultiCameraClick: () -> Unit = {},
     onViewAllAlerts: () -> Unit,
     onViewAllLogs: () -> Unit,
@@ -259,6 +264,7 @@ fun DashboardPageContent(
                                 baseUrl = baseUrl,
                                 token = token,
                                 onCardClick = onNavigateCameras,
+                                onCameraClick = onCameraClick,
                                 onMultiCameraClick = onMultiCameraClick,
                                 hazeState = hazeState,
                                 performanceMode = performanceMode,
@@ -704,27 +710,69 @@ fun QuickActionsRow(
                 modifier = Modifier.weight(1f)
             )
         } else {
-            // Regular User: Only relevant home action cards (Security & Automations)
-            QuickActionButton(
-                iconRes = R.drawable.ic_security_shield,
-                title = "安防布防",
-                subtitle = guardModeText,
-                active = isArmed,
-                onClick = onToggleSecurity,
+            // Regular User: Only Security Guard control (Automations removed per user request)
+            LiquidGlassCard(
+                modifier = Modifier.fillMaxWidth(),
                 hazeState = hazeState,
                 performanceMode = performanceMode,
-                modifier = Modifier.weight(1f)
-            )
+                onClick = onToggleSecurity
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (isArmed) Color(0x2610B981) else Color(0x1F64748B)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_security_shield),
+                                contentDescription = null,
+                                tint = if (isArmed) Color(0xFF10B981) else tokens.textSecondaryColor,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
 
-            QuickActionButton(
-                iconRes = R.drawable.ic_bolt,
-                title = "自动化",
-                subtitle = "智能联动",
-                onClick = onNavigateAutomations,
-                hazeState = hazeState,
-                performanceMode = performanceMode,
-                modifier = Modifier.weight(1f)
-            )
+                        Column {
+                            GlassText(
+                                text = "家庭安防布防",
+                                type = GlassTextType.Body,
+                                fontWeight = FontWeight.Bold
+                            )
+                            GlassText(
+                                text = "当前状态: $guardModeText",
+                                type = GlassTextType.Caption,
+                                color = if (isArmed) Color(0xFF10B981) else tokens.textSecondaryColor
+                            )
+                        }
+                    }
+
+                    // Toggle Pill
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (isArmed) Color(0x2610B981) else Color(0x26D7A064),
+                        border = BorderStroke(1.dp, if (isArmed) Color(0x4D10B981) else Color(0x4DD7A064))
+                    ) {
+                        Text(
+                            text = if (isArmed) "点击撤防" else "一键布防",
+                            color = if (isArmed) Color(0xFF10B981) else tokens.textColor,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -799,8 +847,10 @@ fun QuickActionButton(
 
 /**
  * 3. CameraFeedCard
- * Realtime camera preview card showcasing camera online counts, preview feed, and AI alert badges.
+ * Realtime swipeable camera preview card showcasing camera online counts,
+ * horizontal pager to smoothly swipe across all live cameras, and quick jump to live broadcast.
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun CameraFeedCard(
     cameras: List<Camera>,
@@ -808,21 +858,22 @@ fun CameraFeedCard(
     baseUrl: String?,
     token: String?,
     onCardClick: () -> Unit,
+    onCameraClick: (Camera) -> Unit = {},
     onMultiCameraClick: () -> Unit = onCardClick,
     modifier: Modifier = Modifier,
     hazeState: HazeState? = null,
     performanceMode: HazePerformanceMode = HazePerformanceMode.Adaptive,
 ) {
     val tokens = GlassTheme.tokens
+    val preset by ThemeManager.themePresetFlow.collectAsState()
+    val isDark = preset.isDark
     val onlineCount = cameras.count { it.isOnline }
-    val primaryCamera = cameras.firstOrNull { it.isOnline } ?: cameras.firstOrNull()
     val recentAlertCount = alerts.size
 
     LiquidGlassCard(
         modifier = modifier,
         hazeState = hazeState,
-        performanceMode = performanceMode,
-        onClick = onCardClick
+        performanceMode = performanceMode
     ) {
         Column(
             modifier = Modifier
@@ -837,7 +888,10 @@ fun CameraFeedCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(
-                    modifier = Modifier.weight(1f, fill = false).padding(end = 6.dp),
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .padding(end = 6.dp)
+                        .clickable(onClick = onCardClick),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
@@ -874,139 +928,252 @@ fun CameraFeedCard(
                 }
             }
 
-            // Preview viewport container
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(160.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(Color(0xFF0F172A))
-            ) {
-                val context = LocalContext.current
-                val density = LocalDensity.current
-                val thumbWidthPx = remember(density) { with(density) { 360.dp.roundToPx() } }
-                val thumbHeightPx = remember(density) { with(density) { 160.dp.roundToPx() } }
-
-                val previewUrl = remember(primaryCamera?.id, baseUrl) {
-                    if (primaryCamera != null && !baseUrl.isNullOrBlank()) {
-                        "${baseUrl.trimEnd('/')}/api/v1/cameras/${primaryCamera.id}/frame?quality=35&width=640"
-                    } else null
-                }
-
-                val imageRequest = remember(previewUrl, token, thumbWidthPx, thumbHeightPx) {
-                    if (previewUrl == null) null
-                    else {
-                        ImageRequest.Builder(context)
-                            .data(previewUrl)
-                            .apply {
-                                if (!token.isNullOrEmpty()) {
-                                    addHeader("Authorization", "Bearer $token")
-                                }
-                            }
-                            .size(thumbWidthPx, thumbHeightPx)
-                            .crossfade(200)
-                            .memoryCachePolicy(CachePolicy.ENABLED)
-                            .build()
-                    }
-                }
-
-                if (imageRequest != null) {
-                    SubcomposeAsyncImage(
-                        model = imageRequest,
-                        contentDescription = "Camera Preview",
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize(),
-                        loading = {
-                            Box(
-                                modifier = Modifier.fillMaxSize(),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                CircularProgressIndicator(
-                                    color = Color(0xFFFFC38B),
-                                    modifier = Modifier.size(28.dp),
-                                    strokeWidth = 2.dp
-                                )
-                            }
-                        },
-                        error = {
-                            Box(
-                                modifier = Modifier.fillMaxSize(),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    Icon(
-                                        painter = painterResource(id = R.drawable.ic_camera),
-                                        contentDescription = null,
-                                        tint = Color.White.copy(alpha = 0.5f),
-                                        modifier = Modifier.size(36.dp)
-                                    )
-                                    Text(
-                                        text = primaryCamera?.name ?: "无监控画面",
-                                        color = Color.White.copy(alpha = 0.7f),
-                                        fontSize = 12.sp
-                                    )
-                                }
-                            }
-                        }
-                    )
-                } else {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
+            if (cameras.isEmpty()) {
+                // Empty state card
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(160.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(if (isDark) Color(0xFF0F172A) else Color(0x1A000000)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_camera),
+                            contentDescription = null,
+                            tint = tokens.textSecondaryColor.copy(alpha = 0.5f),
+                            modifier = Modifier.size(36.dp)
+                        )
                         Text(
-                            text = if (cameras.isEmpty()) "暂无接入摄像头" else "点击查看实时多路监控",
-                            color = Color.White.copy(alpha = 0.7f),
+                            text = "暂无接入摄像头",
+                            color = tokens.textSecondaryColor,
                             fontSize = 13.sp
                         )
                     }
                 }
+            } else {
+                // HorizontalPager for swipeable camera cards
+                val pagerState = rememberPagerState(pageCount = { cameras.size })
 
-                // Overlay Gradient with Camera Name & Quick Jump
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .align(Alignment.BottomCenter)
-                        .background(
-                            Brush.verticalGradient(
-                                colors = listOf(Color.Transparent, Color(0xCC000000))
-                            )
-                        )
-                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                        .height(175.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(Color(0xFF0F172A))
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text(
-                                text = primaryCamera?.name ?: "主监控镜头",
-                                color = Color.White,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = "点击快速进入多路实时监控流",
-                                color = Color.White.copy(alpha = 0.7f),
-                                fontSize = 11.sp
-                            )
+                    HorizontalPager(
+                        state = pagerState,
+                        modifier = Modifier.fillMaxSize()
+                    ) { page ->
+                        val currentCamera = cameras[page]
+                        val context = LocalContext.current
+                        val density = LocalDensity.current
+                        val thumbWidthPx = remember(density) { with(density) { 360.dp.roundToPx() } }
+                        val thumbHeightPx = remember(density) { with(density) { 175.dp.roundToPx() } }
+
+                        val previewUrl = remember(currentCamera.id, baseUrl) {
+                            if (!baseUrl.isNullOrBlank()) {
+                                "${baseUrl.trimEnd('/')}/api/v1/cameras/${currentCamera.id}/frame?quality=35&width=640"
+                            } else null
                         }
 
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = Color(0x4DFFFFFF),
-                            modifier = Modifier.clickable(onClick = onMultiCameraClick)
+                        val imageRequest = remember(previewUrl, token, thumbWidthPx, thumbHeightPx) {
+                            if (previewUrl == null) null
+                            else {
+                                ImageRequest.Builder(context)
+                                    .data(previewUrl)
+                                    .apply {
+                                        if (!token.isNullOrEmpty()) {
+                                            addHeader("Authorization", "Bearer $token")
+                                        }
+                                    }
+                                    .size(thumbWidthPx, thumbHeightPx)
+                                    .crossfade(200)
+                                    .memoryCachePolicy(CachePolicy.ENABLED)
+                                    .build()
+                            }
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .clickable { onCameraClick(currentCamera) }
                         ) {
-                            Text(
-                                text = "全屏巡检",
-                                color = Color.White,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            if (imageRequest != null) {
+                                SubcomposeAsyncImage(
+                                    model = imageRequest,
+                                    contentDescription = currentCamera.name,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize(),
+                                    loading = {
+                                        Box(
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            CircularProgressIndicator(
+                                                color = Color(0xFFFFC38B),
+                                                modifier = Modifier.size(28.dp),
+                                                strokeWidth = 2.dp
+                                            )
+                                        }
+                                    },
+                                    error = {
+                                        Box(
+                                            modifier = Modifier.fillMaxSize(),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Column(
+                                                horizontalAlignment = Alignment.CenterHorizontally,
+                                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                Icon(
+                                                    painter = painterResource(id = R.drawable.ic_camera),
+                                                    contentDescription = null,
+                                                    tint = Color.White.copy(alpha = 0.5f),
+                                                    modifier = Modifier.size(36.dp)
+                                                )
+                                                Text(
+                                                    text = currentCamera.name,
+                                                    color = Color.White.copy(alpha = 0.8f),
+                                                    fontSize = 13.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                                Text(
+                                                    text = if (currentCamera.isOnline) "轻触进入实时直播" else "摄像头离线",
+                                                    color = Color.White.copy(alpha = 0.6f),
+                                                    fontSize = 11.sp
+                                                )
+                                            }
+                                        }
+                                    }
+                                )
+                            }
+
+                            // Top overlay: Index indicator if multi cameras
+                            if (cameras.size > 1) {
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = Color(0x80000000),
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .padding(8.dp)
+                                ) {
+                                    Text(
+                                        text = "${page + 1}/${cameras.size}",
+                                        color = Color.White,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+
+                            // Bottom overlay gradient with Camera name & Fullscreen inspection pill
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .align(Alignment.BottomCenter)
+                                    .background(
+                                        Brush.verticalGradient(
+                                            colors = listOf(Color.Transparent, Color(0xE6000000))
+                                        )
+                                    )
+                                    .padding(horizontal = 14.dp, vertical = 10.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(6.dp)
+                                                    .clip(CircleShape)
+                                                    .background(if (currentCamera.isOnline) Color(0xFF10B981) else Color(0xFFEF4444))
+                                            )
+                                            Text(
+                                                text = currentCamera.name,
+                                                color = Color.White,
+                                                fontSize = 14.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                        Text(
+                                            text = "左右滑动切换 · 点击全屏巡检",
+                                            color = Color.White.copy(alpha = 0.7f),
+                                            fontSize = 11.sp
+                                        )
+                                    }
+
+                                    Surface(
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = Color(0x4DFFFFFF),
+                                        border = BorderStroke(1.dp, Color(0x66FFFFFF)),
+                                        modifier = Modifier.clickable { onCameraClick(currentCamera) }
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                        ) {
+                                            Icon(
+                                                painter = painterResource(id = R.drawable.ic_fullscreen),
+                                                contentDescription = null,
+                                                tint = Color.White,
+                                                modifier = Modifier.size(13.dp)
+                                            )
+                                            Text(
+                                                text = "全屏巡检",
+                                                color = Color.White,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Pager dots indicator
+                if (cameras.size > 1) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 2.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        cameras.indices.forEach { index ->
+                            val isSelected = pagerState.currentPage == index
+                            val dotWidth by animateDpAsState(
+                                targetValue = if (isSelected) 16.dp else 4.dp,
+                                animationSpec = tween(durationMillis = 250),
+                                label = "pagerDotWidth"
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .padding(horizontal = 3.dp)
+                                    .height(4.dp)
+                                    .width(dotWidth)
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (isSelected) (if (isDark) Color(0xFFFFC38B) else Color(0xFFD7A064))
+                                        else tokens.textColor.copy(alpha = 0.25f)
+                                    )
                             )
                         }
                     }

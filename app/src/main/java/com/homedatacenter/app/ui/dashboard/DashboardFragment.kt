@@ -15,6 +15,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import com.homedatacenter.app.R
+import com.homedatacenter.app.data.api.NetworkFactory
 import com.homedatacenter.app.data.model.Alert
 import com.homedatacenter.app.data.model.Camera
 import androidx.compose.ui.platform.ComposeView
@@ -132,6 +133,9 @@ class DashboardFragment : Fragment() {
                     },
                     onNavigateCameras = {
                         (activity as? MainActivity)?.selectTab(MainTab.Cameras)
+                    },
+                    onCameraClick = { cam ->
+                        openCameraDetail(cam)
                     },
                     onMultiCameraClick = {
                         context?.let { ctx -> startActivity(Intent(ctx, MultiCameraActivity::class.java)) }
@@ -252,6 +256,15 @@ class DashboardFragment : Fragment() {
         val client = mainActivity.container.okHttpClient
         val dialog = AlertSnapshotDialogFragment.newInstance(alert, baseUrl, token, client)
         dialog.show(parentFragmentManager, AlertSnapshotDialogFragment.TAG)
+    }
+
+    private fun openCameraDetail(camera: Camera) {
+        val ctx = context ?: return
+        val cameraJson = NetworkFactory.json.encodeToString(Camera.serializer(), camera)
+        val intent = Intent(ctx, CameraDetailActivity::class.java).apply {
+            putExtra(CameraDetailActivity.EXTRA_CAMERA_JSON, cameraJson)
+        }
+        startActivity(intent)
     }
 
     override fun onDestroyView() {
