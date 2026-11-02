@@ -2,6 +2,9 @@ package com.homedatacenter.app.util
 
 import com.homedatacenter.app.data.repository.HomeCenterRepository
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 
 /**
@@ -29,6 +32,8 @@ class RoleManager(
     private val prefsManager: PrefsManager,
     private val repository: HomeCenterRepository,
 ) {
+    private val _isAdminFlow = MutableStateFlow(prefsManager.isAdmin)
+    val isAdminFlow: StateFlow<Boolean> = _isAdminFlow.asStateFlow()
 
     /** Synchronous best-effort admin check. False until first /me resolves. */
     fun isAdminCached(): Boolean = prefsManager.isAdmin
@@ -39,12 +44,19 @@ class RoleManager(
     /** Cached user id from prefs (set at login, may be updated by /me). */
     fun userIdCached(): Long = prefsManager.userId
 
+    /** Update admin role in both cache and reactive flow. */
+    fun updateAdmin(isAdmin: Boolean) {
+        prefsManager.isAdmin = isAdmin
+        _isAdminFlow.value = isAdmin
+    }
+
     /** Fetch /me and update prefs. Safe to call from any thread. */
     suspend fun refresh(token: String) = withContext(Dispatchers.IO) {
         try {
             val user = repository.getMe(token)
             prefsManager.saveUserInfo(user.name, user.isAdmin)
             prefsManager.userId = user.id
+            updateAdmin(user.isAdmin)
             user
         } catch (_: Exception) {
             // Network failure: keep the previously cached role. The

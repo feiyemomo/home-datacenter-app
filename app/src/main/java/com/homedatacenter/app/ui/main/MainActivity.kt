@@ -6,6 +6,11 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.commit
@@ -14,29 +19,23 @@ import com.homedatacenter.app.HomeCenterApp
 import com.homedatacenter.app.R
 import com.homedatacenter.app.data.api.NetworkFactory
 import com.homedatacenter.app.data.model.Camera
+import com.homedatacenter.app.data.model.WsMessage
 import com.homedatacenter.app.databinding.ActivityMainBinding
 import com.homedatacenter.app.di.AppContainer
 import com.homedatacenter.app.ui.admin.UsersFragment
 import com.homedatacenter.app.ui.cameras.CameraDetailActivity
 import com.homedatacenter.app.ui.cameras.CamerasFragment
+import com.homedatacenter.app.ui.components.LiquidGlassBottomBar
+import com.homedatacenter.app.ui.components.MainTab
 import com.homedatacenter.app.ui.dashboard.DashboardFragment
+import com.homedatacenter.app.ui.glass.AmbientFluidBackground
+import com.homedatacenter.app.ui.glass.ProvideGlassTheme
 import com.homedatacenter.app.ui.login.LoginActivity
-import com.homedatacenter.app.ui.logs.ServiceLogsFragment
 import com.homedatacenter.app.ui.ops.OpsFragment
 import com.homedatacenter.app.ui.settings.SettingsFragment
-import com.homedatacenter.app.data.model.Alert
-import com.homedatacenter.app.data.model.SystemLog
-import com.homedatacenter.app.data.model.SystemLogLevel
-import com.homedatacenter.app.data.model.WsMessage
-import com.homedatacenter.app.data.model.WsMessageType
-import com.homedatacenter.app.data.ws.HomeCenterWebSocket
-import com.homedatacenter.app.data.ws.WsEventListener
 import com.homedatacenter.app.util.NotificationHelper
+import com.homedatacenter.app.util.ThemeManager
 import kotlinx.coroutines.launch
-import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonPrimitive
-import java.util.concurrent.CopyOnWriteArrayList
 
 class MainActivity : AppCompatActivity() {
 
@@ -45,6 +44,8 @@ class MainActivity : AppCompatActivity() {
     lateinit var container: AppContainer
 
     private var activeFragment: Fragment? = null
+    private var currentTab by mutableStateOf(MainTab.Dashboard)
+    var isAdminState by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -58,42 +59,51 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // Pass the real savedInstanceState so setupFragments can skip
-        // re-adding fragments after a config change (e.g. theme switch
-        // via recreate()). super.onCreate has already restored fragment
-        // state, so the fragments are added and their show/hide state is
-        // preserved. Calling add() again would throw
-        // IllegalStateException: Fragment already added.
-        setupFragments(savedInstanceState)
-        setupNavigation()
-        updateMenuByPermission()
-        // Kick off a LAN probe on UI entry. By the time MainActivity
-        // is created the user has waited through the launcher animation
-        // and Application.onCreate's initial probe schedule — but on
-        // real phones the WiFi stack may still have been unvalidated
-        // at that point. By MainActivity.onCreate the WiFi is almost
-        // certainly validated (the user can see the WiFi icon in the
-        // status bar), so this probe has a high probability of
-        // succeeding. It's a no-op if the resolver already picked LAN.
-        container.baseUrlResolver.forceProbe()
-        // Refresh /me on launch — admin status may have changed since
-        // last login (server-side demotion takes effect immediately,
-        // but our local cache in PrefsManager may be stale). This
-        // updates the role cache so role-based UI (admin-only buttons,
-        // FAB on CamerasFragment, Users button in SettingsFragment)
-        // shows correctly.
-        refreshRole()
+        isAdminState = container.prefsManager.isAdmin
 
-        // Refresh token sliding expiry on app open / enter
+        // Restore or initialize selected tab before rendering to prevent first-frame tab jump
+        val initialTab = savedInstanceState?.getString(KEY_SELECTED_TAB)?.let {
+            runCatching { MainTab.valueOf(it) }.getOrNull()
+        } ?: MainTab.Dashboard
+        currentTab = if (initialTab.requiresAdmin && !isAdminState) MainTab.Dashboard else initialTab
+
+        // Ambient fluid mesh background
+        binding.globalFluidBackground.setViewCompositionStrategy(
+            ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed
+        )
+        binding.globalFluidBackground.setContent {
+            val preset by ThemeManager.themePresetFlow.collectAsState()
+            AmbientFluidBackground(preset = preset)
+        }
+
+        // Pure Compose LiquidGlassBottomBar
+        binding.composeBottomNav.setViewCompositionStrategy(
+            ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed
+        )
+        binding.composeBottomNav.setContent {
+            val preset by ThemeManager.themePresetFlow.collectAsState()
+            val isAdmin by container.roleManager.isAdminFlow.collectAsState()
+            ProvideGlassTheme(preset = preset) {
+                LiquidGlassBottomBar(
+                    currentTab = currentTab,
+                    onTabSelected = { tab ->
+                        selectTab(tab)
+                    },
+                    isAdmin = isAdmin,
+                )
+            }
+        }
+
+        setupFragments(savedInstanceState)
+        container.baseUrlResolver.forceProbe()
+        refreshRole()
         container.tryAutoRefreshToken()
 
-        // Initialize system notification channels and request permission on Android 13+
         NotificationHelper.createChannels(this)
         checkNotificationPermission()
         handleIntentNavigation(intent)
         ensureWebSocketConnected()
 
-        // v1.14.2: offline banner driven by BaseUrlResolver reachability.
         binding.offlineBanner.setOnClickListener {
             container.baseUrlResolver.forceProbe()
         }
@@ -101,7 +111,6 @@ class MainActivity : AppCompatActivity() {
         updateOfflineBanner(container.baseUrlResolver.serverReachable)
     }
 
-    // v1.14.2: called from probe threads; marshal to UI.
     private val reachabilityListener: (Boolean) -> Unit = { reachable ->
         runOnUiThread { updateOfflineBanner(reachable) }
     }
@@ -153,8 +162,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun handleIntentNavigation(intent: Intent) {
         val tabId = intent.getIntExtra(NotificationHelper.EXTRA_NAVIGATE_TAB, 0)
-        if (tabId != 0 && tabId != binding.bottomNav.selectedItemId) {
-            binding.bottomNav.selectedItemId = tabId
+        if (tabId != 0) {
+            val targetTab = when (tabId) {
+                R.id.nav_cameras -> MainTab.Cameras
+                R.id.nav_logs -> MainTab.Ops
+                R.id.nav_users -> MainTab.Users
+                R.id.nav_settings -> MainTab.Settings
+                else -> MainTab.Dashboard
+            }
+            selectTab(targetTab)
         }
         val cameraId = intent.getLongExtra(NotificationHelper.EXTRA_ALERT_CAMERA_ID, 0L)
         val startTs = intent.getLongExtra(NotificationHelper.EXTRA_ALERT_START_TS, 0L)
@@ -185,46 +201,22 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        // Sliding refresh token if debounce elapsed
         container.tryAutoRefreshToken()
-        // Returning to MainActivity from another activity (e.g. after
-        // the user changed WiFi settings, switched VPN, came back from
-        // background) is a strong signal to re-probe. forceProbe is a
-        // no-op if a probe is already in flight, and the TTL prevents
-        // over-probing in the common case (user is just switching
-        // tabs inside the app — no MainActivity.onResume fires).
         container.baseUrlResolver.forceProbe()
-        // Refresh role on resume — covers the case where the admin
-        // demoted themselves in another session (e.g. web dashboard).
         refreshRole()
         ensureWebSocketConnected()
     }
 
-    // v1.6.13: re-sync the active fragment to the BottomNavigationView's
-    // restored selected item. onRestoreInstanceState runs AFTER
-    // BottomNavigationView's state has been restored (super.onRestoreInstanceState
-    // dispatches view-state restoration to children), so reading
-    // selectedItemId here returns the user's actual last tab — not the
-    // menu default we'd see during onCreate.
-    //
-    // Without this override, the bottom nav indicator points at (say)
-    // nav_cameras after a process-death recovery, but the actually-shown
-    // fragment is dashboardFragment (because setupFragments in onCreate
-    // always adds dashboard as the visible one). The user clicks the
-    // nav_cameras tab again to "fix" it but our showFragment early-returns
-    // because fragment === activeFragment is true for cameras — wait,
-    // activeFragment is dashboardFragment, not cameras, so the click WOULD
-    // work. The real pain is the visual mismatch: indicator on cameras,
-    // screen showing dashboard, until the user clicks something.
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString(KEY_SELECTED_TAB, currentTab.name)
+    }
+
     override fun onRestoreInstanceState(savedInstanceState: Bundle) {
         super.onRestoreInstanceState(savedInstanceState)
-        when (binding.bottomNav.selectedItemId) {
-            R.id.nav_cameras -> showFragmentByTag(TAG_CAMERAS) { CamerasFragment() }
-            R.id.nav_logs -> showFragmentByTag(TAG_LOGS) { OpsFragment() }
-            R.id.nav_users -> showFragmentByTag(TAG_USERS) { UsersFragment() }
-            R.id.nav_settings -> showFragmentByTag(TAG_SETTINGS) { SettingsFragment() }
-            else -> showFragmentByTag(TAG_DASHBOARD) { DashboardFragment() }
-        }
+        val tabName = savedInstanceState.getString(KEY_SELECTED_TAB)
+        val restoredTab = tabName?.let { runCatching { MainTab.valueOf(it) }.getOrNull() } ?: MainTab.Dashboard
+        selectTab(restoredTab)
     }
 
     private fun refreshRole() {
@@ -234,31 +226,26 @@ class MainActivity : AppCompatActivity() {
                 container.roleManager.refresh(token)
             } catch (_: Exception) {
             }
-            // Re-evaluate admin-gated UI after role refresh. The
-            // individual fragments read prefsManager.isAdmin in their
-            // own onViewCreated, so they will pick up the new value
-            // when the user next navigates to them. Only the bottom
-            // nav needs an explicit refresh here.
-            runOnUiThread { updateMenuByPermission() }
+            runOnUiThread {
+                isAdminState = container.prefsManager.isAdmin
+                // Demotion fallback: if active tab requires admin and user is no longer admin, fall back to Dashboard
+                if (!isAdminState && currentTab.requiresAdmin) {
+                    selectTab(MainTab.Dashboard)
+                }
+            }
         }
     }
 
     private fun setupFragments(savedInstanceState: Bundle?) {
         val fm = supportFragmentManager
         if (savedInstanceState == null) {
-            // First creation: only add the default DashboardFragment lazily.
-            // Other tabs will be created and added on first navigation.
             val dashboard = DashboardFragment()
             fm.commit {
                 add(R.id.nav_host_fragment, dashboard, TAG_DASHBOARD)
             }
             activeFragment = dashboard
+            currentTab = MainTab.Dashboard
         } else {
-            // After recreation (e.g. theme switch), super.onCreate has
-            // already restored fragment state — fragments are added and
-            // their show/hide state is preserved. Do NOT call add() again
-            // or it throws IllegalStateException: Fragment already added.
-            // Determine the currently-visible fragment from restored state.
             val tags = listOf(TAG_DASHBOARD, TAG_CAMERAS, TAG_LOGS, TAG_USERS, TAG_SETTINGS)
             activeFragment = tags.mapNotNull { fm.findFragmentByTag(it) }
                 .firstOrNull { it.isAdded && !it.isHidden }
@@ -266,23 +253,16 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun updateMenuByPermission() {
-        // Service logs tab is admin-only — non-admin users get a
-        // simplified navigation bar without the logs entry.
-        binding.bottomNav.menu.findItem(R.id.nav_logs)?.isVisible = container.prefsManager.isAdmin
-        binding.bottomNav.menu.findItem(R.id.nav_users)?.isVisible = container.prefsManager.isAdmin
-    }
-
-    private fun setupNavigation() {
-        binding.bottomNav.setOnItemSelectedListener { item ->
-            when (item.itemId) {
-                R.id.nav_dashboard -> { showFragmentByTag(TAG_DASHBOARD) { DashboardFragment() }; true }
-                R.id.nav_cameras -> { showFragmentByTag(TAG_CAMERAS) { CamerasFragment() }; true }
-                R.id.nav_logs -> { showFragmentByTag(TAG_LOGS) { OpsFragment() }; true }
-                R.id.nav_users -> { showFragmentByTag(TAG_USERS) { UsersFragment() }; true }
-                R.id.nav_settings -> { showFragmentByTag(TAG_SETTINGS) { SettingsFragment() }; true }
-                else -> false
-            }
+    fun selectTab(tab: MainTab) {
+        // Guard admin-only tabs
+        val target = if (tab.requiresAdmin && !isAdminState) MainTab.Dashboard else tab
+        currentTab = target
+        when (target) {
+            MainTab.Dashboard -> showFragmentByTag(TAG_DASHBOARD) { DashboardFragment() }
+            MainTab.Cameras -> showFragmentByTag(TAG_CAMERAS) { CamerasFragment() }
+            MainTab.Ops -> showFragmentByTag(TAG_LOGS) { OpsFragment() }
+            MainTab.Users -> showFragmentByTag(TAG_USERS) { UsersFragment() }
+            MainTab.Settings -> showFragmentByTag(TAG_SETTINGS) { SettingsFragment() }
         }
     }
 
@@ -317,5 +297,6 @@ class MainActivity : AppCompatActivity() {
         private const val TAG_LOGS = "logs"
         private const val TAG_USERS = "users"
         private const val TAG_SETTINGS = "settings"
+        private const val KEY_SELECTED_TAB = "selected_tab"
     }
 }
