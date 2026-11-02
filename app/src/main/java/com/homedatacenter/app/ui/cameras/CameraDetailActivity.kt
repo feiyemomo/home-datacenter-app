@@ -354,6 +354,10 @@ class CameraDetailActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         _binding = ActivityCameraDetailBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        com.homedatacenter.app.ui.glass.GlassActivityHelper.attachFluidBackground(this)
+
+        val isDark = com.homedatacenter.app.util.ThemeManager.isDarkMode(this)
+        WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightStatusBars = !isDark
 
         container = (application as HomeCenterApp).container
         isAdmin = container.prefsManager.isAdmin
@@ -365,6 +369,12 @@ class CameraDetailActivity : AppCompatActivity() {
             }
         })
         binding.toolbar.inflateMenu(R.menu.menu_camera_detail)
+        val iconColor = getColor(R.color.text_primary)
+        binding.toolbar.navigationIcon?.setTint(iconColor)
+        binding.toolbar.setTitleTextColor(iconColor)
+        binding.toolbar.menu.findItem(R.id.action_snapshot)?.icon?.setTint(iconColor)
+        binding.toolbar.menu.findItem(R.id.action_pip)?.icon?.setTint(iconColor)
+
         binding.toolbar.setOnMenuItemClickListener { item ->
             when (item.itemId) {
                 R.id.action_snapshot -> {
@@ -528,6 +538,7 @@ class CameraDetailActivity : AppCompatActivity() {
         }
         if (isInPictureInPictureMode) {
             wasInPipMode = true
+            (findViewById<android.widget.FrameLayout>(android.R.id.content)?.getChildAt(0))?.visibility = View.GONE
             window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
             window.decorView.background = null
             WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -595,7 +606,8 @@ class CameraDetailActivity : AppCompatActivity() {
                 }
             }
         } else {
-            window.setBackgroundDrawableResource(R.color.bg_primary)
+            (findViewById<android.widget.FrameLayout>(android.R.id.content)?.getChildAt(0))?.visibility = View.VISIBLE
+            window.setBackgroundDrawableResource(android.R.color.transparent)
             // Immediately stop audio when leaving PiP to eliminate any audio residue
             webRtcClient?.stopPlayoutImmediately()
             webRtcClient?.setAudioEnabled(false)
@@ -645,14 +657,14 @@ class CameraDetailActivity : AppCompatActivity() {
             }
             savedAncestorPipStates.clear()
 
-            binding.root.setBackgroundResource(R.color.bg_primary)
+            binding.root.setBackgroundResource(android.R.color.transparent)
             (binding.videoContainer.parent as? ViewGroup)?.let { p ->
                 val plp = p.layoutParams
                 plp.width = ViewGroup.LayoutParams.MATCH_PARENT
                 plp.height = ViewGroup.LayoutParams.WRAP_CONTENT
                 p.layoutParams = plp
             }
-            binding.videoContainer.setBackgroundResource(R.color.card_bg)
+            binding.videoContainer.setBackgroundResource(R.color.camera_bg)
             binding.toolbar.visibility = View.VISIBLE
             binding.tvStreamStrategy.visibility =
                 if (binding.tvStreamStrategy.text.isNotEmpty()) View.VISIBLE else View.GONE
@@ -1451,12 +1463,18 @@ class CameraDetailActivity : AppCompatActivity() {
             if (hasAudio) R.drawable.ic_volume_on else R.drawable.ic_volume_off
         )
         binding.btnAudioPickup.text = if (hasAudio) "拾音开" else "拾音关"
-        binding.btnAudioPickup.setIconTintResource(
-            if (hasAudio) R.color.online else R.color.error
-        )
-        binding.btnAudioPickup.setTextColor(
-            getColor(if (hasAudio) R.color.text_primary else R.color.text_secondary)
-        )
+        if (hasAudio) {
+            binding.btnAudioPickup.setBackgroundResource(R.drawable.bg_glass_btn_audio)
+            val emeraldText = getColor(R.color.btn_audio_text)
+            val emeraldIcon = getColor(R.color.btn_audio_icon)
+            binding.btnAudioPickup.iconTint = android.content.res.ColorStateList.valueOf(emeraldIcon)
+            binding.btnAudioPickup.setTextColor(emeraldText)
+        } else {
+            binding.btnAudioPickup.setBackgroundResource(R.drawable.bg_glass_action_pill)
+            val normalColor = getColor(R.color.text_secondary)
+            binding.btnAudioPickup.iconTint = android.content.res.ColorStateList.valueOf(normalColor)
+            binding.btnAudioPickup.setTextColor(normalColor)
+        }
         binding.btnAudioPickup.alpha = 1.0f
 
         // Also update settings switch text & summary
@@ -3332,6 +3350,7 @@ class CameraDetailActivity : AppCompatActivity() {
             val tv = TextView(parent.context).apply {
                 setPadding(32, 32, 32, 32)
                 textSize = 14f
+                setTextColor(parent.context.getColor(R.color.text_primary))
             }
             return VH(tv)
         }

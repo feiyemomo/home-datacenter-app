@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Frosted liquid glass toolbar background adapting dynamically to light and dark themes -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Bottom border line base -->
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/toolbar_glass_border" />
+        </shape>
+    </item>
+    <!-- Liquid glass surface, leaving 1dp at bottom for the specular border -->
+    <item android:bottom="1dp">
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="270"
+                android:startColor="@color/toolbar_glass_start"
+                android:endColor="@color/toolbar_glass_end" />
+        </shape>
+    </item>
+</layer-list>

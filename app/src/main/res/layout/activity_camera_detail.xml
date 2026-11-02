@@ -9,7 +9,7 @@
     android:layout_height="match_parent"
     android:fillViewport="true"
     android:fitsSystemWindows="true"
-    android:background="@color/bg_primary">
+    android:background="@android:color/transparent">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -28,8 +28,7 @@
             android:id="@+id/toolbar"
             android:layout_width="match_parent"
             android:layout_height="?attr/actionBarSize"
-            android:background="@color/card_bg"
-            android:theme="@style/ThemeOverlay.Material3.Light"
+            android:background="@drawable/bg_glass_toolbar"
             app:navigationIcon="@drawable/ic_baseline_arrow_back_24"
             app:navigationIconTint="@color/text_primary"
             app:titleTextColor="@color/text_primary" />
@@ -42,7 +41,7 @@
             android:id="@+id/videoContainer"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:background="@color/card_bg">
+            android:background="#CC000000">
 
             <!-- v1.13.0: Digital Pinch-to-Zoom container -->
             <com.homedatacenter.app.ui.cameras.PinchToZoomFrameLayout
@@ -283,7 +282,6 @@
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnReloadStream"
-                    style="@style/Widget.Material3.Button.TonalButton"
                     android:layout_width="0dp"
                     android:layout_weight="1"
                     android:layout_height="44dp"
@@ -292,18 +290,21 @@
                     android:paddingVertical="0dp"
                     android:insetTop="0dp"
                     android:insetBottom="0dp"
+                    android:background="@drawable/bg_glass_btn_reload"
+                    app:backgroundTint="@null"
                     android:text="重载"
+                    android:textColor="@color/btn_reload_text"
                     android:textSize="13sp"
                     android:textStyle="bold"
                     app:icon="@drawable/ic_refresh"
+                    app:iconTint="@color/btn_reload_icon"
                     app:iconSize="18dp"
                     app:iconPadding="4dp"
                     app:iconGravity="textStart"
-                    app:cornerRadius="12dp" />
+                    app:cornerRadius="14dp" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnAudioPickup"
-                    style="@style/Widget.Material3.Button.TonalButton"
                     android:layout_width="0dp"
                     android:layout_weight="1"
                     android:layout_height="44dp"
@@ -316,18 +317,21 @@
                     android:singleLine="true"
                     android:maxLines="1"
                     android:ellipsize="none"
+                    android:background="@drawable/bg_glass_btn_audio"
+                    app:backgroundTint="@null"
                     android:text="拾音开"
+                    android:textColor="@color/btn_audio_text"
                     android:textSize="12sp"
                     android:textStyle="bold"
                     app:icon="@drawable/ic_volume_on"
+                    app:iconTint="@color/btn_audio_icon"
                     app:iconSize="16dp"
                     app:iconPadding="3dp"
                     app:iconGravity="textStart"
-                    app:cornerRadius="12dp" />
+                    app:cornerRadius="14dp" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnTalkback"
-                    style="@style/Widget.Material3.Button.TonalButton"
                     android:layout_width="0dp"
                     android:layout_weight="1"
                     android:layout_height="44dp"
@@ -337,19 +341,22 @@
                     android:paddingVertical="0dp"
                     android:insetTop="0dp"
                     android:insetBottom="0dp"
+                    android:background="@drawable/bg_glass_btn_reload"
+                    app:backgroundTint="@null"
                     android:text="对讲"
+                    android:textColor="@color/btn_reload_text"
                     android:textSize="13sp"
                     android:textStyle="bold"
                     app:icon="@drawable/ic_mic"
+                    app:iconTint="@color/btn_reload_icon"
                     app:iconSize="18dp"
                     app:iconPadding="4dp"
                     app:iconGravity="textStart"
-                    app:cornerRadius="12dp"
+                    app:cornerRadius="14dp"
                     android:visibility="gone" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnRecordings"
-                    style="@style/Widget.Material3.Button.TonalButton"
                     android:layout_width="0dp"
                     android:layout_weight="1"
                     android:layout_height="44dp"
@@ -359,18 +366,21 @@
                     android:paddingVertical="0dp"
                     android:insetTop="0dp"
                     android:insetBottom="0dp"
+                    android:background="@drawable/bg_glass_btn_playback"
+                    app:backgroundTint="@null"
                     android:text="回放"
+                    android:textColor="@color/btn_playback_text"
                     android:textSize="13sp"
                     android:textStyle="bold"
                     app:icon="@drawable/ic_video"
+                    app:iconTint="@color/btn_playback_icon"
                     app:iconSize="18dp"
                     app:iconPadding="4dp"
                     app:iconGravity="textStart"
-                    app:cornerRadius="12dp" />
+                    app:cornerRadius="14dp" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnAlerts"
-                    style="@style/Widget.Material3.Button.TonalButton"
                     android:layout_width="0dp"
                     android:layout_weight="1"
                     android:layout_height="44dp"
@@ -379,14 +389,18 @@
                     android:paddingVertical="0dp"
                     android:insetTop="0dp"
                     android:insetBottom="0dp"
+                    android:background="@drawable/bg_glass_btn_alerts"
+                    app:backgroundTint="@null"
                     android:text="告警"
+                    android:textColor="@color/btn_alerts_text"
                     android:textSize="13sp"
                     android:textStyle="bold"
                     app:icon="@drawable/ic_alerts"
+                    app:iconTint="@color/btn_alerts_icon"
                     app:iconSize="18dp"
                     app:iconPadding="4dp"
                     app:iconGravity="textStart"
-                    app:cornerRadius="12dp" />
+                    app:cornerRadius="14dp" />
             </LinearLayout>
 
             <!-- Subtle talkback guidance text below action row -->
@@ -408,7 +422,8 @@
                 android:layout_height="wrap_content"
                 android:text="@string/camera_ptz_section"
                 android:textSize="14sp"
-                android:textColor="@color/text_secondary"
+                android:textStyle="bold"
+                android:textColor="@color/text_primary"
                 android:layout_marginBottom="8dp" />
 
             <LinearLayout
@@ -559,7 +574,8 @@
                 android:layout_height="wrap_content"
                 android:text="@string/camera_presets_section"
                 android:textSize="14sp"
-                android:textColor="@color/text_secondary"
+                android:textStyle="bold"
+                android:textColor="@color/text_primary"
                 android:layout_marginBottom="8dp" />
 
             <LinearLayout
@@ -593,18 +609,37 @@
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnSaveCurrentPreset"
-                        style="@style/Widget.Material3.Button.TonalButton"
                         android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
+                        android:layout_height="42dp"
+                        android:paddingHorizontal="14dp"
+                        android:paddingVertical="0dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:background="@drawable/bg_glass_btn_primary"
+                        app:backgroundTint="@null"
+                        android:textColor="@color/btn_primary_glass_text"
+                        android:textStyle="bold"
+                        android:textSize="13sp"
+                        app:cornerRadius="12dp"
                         android:text="@string/camera_preset_save_current"
-                        app:icon="@drawable/ic_add" />
+                        app:icon="@drawable/ic_add"
+                        app:iconTint="@color/btn_primary_glass_text"
+                        app:iconSize="18dp" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnAddPreset"
-                        style="@style/Widget.Material3.Button.TextButton"
                         android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
+                        android:layout_height="42dp"
                         android:layout_marginStart="8dp"
+                        android:paddingHorizontal="14dp"
+                        android:paddingVertical="0dp"
+                        android:insetTop="0dp"
+                        android:insetBottom="0dp"
+                        android:background="@drawable/bg_glass_action_pill"
+                        app:backgroundTint="@null"
+                        android:textColor="@color/text_primary"
+                        android:textSize="13sp"
+                        app:cornerRadius="12dp"
                         android:text="@string/camera_preset_add" />
                 </LinearLayout>
             </LinearLayout>
@@ -616,7 +651,8 @@
                 android:layout_height="wrap_content"
                 android:text="@string/camera_settings_section"
                 android:textSize="14sp"
-                android:textColor="@color/text_secondary"
+                android:textStyle="bold"
+                android:textColor="@color/text_primary"
                 android:layout_marginBottom="8dp" />
 
             <LinearLayout
@@ -635,11 +671,20 @@
                      codec/delete controls. -->
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnShareCamera"
-                    style="@style/Widget.Material3.Button.OutlinedButton"
                     android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginBottom="8dp"
+                    android:layout_height="46dp"
+                    android:layout_marginBottom="12dp"
+                    android:background="@drawable/bg_glass_btn_primary"
+                    app:backgroundTint="@null"
                     android:text="@string/camera_share_title"
+                    android:textColor="@color/btn_primary_glass_text"
+                    android:textStyle="bold"
+                    app:icon="@drawable/ic_user_plus"
+                    app:iconTint="@color/btn_primary_glass_text"
+                    app:iconGravity="textStart"
+                    app:iconSize="18dp"
+                    app:iconPadding="6dp"
+                    app:cornerRadius="14dp"
                     android:visibility="gone" />
 
                 <!-- Audio pickup switch: visible to all users -->
@@ -648,17 +693,18 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="@string/camera_audio_enable"
+                    android:textStyle="bold"
                     android:textColor="@color/text_primary" />
 
                 <TextView
                     android:id="@+id/tvAudioSummary"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginStart="56dp"
-                    android:layout_marginTop="-2dp"
+                    android:layout_marginStart="0dp"
+                    android:layout_marginTop="2dp"
                     android:text="@string/camera_audio_summary"
-                    android:textSize="11sp"
-                    android:textColor="@color/text_hint" />
+                    android:textSize="12sp"
+                    android:textColor="@color/text_secondary" />
 
                 <View
                     android:layout_width="match_parent"
@@ -679,42 +725,69 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="@string/camera_recording_enable"
+                        android:textStyle="bold"
                         android:textColor="@color/text_primary" />
 
                     <TextView
+                        android:id="@+id/tvRecordingSummary"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginStart="56dp"
-                        android:layout_marginTop="-2dp"
+                        android:layout_marginStart="0dp"
+                        android:layout_marginTop="2dp"
                         android:text="@string/camera_recording_summary"
-                        android:textSize="11sp"
-                        android:textColor="@color/text_hint" />
+                        android:textSize="12sp"
+                        android:textColor="@color/text_secondary" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnCodecH264"
-                        style="@style/Widget.Material3.Button.OutlinedButton"
                         android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
+                        android:layout_height="46dp"
                         android:layout_marginTop="16dp"
+                        android:background="@drawable/bg_glass_btn_playback"
+                        app:backgroundTint="@null"
+                        android:textColor="@color/btn_playback_text"
+                        android:textStyle="bold"
+                        app:icon="@drawable/ic_video"
+                        app:iconTint="@color/btn_playback_icon"
+                        app:iconGravity="textStart"
+                        app:iconSize="18dp"
+                        app:iconPadding="6dp"
+                        app:cornerRadius="14dp"
                         android:text="@string/camera_codec_h264" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnDetectFps"
-                        style="@style/Widget.Material3.Button.OutlinedButton"
                         android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="8dp"
+                        android:layout_height="46dp"
+                        android:layout_marginTop="10dp"
+                        android:background="@drawable/bg_glass_btn_audio"
+                        app:backgroundTint="@null"
+                        android:textColor="@color/btn_audio_text"
+                        android:textStyle="bold"
+                        app:icon="@drawable/ic_bolt"
+                        app:iconTint="@color/btn_audio_icon"
+                        app:iconGravity="textStart"
+                        app:iconSize="18dp"
+                        app:iconPadding="6dp"
+                        app:cornerRadius="14dp"
                         android:text="AI 抽样检测频率 (2 fps)" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnDelete"
-                        style="@style/Widget.Material3.Button.OutlinedButton"
                         android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="8dp"
+                        android:layout_height="46dp"
+                        android:layout_marginTop="12dp"
+                        android:background="@drawable/bg_glass_btn_danger"
+                        app:backgroundTint="@null"
                         android:text="@string/camera_delete"
-                        android:textColor="@color/error"
-                        app:strokeColor="@color/error" />
+                        android:textColor="@color/btn_danger_glass_text"
+                        android:textStyle="bold"
+                        app:icon="@drawable/ic_delete"
+                        app:iconTint="@color/btn_danger_glass_text"
+                        app:iconGravity="textStart"
+                        app:iconSize="18dp"
+                        app:iconPadding="6dp"
+                        app:cornerRadius="14dp" />
                 </LinearLayout>
             </LinearLayout>
 

@@ -1,76 +1,124 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Primary warm amber — matches web accent-warm: 215 160 100 -->
-    <color name="primary">#D7A064</color>
-    <color name="primary_dark">#C48D50</color>
-    <color name="primary_light">#E8C49A</color>
-    <!-- Secondary: warm peach-coral for highlights -->
-    <color name="secondary">#E8A87C</color>
-    <color name="secondary_dark">#D4956A</color>
-    <!-- Accent: warm amber glow (used for stars, alert pulses) -->
-    <color name="accent">#D4A055</color>
+    <!-- Liquid Glass Design System Palette — High-contrast Cyber-Cyan & Indigo -->
+    <color name="primary">#0284C7</color>
+    <color name="primary_dark">#0369A1</color>
+    <color name="primary_light">#38BDF8</color>
+    <!-- Secondary: vibrant indigo / violet -->
+    <color name="secondary">#6366F1</color>
+    <color name="secondary_dark">#4F46E5</color>
+    <!-- Accent: sky-blue glow -->
+    <color name="accent">#0284C7</color>
 
-    <!-- Status colors — warm-toned variants -->
-    <color name="online">#5CB880</color>
-    <color name="offline">#9E9E9E</color>
-    <color name="error">#E07070</color>
-    <color name="warning">#D4A055</color>
+    <!-- Material Containers -->
+    <color name="warm_container">#1F0284C7</color>
+    <color name="on_warm_container">#0369A1</color>
+
+    <!-- Status colors — radiant liquid variants -->
+    <color name="online">#059669</color>
+    <color name="offline">#64748B</color>
+    <color name="error">#DC2626</color>
+    <color name="warning">#D97706</color>
+    <color name="red">#DC2626</color>
 
     <color name="white">#FFFFFF</color>
     <color name="black">#000000</color>
 
-    <!-- Text — warm dark slate (not cool blue-gray) -->
-    <color name="text_primary">#3D3530</color>
-    <color name="text_secondary">#8A7E72</color>
-    <color name="text_hint">#B0A394</color>
+    <!-- Text — high-contrast crisp slate & charcoal for Light Theme -->
+    <color name="text_primary">#1E1B24</color>
+    <color name="text_secondary">#5A5260</color>
+    <color name="text_hint">#78716C</color>
     <color name="text_on_primary">#FFFFFF</color>
 
-    <!-- Background — warm cream palette matching web bg: 246 241 234 (#F6F1EA) -->
-    <color name="bg_primary">#F6F1EA</color>
-    <color name="bg_secondary">#FDF8F2</color>
-    <color name="bg_surface">#FFFCF8</color>
-    <color name="divider">#E8DFD3</color>
+    <!-- Background — warm cream canvas -->
+    <color name="bg_primary">#F7F3EC</color>
+    <color name="bg_secondary">#EDE8E0</color>
+    <color name="bg_surface">#FFFFFF</color>
+    <color name="card_bg">#F2FFFFFF</color>
+    <color name="card_stroke">#26D7A064</color>
+    <color name="card_bottom_bg">#F5F2EB</color>
+    <color name="divider">#1F2A1C0E</color>
 
-    <!-- Glass effect — frosted warm white with top edge hint; matches web glass:
-         backdrop white at 45-62% + warm tint -->
-    <color name="glass_bg">#CCFFFFFF</color>
-    <!-- v1.15.1: dialog surface. Fully opaque so high-contrast text on the
-         activity underneath cannot bleed through the modal dialog card, while
-         the liquid glass feel is carried by the 26dp rounded shape, border stroke,
-         drop shadow, and top-edge light refraction gradient. -->
-    <color name="glass_bg_dialog">#FFFCF8</color>
-    <!-- Bottom nav body. Fully opaque: the bar floats over scrolling
-         lists, and even a few percent of see-through made dense text
-         (log rows, camera thumbnails) readable behind the tab labels.
-         The liquid-glass look is carried by the border, the top-edge
-         highlight and the drop shadow instead of by transparency. -->
-    <color name="glass_bg_nav">#FFFFFFFF</color>
-    <color name="glass_border">#33FFFFFF</color>
-    <color name="glass_shadow">#14000000</color>
-    <color name="glass_highlight">#26FFFFFF</color>
+    <!-- Glass effect — clean translucent frosted white crystal with warm amber specular edge -->
+    <color name="glass_bg">#F2FFFFFF</color>
+    <color name="glass_bg_dialog">#F7FFFFFF</color>
+    <color name="glass_bg_nav">#F2FFFFFF</color>
+    <color name="glass_border">#26D7A064</color>
+    <color name="glass_shadow">#142A1C0E</color>
+    <color name="glass_highlight">#80FFFFFF</color>
+    <color name="glass_subtle_fill">#1438BDF8</color>
+    <color name="bottom_nav_active">#0284C7</color>
+    <color name="bottom_nav_inactive">#64748B</color>
+    <color name="bottom_nav_active_indicator">#1F0284C7</color>
 
-    <!-- Page gradient: warm cream → soft peach → warm ivory (no cold blue) -->
-    <color name="gradient_start">#F8EDE0</color>
-    <color name="gradient_mid">#FDF4EA</color>
-    <color name="gradient_end">#F6F1EA</color>
+    <!-- Gradients -->
+    <color name="gradient_start">#F7F3EC</color>
+    <color name="gradient_mid">#F5EBE1</color>
+    <color name="gradient_end">#EDE4D8</color>
 
-    <!-- Card surfaces -->
-    <color name="card_bg">#FFFCF8</color>
-    <color name="card_stroke">#F0E4D4</color>
-    <color name="camera_bg">#1A1A1A</color>
-    <color name="card_bottom_bg">#FFFCF8</color>
-    <color name="red">#E07070</color>
+    <!-- Icon & chip accents -->
+    <color name="icon_circle_bg">#1F0284C7</color>
+    <color name="chip_warm_bg_checked">#1F0284C7</color>
+    <color name="chip_warm_text_checked">#0284C7</color>
 
-    <!-- Icon circle warm tint (28% alpha of primary amber) -->
-    <color name="icon_circle_bg">#47D7A064</color>
-    <color name="glass_subtle_fill">#0DD7A064</color>
-    <color name="chip_warm_bg_checked">#33D7A064</color>
-    <color name="chip_warm_text_checked">#B58049</color>
+    <color name="camera_bg">#090D16</color>
+    <color name="status_connected">#059669</color>
+    <color name="status_disconnected">#DC2626</color>
+    <color name="status_warning">#D97706</color>
+    <color name="status_disabled">#64748B</color>
+    <color name="battery_good">#059669</color>
+    <color name="battery_low">#DC2626</color>
+    <color name="battery_medium">#D97706</color>
 
-    <!-- v1.15.1: warm tonal container pair. Material 3's TonalButton /
-         FilledTonalButton default to colorSecondaryContainer, which
-         without an explicit override resolves to a lavender that
-         clashes with the cream + amber identity. -->
-    <color name="warm_container">#F3E0C7</color>
-    <color name="on_warm_container">#7A5636</color>
+    <color name="chip_selected_bg">#1F0284C7</color>
+    <color name="chip_selected_text">#0284C7</color>
+    <color name="chip_unselected_bg">#0D000000</color>
+    <color name="chip_unselected_text">#5A5260</color>
+
+    <!-- Toolbar liquid glass -->
+    <color name="toolbar_glass_start">#E6FFFFFF</color>
+    <color name="toolbar_glass_end">#CCFFFFFF</color>
+    <color name="toolbar_glass_border">#26D7A064</color>
+
+    <!-- Action button semantic colors — Light Theme (high-contrast vivid pills) -->
+    <color name="btn_reload_bg">#1F0284C7</color>
+    <color name="btn_reload_stroke">#4D0284C7</color>
+    <color name="btn_reload_ripple">#330284C7</color>
+    <color name="btn_reload_highlight">#40FFFFFF</color>
+    <color name="btn_reload_text">#0284C7</color>
+    <color name="btn_reload_icon">#0284C7</color>
+
+    <color name="btn_audio_bg">#1F10B981</color>
+    <color name="btn_audio_stroke">#4D10B981</color>
+    <color name="btn_audio_ripple">#3310B981</color>
+    <color name="btn_audio_highlight">#40FFFFFF</color>
+    <color name="btn_audio_text">#059669</color>
+    <color name="btn_audio_icon">#059669</color>
+
+    <color name="btn_playback_bg">#1F6366F1</color>
+    <color name="btn_playback_stroke">#4D6366F1</color>
+    <color name="btn_playback_ripple">#336366F1</color>
+    <color name="btn_playback_highlight">#40FFFFFF</color>
+    <color name="btn_playback_text">#4F46E5</color>
+    <color name="btn_playback_icon">#4F46E5</color>
+
+    <color name="btn_alerts_bg">#1FF59E0B</color>
+    <color name="btn_alerts_stroke">#4DF59E0B</color>
+    <color name="btn_alerts_ripple">#33F59E0B</color>
+    <color name="btn_alerts_highlight">#40FFFFFF</color>
+    <color name="btn_alerts_text">#D97706</color>
+    <color name="btn_alerts_icon">#D97706</color>
+
+    <color name="btn_primary_start">#1F0284C7</color>
+    <color name="btn_primary_mid">#1A6366F1</color>
+    <color name="btn_primary_end">#1F4F46E5</color>
+    <color name="btn_primary_stroke">#4D0284C7</color>
+    <color name="btn_primary_ripple">#330284C7</color>
+    <color name="btn_primary_glass_text">#0284C7</color>
+
+    <color name="btn_danger_bg">#1FF43F5E</color>
+    <color name="btn_danger_stroke">#4DF43F5E</color>
+    <color name="btn_danger_ripple">#33F43F5E</color>
+    <color name="btn_danger_highlight">#40FFFFFF</color>
+    <color name="btn_danger_glass_text">#DC2626</color>
 </resources>
