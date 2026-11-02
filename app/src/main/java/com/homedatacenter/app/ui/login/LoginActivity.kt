@@ -2,25 +2,35 @@ package com.homedatacenter.app.ui.login
 
 import android.content.Intent
 import android.os.Bundle
-import android.view.View
-import androidx.appcompat.app.AppCompatActivity
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.lifecycle.lifecycleScope
 import com.homedatacenter.app.HomeCenterApp
-import com.homedatacenter.app.databinding.ActivityLoginBinding
 import com.homedatacenter.app.di.AppContainer
+import com.homedatacenter.app.ui.glass.AmbientFluidBackground
+import com.homedatacenter.app.ui.glass.ProvideGlassTheme
 import com.homedatacenter.app.ui.main.MainActivity
+import com.homedatacenter.app.util.ThemeManager
 import kotlinx.coroutines.launch
 
-class LoginActivity : AppCompatActivity() {
+class LoginActivity : ComponentActivity() {
 
-    private lateinit var binding: ActivityLoginBinding
     private lateinit var container: AppContainer
+
+    private var userIdText by mutableStateOf("")
+    private var accessKeyText by mutableStateOf("")
+    private var isLoading by mutableStateOf(false)
+    private var errorMessage by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        binding = ActivityLoginBinding.inflate(layoutInflater)
-        setContentView(binding.root)
-
         container = (application as HomeCenterApp).container
 
         if (container.prefsManager.isLoggedIn()) {
@@ -29,9 +39,35 @@ class LoginActivity : AppCompatActivity() {
         }
 
         // v1.14.2: arrived here because the server invalidated the login.
-        intent?.getStringExtra(EXTRA_AUTH_INVALID_MESSAGE)?.let { showError(it) }
+        intent?.getStringExtra(EXTRA_AUTH_INVALID_MESSAGE)?.let { errorMessage = it }
 
-        binding.btnLogin.setOnClickListener { attemptLogin() }
+        setContent {
+            val preset by ThemeManager.themePresetFlow.collectAsState()
+            ProvideGlassTheme(preset = preset) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    AmbientFluidBackground(
+                        preset = preset,
+                        modifier = Modifier.fillMaxSize()
+                    )
+
+                    LoginPageContent(
+                        userId = userIdText,
+                        onUserIdChange = {
+                            userIdText = it
+                            errorMessage = null
+                        },
+                        accessKey = accessKeyText,
+                        onAccessKeyChange = {
+                            accessKeyText = it
+                            errorMessage = null
+                        },
+                        isLoading = isLoading,
+                        errorMessage = errorMessage,
+                        onLoginClick = { attemptLogin() }
+                    )
+                }
+            }
+        }
     }
 
     companion object {
@@ -39,48 +75,39 @@ class LoginActivity : AppCompatActivity() {
     }
 
     private fun attemptLogin() {
-        val userIdStr = binding.etUserId.text?.toString()?.trim() ?: ""
-        val accessKey = binding.etAccessKey.text?.toString()?.trim() ?: ""
+        val userIdStr = userIdText.trim()
+        val accessKey = accessKeyText.trim()
 
         if (userIdStr.isEmpty() || accessKey.isEmpty()) {
-            showError(getString(com.homedatacenter.app.R.string.login_invalid_input))
+            errorMessage = getString(com.homedatacenter.app.R.string.login_invalid_input)
             return
         }
 
         val userId = userIdStr.toLongOrNull()
         if (userId == null || userId <= 0) {
-            showError(getString(com.homedatacenter.app.R.string.login_invalid_input))
+            errorMessage = getString(com.homedatacenter.app.R.string.login_invalid_input)
             return
         }
 
-        showLoading(true)
-        hideError()
+        isLoading = true
+        errorMessage = null
 
         lifecycleScope.launch {
             try {
                 val token = container.getRepository().bind(userId, accessKey)
                 container.prefsManager.token = token
                 container.prefsManager.userId = userId
-                // v1.8.15: persist the access_key for silent token
-                // refresh. The OkHttp interceptor uses it to re-bind
-                // automatically when the server rotates the token.
                 container.prefsManager.accessKey = accessKey
                 container.prefsManager.lastTokenRefreshTime = System.currentTimeMillis()
-                // v1.14.2: re-arm auth-invalid handling for the new login.
                 container.authInvalidHandler.reset()
+
                 try {
                     val user = container.getRepository().getMe(token)
                     container.prefsManager.saveUserInfo(user.name, user.isAdmin)
-                } catch (_: Exception) {
-                }
-                // v1.5.6: kick off WebRTC pre-warming now that the
-                // user is authenticated. By the time they tap a
-                // camera the PeerConnectionFactory + EGL context will
-                // already be initialized.
+                    container.roleManager.updateAdmin(user.isAdmin)
+                } catch (_: Exception) {}
+
                 container.warmWebRtc()
-                // v1.6.36: also prefetch ICE config so the first
-                // camera open doesn't wait for the
-                // GET /api/v1/network/ice-config round-trip.
                 container.prefetchIceConfig()
                 navigateToMain()
             } catch (e: Exception) {
@@ -95,7 +122,7 @@ class LoginActivity : AppCompatActivity() {
                         null
                     }
                     parsedMsg ?: when (e.code()) {
-                        401 -> "凭据无效，请检查用户 ID 与密码"
+                        401 -> "凭据无效，请检查用户 ID 与密钥"
                         403 -> "访问被安全防御系统拦截，请稍后再试或联系管理员"
                         502, 504 -> "无法连接至家庭服务器网关 (网关超时/错误)"
                         else -> "HTTP ${e.code()}: ${e.message()}"
@@ -103,25 +130,11 @@ class LoginActivity : AppCompatActivity() {
                 } else {
                     e.message ?: "网络连接异常"
                 }
-                showError(getString(com.homedatacenter.app.R.string.login_error) + ": $errorMsg")
+                errorMessage = getString(com.homedatacenter.app.R.string.login_error) + ": $errorMsg"
             } finally {
-                showLoading(false)
+                isLoading = false
             }
         }
-    }
-
-    private fun showLoading(show: Boolean) {
-        binding.progressBar.visibility = if (show) View.VISIBLE else View.GONE
-        binding.btnLogin.isEnabled = !show
-    }
-
-    private fun showError(message: String) {
-        binding.tvError.text = message
-        binding.tvError.visibility = View.VISIBLE
-    }
-
-    private fun hideError() {
-        binding.tvError.visibility = View.GONE
     }
 
     private fun navigateToMain() {

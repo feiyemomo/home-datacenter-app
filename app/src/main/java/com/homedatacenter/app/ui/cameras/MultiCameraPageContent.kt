@@ -372,6 +372,7 @@ fun MultiCameraPageContent(
                                                     if (camIdx >= 0) {
                                                         prevGridMode = gridMode
                                                         focusedCamIndex = camIdx
+                                                        slotFrames[slotIdx]?.let { slotFrames[0] = it }
                                                         gridMode = MultiCameraGridMode.ONE
                                                     }
                                                 },
@@ -411,6 +412,7 @@ fun MultiCameraPageContent(
                                                     if (camIdx >= 0) {
                                                         prevGridMode = gridMode
                                                         focusedCamIndex = camIdx
+                                                        slotFrames[slotIdx]?.let { slotFrames[0] = it }
                                                         gridMode = MultiCameraGridMode.ONE
                                                     }
                                                 },
