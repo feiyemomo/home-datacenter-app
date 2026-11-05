@@ -55,6 +55,10 @@ class PrefsManager(context: Context) {
         get() = prefs.getInt(KEY_THEME_MODE, THEME_FOLLOW_SYSTEM)
         set(value) = prefs.edit().putInt(KEY_THEME_MODE, value).apply()
 
+    var themePreset: String?
+        get() = prefs.getString(KEY_THEME_PRESET, null)
+        set(value) = prefs.edit().putString(KEY_THEME_PRESET, value).apply()
+
     fun getDeviceScope(): String = prefs.getString(KEY_DEVICE_SCOPE, "mine") ?: "mine"
 
     fun setDeviceScope(scope: String) {
@@ -254,6 +258,7 @@ class PrefsManager(context: Context) {
         const val TRACK_RELEASE = "release"
         const val TRACK_DEBUG = "debug"
         private const val KEY_THEME_MODE = "theme_mode"
+        private const val KEY_THEME_PRESET = "theme_preset"
         private const val KEY_DEVICE_SCOPE = "device_scope"
         private const val KEY_NOTIFICATIONS_ENABLED = "notifications_enabled"
         private const val KEY_NOTIFY_PERSON = "notify_person"

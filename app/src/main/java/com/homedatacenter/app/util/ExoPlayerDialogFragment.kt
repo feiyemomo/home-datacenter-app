@@ -4,9 +4,36 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.Button
-import android.widget.TextView
 import android.widget.Toast
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.fragment.app.DialogFragment
 import com.google.android.exoplayer2.DefaultLoadControl
 import com.google.android.exoplayer2.ExoPlayer
@@ -19,10 +46,13 @@ import com.google.android.exoplayer2.upstream.DefaultHttpDataSource
 import com.homedatacenter.app.R
 import com.homedatacenter.app.data.api.NetworkFactory
 
+/**
+ * Pure Jetpack Compose ExoPlayer dialog.
+ * Eliminates legacy fragment_exo_player.xml.
+ */
 class ExoPlayerDialogFragment : DialogFragment() {
 
     private var player: ExoPlayer? = null
-    private lateinit var playerView: StyledPlayerView
     private var cameraName: String? = null
     private var hlsUrl: String? = null
     private var token: String? = null
@@ -54,33 +84,35 @@ class ExoPlayerDialogFragment : DialogFragment() {
             window?.setBackgroundDrawableResource(android.R.color.black)
         }
 
-    override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
-        return inflater.inflate(R.layout.fragment_exo_player, container, false)
-    }
-
-    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
-        super.onViewCreated(view, savedInstanceState)
-
+    override fun onCreateView(
+        inflater: LayoutInflater,
+        container: ViewGroup?,
+        savedInstanceState: Bundle?
+    ): View {
         arguments?.let { args ->
             cameraName = args.getString("cameraName")
             hlsUrl = args.getString("hlsUrl")
             token = args.getString("token")
         }
 
-        playerView = view.findViewById(R.id.player_view)
-        val btnClose = view.findViewById<Button>(R.id.btn_close)
-        val tvCameraName = view.findViewById<TextView>(R.id.tv_camera_name)
-
-        tvCameraName.text = cameraName ?: "Camera"
-
-        btnClose.setOnClickListener {
-            dismiss()
+        return ComposeView(requireContext()).apply {
+            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindowOrReleasedFromPool)
+            setContent {
+                ExoPlayerScreen(
+                    cameraName = cameraName ?: "摄像头",
+                    hlsUrl = hlsUrl,
+                    token = token,
+                    onClose = { dismiss() },
+                    onInitPlayer = { playerView ->
+                        hlsUrl?.let { initPlayer(it, playerView) }
+                    }
+                )
+            }
         }
-
-        hlsUrl?.let { initPlayer(it) }
     }
 
-    private fun initPlayer(url: String) {
+    private fun initPlayer(url: String, playerView: StyledPlayerView) {
+        val ctx = context ?: return
         android.util.Log.d("ExoPlayer", "Initializing player for: $url")
 
         val dataSourceFactory = DefaultHttpDataSource.Factory().apply {
@@ -89,15 +121,10 @@ class ExoPlayerDialogFragment : DialogFragment() {
             setReadTimeoutMs(30000)
             setAllowCrossProtocolRedirects(true)
             if (!token.isNullOrEmpty()) {
-                setDefaultRequestProperties(
-                    mutableMapOf("Authorization" to "Bearer $token")
-                )
+                setDefaultRequestProperties(mutableMapOf("Authorization" to "Bearer $token"))
             }
         }
 
-        // Match CameraDetailActivity.preparePlayback: tuned for 0.5s
-        // LL-HLS segments. Cuts first-frame from ~3s to ~1.5-2s on
-        // remote Cloudflare Tunnel links.
         val mediaItem = MediaItem.Builder()
             .setUri(url)
             .setLiveConfiguration(
@@ -107,8 +134,7 @@ class ExoPlayerDialogFragment : DialogFragment() {
             )
             .build()
 
-        val mediaSource = HlsMediaSource.Factory(dataSourceFactory)
-            .createMediaSource(mediaItem)
+        val mediaSource = HlsMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
 
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
@@ -121,47 +147,28 @@ class ExoPlayerDialogFragment : DialogFragment() {
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
 
-        // Delegate to ExoPlayerRendererFactory: filters out broken
-        // goldfish decoders on emulators, enables decoder fallback on
-        // real devices. See util/ExoPlayerRendererFactory.kt.
-        val renderersFactory = ExoPlayerRendererFactory.create(requireContext())
-        player = ExoPlayer.Builder(requireContext(), renderersFactory)
+        val renderersFactory = ExoPlayerRendererFactory.create(ctx)
+        val p = ExoPlayer.Builder(ctx, renderersFactory)
             .setLoadControl(loadControl)
             .build().apply {
-            setMediaSource(mediaSource)
-            playWhenReady = true
-
-            addListener(object : Player.Listener {
-                override fun onPlaybackStateChanged(playbackState: Int) {
-                    when (playbackState) {
-                        Player.STATE_BUFFERING -> {
-                            android.util.Log.d("ExoPlayer", "Buffering...")
-                        }
-                        Player.STATE_READY -> {
-                            android.util.Log.d("ExoPlayer", "Ready, latency: ${currentPosition}ms")
-                        }
-                        Player.STATE_ENDED -> {
-                            android.util.Log.d("ExoPlayer", "Playback ended")
-                        }
-                        Player.STATE_IDLE -> {
-                            android.util.Log.d("ExoPlayer", "Idle")
-                        }
+                setMediaSource(mediaSource)
+                playWhenReady = true
+                addListener(object : Player.Listener {
+                    override fun onPlayerError(error: PlaybackException) {
+                        android.util.Log.e("ExoPlayer", "Player error: ${error.message}, code: ${error.errorCode}")
+                        handleError(error, playerView)
                     }
-                }
+                })
+            }
 
-                override fun onPlayerError(error: PlaybackException) {
-                    android.util.Log.e("ExoPlayer", "Player error: ${error.message}, code: ${error.errorCode}")
-                    handleError(error)
-                }
-            })
-        }
-
-        playerView.player = player
-        player?.prepare()
+        // Surface Order: playerView.player MUST be set before calling prepare()
+        playerView.player = p
+        p.prepare()
         playerView.setShowBuffering(StyledPlayerView.SHOW_BUFFERING_WHEN_PLAYING)
+        player = p
     }
 
-    private fun handleError(error: PlaybackException) {
+    private fun handleError(error: PlaybackException, playerView: StyledPlayerView) {
         retryCount++
         android.util.Log.w("ExoPlayer", "Error retry $retryCount/$maxRetries: ${error.message}")
 
@@ -170,12 +177,11 @@ class ExoPlayerDialogFragment : DialogFragment() {
             player?.release()
             player = null
 
-            requireView().postDelayed({
-                hlsUrl?.let { initPlayer(it) }
+            view?.postDelayed({
+                hlsUrl?.let { initPlayer(it, playerView) }
             }, retryCount * 2000L)
         } else {
             Toast.makeText(context, "ExoPlayer 播放失败，尝试备用播放器...", Toast.LENGTH_LONG).show()
-            android.util.Log.e("ExoPlayer", "Max retries reached, falling back to WebView")
             onPlaybackFailed?.invoke()
             dismiss()
         }
@@ -195,5 +201,75 @@ class ExoPlayerDialogFragment : DialogFragment() {
         super.onDestroyView()
         player?.release()
         player = null
+    }
+}
+
+@Composable
+fun ExoPlayerScreen(
+    cameraName: String,
+    hlsUrl: String?,
+    token: String?,
+    onClose: () -> Unit,
+    onInitPlayer: (StyledPlayerView) -> Unit
+) {
+    val context = LocalContext.current
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+    ) {
+        AndroidView(
+            factory = { ctx ->
+                StyledPlayerView(ctx).apply {
+                    useController = true
+                    setShowSubtitleButton(false)
+                    layoutParams = ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                    onInitPlayer(this)
+                }
+            },
+            modifier = Modifier.fillMaxSize()
+        )
+
+        // Overlay Header
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = Color(0x990F172A),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0x3338BDF8))
+            ) {
+                Text(
+                    text = cameraName,
+                    color = Color.White,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.weight(1f))
+
+            IconButton(
+                onClick = onClose,
+                modifier = Modifier
+                    .size(40.dp)
+                    .background(Color(0x990F172A), CircleShape)
+            ) {
+                Icon(
+                    painter = painterResource(id = R.drawable.ic_close),
+                    contentDescription = "关闭",
+                    tint = Color.White,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
     }
 }

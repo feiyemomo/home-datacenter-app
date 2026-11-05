@@ -1,9 +1,34 @@
 <?xml version="1.0" encoding="utf-8"?>
-<shape xmlns:android="http://schemas.android.com/apk/res/android"
-    android:shape="rectangle">
-    <solid android:color="#FDF4EA" />
-    <corners android:radius="14dp" />
-    <stroke
-        android:width="1.8dp"
-        android:color="@color/primary" />
-</shape>
+<!-- Frosted liquid glass card for filter options (selected state) -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="#40818CF8">
+    <item>
+        <layer-list>
+            <item>
+                <shape android:shape="rectangle">
+                    <solid android:color="#3338BDF8" />
+                    <corners android:radius="14dp" />
+                    <stroke
+                        android:width="1.2dp"
+                        android:color="#8038BDF8" />
+                </shape>
+            </item>
+            <!-- Top refraction highlight -->
+            <item
+                android:left="1dp"
+                android:right="1dp"
+                android:top="1dp"
+                android:bottom="24dp">
+                <shape android:shape="rectangle">
+                    <gradient
+                        android:angle="270"
+                        android:startColor="#40E0F2FE"
+                        android:endColor="#00000000" />
+                    <corners
+                        android:topLeftRadius="13dp"
+                        android:topRightRadius="13dp" />
+                </shape>
+            </item>
+        </layer-list>
+    </item>
+</ripple>

@@ -3,9 +3,15 @@ package com.homedatacenter.app.ui.dashboard
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.homedatacenter.app.data.api.HomeCenterApi
 import com.homedatacenter.app.data.api.NetworkFactory
+import com.homedatacenter.app.data.model.Alert
+import com.homedatacenter.app.data.model.AlertListData
 import com.homedatacenter.app.data.model.ApiResponse
 import com.homedatacenter.app.data.model.NetworkStatus
+import com.homedatacenter.app.data.model.SecurityGuard
+import com.homedatacenter.app.data.model.SystemLog
+import com.homedatacenter.app.data.model.SystemLogListData
 import com.homedatacenter.app.data.model.SystemStatus
 import com.homedatacenter.app.data.model.WeatherResponse
 import com.homedatacenter.app.data.repository.HomeCenterRepository
@@ -37,7 +43,36 @@ class DashboardViewModel(
     private val repository: HomeCenterRepository,
     private val baseUrlResolver: BaseUrlResolver,
     private val okHttpClient: OkHttpClient,
+    apiOverride: HomeCenterApi? = null,
 ) : AndroidViewModel(app) {
+
+    private val api: HomeCenterApi by lazy {
+        apiOverride ?: NetworkFactory.createApi(baseUrlResolver.current(), okHttpClient)
+    }
+
+    private val _alerts = MutableStateFlow<List<Alert>>(emptyList())
+    val alerts: StateFlow<List<Alert>> = _alerts.asStateFlow()
+
+    private val _recentLogs = MutableStateFlow<List<SystemLog>>(emptyList())
+    val recentLogs: StateFlow<List<SystemLog>> = _recentLogs.asStateFlow()
+
+    private val _liveAlert = MutableStateFlow<Alert?>(null)
+    val liveAlert: StateFlow<Alert?> = _liveAlert.asStateFlow()
+
+    private val _quotaAlert = MutableStateFlow<String?>(null)
+    val quotaAlert: StateFlow<String?> = _quotaAlert.asStateFlow()
+
+    private val _automationSummary = MutableStateFlow("0 个规则生效中 · 共 0 个")
+    val automationSummary: StateFlow<String> = _automationSummary.asStateFlow()
+
+    private val _isRefreshing = MutableStateFlow(false)
+    val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
+
+    private val _backendPathText = MutableStateFlow("局域网")
+    val backendPathText: StateFlow<String> = _backendPathText.asStateFlow()
+
+    private val _backendPathIsFast = MutableStateFlow(true)
+    val backendPathIsFast: StateFlow<Boolean> = _backendPathIsFast.asStateFlow()
 
     private val _weather = MutableStateFlow<WeatherResponse?>(null)
     val weather: StateFlow<WeatherResponse?> = _weather.asStateFlow()
@@ -89,11 +124,14 @@ class DashboardViewModel(
             return
         }
         val app = getApplication<Application>()
-        CacheManager.getInstance(app)
-            .get<WeatherResponse>("dashboard.weather", 30_000L)
-            ?.let { _weather.value = it }
+        if (_weather.value == null) {
+            CacheManager.getInstance(app)
+                .get<WeatherResponse>("dashboard.weather", 300_000L)
+                ?.let { _weather.value = it }
+        }
+        val hasData = _weather.value != null
         viewModelScope.launch {
-            _weatherLoading.value = true
+            if (!hasData) _weatherLoading.value = true
             _weatherFailed.value = false
             try {
                 val weather = repository.getWeather(token)
@@ -103,7 +141,7 @@ class DashboardViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _weatherFailed.value = true
+                if (!hasData) _weatherFailed.value = true
             } finally {
                 _weatherLoading.value = false
                 onComplete?.invoke()
@@ -122,11 +160,14 @@ class DashboardViewModel(
             return
         }
         val app = getApplication<Application>()
-        CacheManager.getInstance(app)
-            .get<SystemStatus>("dashboard.status", 30_000L)
-            ?.let { _systemStatus.value = it }
+        if (_systemStatus.value == null) {
+            CacheManager.getInstance(app)
+                .get<SystemStatus>("dashboard.status", 300_000L)
+                ?.let { _systemStatus.value = it }
+        }
+        val hasData = _systemStatus.value != null
         viewModelScope.launch {
-            _systemStatusLoading.value = true
+            if (!hasData) _systemStatusLoading.value = true
             try {
                 val apiStart = System.currentTimeMillis()
                 val status = repository.getSystemStatus(
@@ -157,11 +198,14 @@ class DashboardViewModel(
     fun refreshNetworkStatus(token: String?) {
         if (token.isNullOrEmpty()) return
         val app = getApplication<Application>()
-        CacheManager.getInstance(app)
-            .get<NetworkStatus>("network.status", 30_000L)
-            ?.let { _networkStatus.value = it }
+        if (_networkStatus.value == null) {
+            CacheManager.getInstance(app)
+                .get<NetworkStatus>("network.status", 300_000L)
+                ?.let { _networkStatus.value = it }
+        }
+        val hasData = _networkStatus.value != null
         viewModelScope.launch {
-            _networkStatusLoading.value = true
+            if (!hasData) _networkStatusLoading.value = true
             _networkStatusFailed.value = false
             try {
                 val forceRefresh = !firstNetworkFetchDone
@@ -175,7 +219,7 @@ class DashboardViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                _networkStatusFailed.value = true
+                if (!hasData) _networkStatusFailed.value = true
             } finally {
                 _networkStatusLoading.value = false
             }
@@ -233,6 +277,128 @@ class DashboardViewModel(
                 throw e
             } catch (e: Exception) {
                 onError?.invoke(e.message ?: "清理转码缓存失败")
+            }
+        }
+    }
+
+    fun loadRecentAlerts(token: String?) {
+        if (token.isNullOrEmpty()) return
+        val app = getApplication<Application>()
+        if (_alerts.value.isEmpty()) {
+            CacheManager.getInstance(app).get<List<Alert>>("dashboard.alerts", 300_000L)?.let {
+                _alerts.value = it
+            }
+        }
+        viewModelScope.launch {
+            try {
+                val resp = api.listAlerts("Bearer $token", limit = 5)
+                val alertsList = if (resp.isSuccess) {
+                    resp.decodeData<AlertListData>()?.alerts ?: emptyList()
+                } else {
+                    emptyList()
+                }
+                _alerts.value = alertsList
+                CacheManager.getInstance(app).set("dashboard.alerts", alertsList)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    fun loadRecentLogs(token: String?, isAdmin: Boolean) {
+        if (token.isNullOrEmpty() || !isAdmin) return
+        val app = getApplication<Application>()
+        if (_recentLogs.value.isEmpty()) {
+            CacheManager.getInstance(app).get<List<SystemLog>>("dashboard.recent_logs", 300_000L)?.let {
+                _recentLogs.value = it
+            }
+        }
+        viewModelScope.launch {
+            try {
+                val resp = repository.listSystemLogs(token, limit = 5, offset = 0)
+                _recentLogs.value = resp.logs
+                CacheManager.getInstance(app).set("dashboard.recent_logs", resp.logs)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    fun loadAutomationSummary(token: String?, isAdmin: Boolean) {
+        if (token.isNullOrEmpty() || !isAdmin) return
+        viewModelScope.launch {
+            try {
+                val rules = repository.listAutomationRules(token)
+                val activeCount = rules.count { it.enabled }
+                _automationSummary.value = "${activeCount} 个规则生效中 · 共 ${rules.size} 个"
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    fun updateBackendPath() {
+        val isLan = baseUrlResolver.isLan()
+        val isIpv6 = baseUrlResolver.isIpv6Direct()
+        val isH3c = baseUrlResolver.isH3cFast()
+        val rtt = baseUrlResolver.currentRttMs()
+        val rttStr = if (rtt >= 0) " (${rtt}ms)" else ""
+        _backendPathText.value = when {
+            isLan -> "局域网$rttStr"
+            isH3c -> "国内高速$rttStr"
+            isIpv6 -> "IPv6 直连$rttStr"
+            else -> "远程$rttStr"
+        }
+        _backendPathIsFast.value = isLan || isH3c
+    }
+
+    fun setLiveAlert(alert: Alert?) {
+        _liveAlert.value = alert
+    }
+
+    fun setQuotaAlert(message: String?) {
+        _quotaAlert.value = message
+    }
+
+    fun prependLiveAlert(alert: Alert) {
+        val current = _alerts.value.toMutableList()
+        current.add(0, alert)
+        if (current.size > 5) {
+            _alerts.value = current.subList(0, 5)
+        } else {
+            _alerts.value = current
+        }
+    }
+
+    fun prependSystemLog(log: SystemLog) {
+        val current = _recentLogs.value.toMutableList()
+        current.add(0, log)
+        if (current.size > 5) {
+            _recentLogs.value = current.subList(0, 5)
+        } else {
+            _recentLogs.value = current
+        }
+    }
+
+    fun updateSystemStatus(status: SystemStatus) {
+        _systemStatus.value = status
+    }
+
+    fun refreshAll(token: String?, baseUrl: String, isAdmin: Boolean, isUserTriggered: Boolean = false) {
+        viewModelScope.launch {
+            if (isUserTriggered) {
+                _isRefreshing.value = true
+            }
+            updateBackendPath()
+            loadWeather(token, baseUrl)
+            refreshNetworkStatus(token)
+            loadRecentAlerts(token)
+            loadRecentLogs(token, isAdmin)
+            refreshSecurityGuard(token)
+            loadAutomationSummary(token, isAdmin)
+            refreshSystemStatus(token) {
+                _isRefreshing.value = false
             }
         }
     }

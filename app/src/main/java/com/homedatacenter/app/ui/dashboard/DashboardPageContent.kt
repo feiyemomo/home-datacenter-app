@@ -9,6 +9,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -49,6 +50,7 @@ import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -340,7 +342,7 @@ private fun DashboardHeaderSection(
             verticalAlignment = Alignment.CenterVertically
         ) {
             GlassText(
-                text = "欢迎回来，",
+                text = "你好，",
                 type = GlassTextType.Secondary,
                 fontSize = 13.sp
             )
@@ -349,6 +351,14 @@ private fun DashboardHeaderSection(
             Surface(
                 shape = RoundedCornerShape(12.dp),
                 color = if (backendPathIsFast) Color(0x3310B981) else Color(0x33F59E0B),
+                border = BorderStroke(
+                    1.dp,
+                    if (tokens.isLight) {
+                        if (backendPathIsFast) Color(0x6610B981) else Color(0x66F59E0B)
+                    } else {
+                        if (backendPathIsFast) Color(0x4010B981) else Color(0x40F59E0B)
+                    }
+                ),
                 modifier = Modifier.clickable(onClick = onPathClick)
             ) {
                 Row(
@@ -392,7 +402,11 @@ private fun DashboardHeaderSection(
             if (temp.isNotEmpty()) {
                 Surface(
                     shape = RoundedCornerShape(12.dp),
-                    color = tokens.surfaceColor.copy(alpha = 0.45f)
+                    color = tokens.surfaceColor.copy(alpha = 0.45f),
+                    border = BorderStroke(
+                        1.dp,
+                        if (tokens.isLight) Color(0x33000000) else Color(0x26FFFFFF)
+                    )
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -504,7 +518,12 @@ fun OverviewSummaryCard(
                     modifier = Modifier
                         .weight(1f)
                         .clip(RoundedCornerShape(12.dp))
-                        .background(tokens.surfaceColor.copy(alpha = 0.35f))
+                        .background(tokens.surfaceColor.copy(alpha = if (tokens.isLight) 0.45f else 0.35f))
+                        .border(
+                            width = 1.dp,
+                            color = if (tokens.isLight) Color(0x33000000) else Color(0x1AFFFFFF),
+                            shape = RoundedCornerShape(12.dp)
+                        )
                         .padding(horizontal = 10.dp, vertical = 8.dp)
                 ) {
                     Row(
@@ -545,7 +564,12 @@ fun OverviewSummaryCard(
                     modifier = Modifier
                         .weight(1f)
                         .clip(RoundedCornerShape(12.dp))
-                        .background(tokens.surfaceColor.copy(alpha = 0.35f))
+                        .background(tokens.surfaceColor.copy(alpha = if (tokens.isLight) 0.45f else 0.35f))
+                        .border(
+                            width = 1.dp,
+                            color = if (tokens.isLight) Color(0x33000000) else Color(0x1AFFFFFF),
+                            shape = RoundedCornerShape(12.dp)
+                        )
                         .padding(horizontal = 10.dp, vertical = 8.dp)
                 ) {
                     Row(
@@ -587,7 +611,12 @@ fun OverviewSummaryCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp))
-                    .background(tokens.surfaceColor.copy(alpha = 0.35f))
+                    .background(tokens.surfaceColor.copy(alpha = if (tokens.isLight) 0.45f else 0.35f))
+                    .border(
+                        width = 1.dp,
+                        color = if (tokens.isLight) Color(0x33000000) else Color(0x1AFFFFFF),
+                        shape = RoundedCornerShape(12.dp)
+                    )
                     .padding(horizontal = 10.dp, vertical = 8.dp)
             ) {
                 Row(
@@ -682,7 +711,7 @@ fun QuickActionsRow(
             QuickActionButton(
                 iconRes = R.drawable.ic_security_shield,
                 title = "运维中心",
-                subtitle = "监控与容器",
+                subtitle = "系统与服务",
                 onClick = onNavigateOps,
                 hazeState = hazeState,
                 performanceMode = performanceMode,
@@ -710,7 +739,7 @@ fun QuickActionsRow(
                 modifier = Modifier.weight(1f)
             )
         } else {
-            // Regular User: Only Security Guard control (Automations removed per user request)
+            // Regular User: Read-only Security Guard monitor (no permission to arm/disarm)
             LiquidGlassCard(
                 modifier = Modifier.fillMaxWidth(),
                 hazeState = hazeState,
@@ -725,12 +754,15 @@ fun QuickActionsRow(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(end = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(40.dp)
+                                .size(38.dp)
                                 .clip(RoundedCornerShape(12.dp))
                                 .background(if (isArmed) Color(0x2610B981) else Color(0x1F64748B)),
                             contentAlignment = Alignment.Center
@@ -739,37 +771,70 @@ fun QuickActionsRow(
                                 painter = painterResource(id = R.drawable.ic_security_shield),
                                 contentDescription = null,
                                 tint = if (isArmed) Color(0xFF10B981) else tokens.textSecondaryColor,
-                                modifier = Modifier.size(22.dp)
+                                modifier = Modifier.size(20.dp)
                             )
                         }
 
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                GlassText(
+                                    text = "家庭安防布控",
+                                    type = GlassTextType.Body,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1
+                                )
+                                GlassTag(
+                                    text = "只读监控",
+                                    type = GlassTagType.Neutral
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(2.dp))
                             GlassText(
-                                text = "家庭安防布防",
-                                type = GlassTextType.Body,
-                                fontWeight = FontWeight.Bold
-                            )
-                            GlassText(
-                                text = "当前状态: $guardModeText",
+                                text = "当前状态: $guardModeText (管理员权限)",
                                 type = GlassTextType.Caption,
-                                color = if (isArmed) Color(0xFF10B981) else tokens.textSecondaryColor
+                                color = if (isArmed) Color(0xFF10B981) else tokens.textSecondaryColor,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
 
-                    // Toggle Pill
+                    // Read-only status pill (compact, single line, no vertical stretch)
                     Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = if (isArmed) Color(0x2610B981) else Color(0x26D7A064),
-                        border = BorderStroke(1.dp, if (isArmed) Color(0x4D10B981) else Color(0x4DD7A064))
-                    ) {
-                        Text(
-                            text = if (isArmed) "点击撤防" else "一键布防",
-                            color = if (isArmed) Color(0xFF10B981) else tokens.textColor,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (isArmed) Color(0x1A10B981) else Color(0x1A64748B),
+                        border = BorderStroke(
+                            1.dp,
+                            if (isArmed) {
+                                if (tokens.isLight) Color(0x6610B981) else Color(0x4D10B981)
+                            } else {
+                                if (tokens.isLight) Color(0x4D64748B) else Color(0x3364748B)
+                            }
                         )
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(6.dp)
+                                    .clip(CircleShape)
+                                    .background(if (isArmed) Color(0xFF10B981) else Color(0xFF94A3B8))
+                            )
+                            Text(
+                                text = guardModeText,
+                                color = if (isArmed) Color(0xFF10B981) else tokens.textColor,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                softWrap = false
+                            )
+                        }
                     }
                 }
             }
@@ -812,7 +877,16 @@ fun QuickActionButton(
                     .clip(RoundedCornerShape(10.dp))
                     .background(
                         if (active) Color(0x3310B981)
-                        else tokens.surfaceColor.copy(alpha = 0.5f)
+                        else tokens.surfaceColor.copy(alpha = if (tokens.isLight) 0.60f else 0.5f)
+                    )
+                    .border(
+                        width = 1.dp,
+                        color = if (active) {
+                            if (tokens.isLight) Color(0x6610B981) else Color(0x4D10B981)
+                        } else {
+                            if (tokens.isLight) Color(0x33000000) else Color(0x1AFFFFFF)
+                        },
+                        shape = RoundedCornerShape(10.dp)
                     ),
                 contentAlignment = Alignment.Center
             ) {
@@ -956,8 +1030,14 @@ fun CameraFeedCard(
                     }
                 }
             } else {
-                // HorizontalPager for swipeable camera cards
-                val pagerState = rememberPagerState(pageCount = { cameras.size })
+                // Infinite Loop HorizontalPager for swipeable camera cards
+                val actualCount = cameras.size
+                val isLoop = actualCount > 1
+                val virtualPageCount = if (isLoop) actualCount * 10000 else actualCount
+                val initialPage = if (isLoop) (virtualPageCount / 2) - ((virtualPageCount / 2) % actualCount) else 0
+                val pagerState = key(actualCount) {
+                    rememberPagerState(initialPage = initialPage, pageCount = { virtualPageCount })
+                }
 
                 Box(
                     modifier = Modifier
@@ -970,7 +1050,8 @@ fun CameraFeedCard(
                         state = pagerState,
                         modifier = Modifier.fillMaxSize()
                     ) { page ->
-                        val currentCamera = cameras[page]
+                        val actualIndex = if (isLoop) ((page % actualCount) + actualCount) % actualCount else page
+                        val currentCamera = cameras.getOrNull(actualIndex) ?: return@HorizontalPager
                         val context = LocalContext.current
                         val density = LocalDensity.current
                         val thumbWidthPx = remember(density) { with(density) { 360.dp.roundToPx() } }
@@ -1055,7 +1136,7 @@ fun CameraFeedCard(
                             }
 
                             // Top overlay: Index indicator if multi cameras
-                            if (cameras.size > 1) {
+                            if (actualCount > 1) {
                                 Surface(
                                     shape = RoundedCornerShape(8.dp),
                                     color = Color(0x80000000),
@@ -1064,7 +1145,7 @@ fun CameraFeedCard(
                                         .padding(8.dp)
                                 ) {
                                     Text(
-                                        text = "${page + 1}/${cameras.size}",
+                                        text = "${actualIndex + 1}/$actualCount",
                                         color = Color.White,
                                         fontSize = 10.sp,
                                         fontWeight = FontWeight.Bold,
@@ -1149,7 +1230,8 @@ fun CameraFeedCard(
                 }
 
                 // Pager dots indicator
-                if (cameras.size > 1) {
+                if (actualCount > 1) {
+                    val currentActualIndex = if (isLoop) ((pagerState.currentPage % actualCount) + actualCount) % actualCount else pagerState.currentPage
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1158,7 +1240,7 @@ fun CameraFeedCard(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         cameras.indices.forEach { index ->
-                            val isSelected = pagerState.currentPage == index
+                            val isSelected = currentActualIndex == index
                             val dotWidth by animateDpAsState(
                                 targetValue = if (isSelected) 16.dp else 4.dp,
                                 animationSpec = tween(durationMillis = 250),
@@ -1239,13 +1321,35 @@ fun RecentEventsCard(
                     )
                 }
 
-                Text(
-                    text = "查看全部",
-                    color = tokens.innerGlowColor.copy(alpha = 0.9f),
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.clickable(onClick = onViewAllAlerts)
-                )
+                val viewAllColor = if (tokens.isLight) Color(0xFF0284C7) else Color(0xFF38BDF8)
+                val viewAllBg = if (tokens.isLight) Color(0x140284C7) else Color(0x2638BDF8)
+                val viewAllBorder = if (tokens.isLight) Color(0x590284C7) else Color(0x4038BDF8)
+
+                Surface(
+                    onClick = onViewAllAlerts,
+                    shape = RoundedCornerShape(8.dp),
+                    color = viewAllBg,
+                    border = BorderStroke(1.dp, viewAllBorder)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Text(
+                            text = "查看全部",
+                            color = viewAllColor,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_chevron_right),
+                            contentDescription = null,
+                            tint = viewAllColor,
+                            modifier = Modifier.size(12.dp)
+                        )
+                    }
+                }
             }
 
             if (alerts.isEmpty() && recentLogs.isEmpty()) {
@@ -1359,7 +1463,12 @@ private fun RecentAlertItemRow(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .background(tokens.surfaceColor.copy(alpha = 0.25f))
+            .background(tokens.surfaceColor.copy(alpha = if (tokens.isLight) 0.45f else 0.25f))
+            .border(
+                width = 1.dp,
+                color = if (tokens.isLight) Color(0x33000000) else Color(0x1AFFFFFF),
+                shape = RoundedCornerShape(12.dp)
+            )
             .clickable(onClick = onClick)
             .padding(8.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -1470,7 +1579,12 @@ private fun RecentLogItemRow(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .background(tokens.surfaceColor.copy(alpha = 0.20f))
+            .background(tokens.surfaceColor.copy(alpha = if (tokens.isLight) 0.40f else 0.20f))
+            .border(
+                width = 1.dp,
+                color = if (tokens.isLight) Color(0x33000000) else Color(0x1AFFFFFF),
+                shape = RoundedCornerShape(12.dp)
+            )
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween,

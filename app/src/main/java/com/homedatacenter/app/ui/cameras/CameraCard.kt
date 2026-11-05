@@ -9,259 +9,185 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.dimensionResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
+import coil.request.CachePolicy
+import coil.request.ImageRequest
 import com.homedatacenter.app.R
 import com.homedatacenter.app.data.model.Camera
-import com.homedatacenter.app.util.ThemeManager
+import com.homedatacenter.app.ui.glass.GlassTheme
+import com.homedatacenter.app.ui.glass.LiquidGlassCard
+import dev.chrisbanes.haze.HazePerformanceMode
+import dev.chrisbanes.haze.HazeState
 
-// v1.6.4 rev6: warm liquid glass palette. Replaced the cold dark
-// CardBackground (#171C24) with warm cream + warm amber accent so
-// the camera list matches the user's "液态玻璃，温馨" design
-// constraint. The glass effect comes from the layered translucent
-// surface (CardBackground via the Card's containerColor) over the
-// warm bg_primary sheet of fragment_cameras.xml — the 95% white
-// over warm cream produces the frosted-glass look.
-//
-// v1.6.14: add dark-mode variants. The light palette (warm cream +
-// peach edge + slate text) is unchanged, but in dark mode the card
-// switches to a deep slate-blue surface with a soft white edge and
-// off-white text so it doesn't glare against the dark background.
-// Previously the card stayed bright white in dark mode because the
-// constants below were the only code path — Compose doesn't see the
-// values-night/colors.xml resource overrides that the XML drawables
-// use, so the dark values must be declared explicitly here.
-// v1.7.x: warm liquid glass palette aligned with web frontend.
-// Light: frosted warm white + warm peach border + warm dark brown text.
-// Dark: warm deep slate + subtle white edge + warm off-white text.
-private val CardBackgroundLight = Color(0xCCFFFFFF)     // 80% frosted white (glass)
-private val CardBorderLight    = Color(0x33FFFFFF)      // soft white edge
-private val TextPrimaryLight   = Color(0xFF3D3530)      // warm dark brown
 
-private val CardBackgroundDark  = Color(0xFF2A2632)     // warm deep slate
-private val CardBorderDark      = Color(0x1AFFFFFF)     // 10% white edge
-private val TextPrimaryDark     = Color(0xFFEAE2D8)     // warm off-white
-
-private val OnlineColor   = Color(0xFF5CB880)
-private val OfflineColor  = Color(0xFFE07070)
-private val AccentLight   = Color(0xFFD7A064)      // warm amber — matches light primary
-private val AccentDark    = Color(0xFFD7A064)      // warm amber — stays warm in dark mode
 
 /**
- * v1.6.4 rev6: redesigned camera list card.
+ * CameraCard — Frosted Liquid Glass Camera Card.
  *
- * User asked: "卡片放大些，缩略图放大一下，文字占比可以少一些".
- *
- * Layout (horizontal — bigger thumbnail on the left, slim text
- * column on the right):
- *
- *   ┌──────────────────────────────────────────────┐
- *   │ ┌────────────┐                                │
- *   │ │ thumbnail  │  Camera Name                   │
- *   │ │ 192×108    │  [H264] [音频]                  │
- *   │ │ ● 在线     │                                │
- *   │ └────────────┘                                │
- *   └──────────────────────────────────────────────┘
- *
- *   - Card height: 132dp (was 84dp)
- *   - Thumbnail: 192×108dp (was 128×72dp) — 2.25× area
- *   - Text: one row (name) + one row (codec/audio badges) — vendor
- *     line removed entirely
- *   - Liquid glass: warm cream surface + peach border
- *
- * Tap anywhere on the card → [onClick] (opens CameraDetailActivity).
+ * Features:
+ * - Real Haze 2.0.0 backdrop blur via [hazeState] and [hazeSampling]
+ * - Colors and styles fully sourced from [GlassTheme.tokens]
+ * - Downsampled Coil AsyncImage preview with exact card dimensions
+ * - Online status badge, codec badge, audio indicator badge
  */
 @Composable
 fun CameraCard(
     camera: Camera,
-    thumbnail: Bitmap?,
-    thumbnailLoading: Boolean,
-    thumbnailError: Boolean,
+    baseUrl: String?,
+    token: String?,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    hazeState: HazeState? = null,
+    performanceMode: HazePerformanceMode = HazePerformanceMode.Adaptive,
 ) {
-    // v1.6.8: card + thumbnail dimensions now read from
-    // @dimen/camera_card_* so phones, 7" tablets, and 10" tablets
-    // each get appropriately-sized cards without code duplication.
-    // Phones: 132dp card / 192x108dp thumbnail (default).
-    // 7" tablets: 150dp / 224x126dp (values-w600dp).
-    // 10" tablets: 159dp / 240x135dp (values-w936dp).
+    val tokens = GlassTheme.tokens
     val cardHeight = dimensionResource(R.dimen.camera_card_height)
     val thumbWidth = dimensionResource(R.dimen.camera_card_thumb_width)
     val thumbHeight = dimensionResource(R.dimen.camera_card_thumb_height)
 
-    // v1.6.14: pick the palette based on the effective app theme.
-    // Compose doesn't auto-respect values-night/colors.xml, and
-    // isSystemInDarkTheme() ignores the in-app 外观设置 (浅色 / 深色 /
-    // 跟随系统) — ThemeManager resolves all three for us.
-    val isDark = ThemeManager.isDarkMode(LocalContext.current)
-    val cardBackground = if (isDark) CardBackgroundDark else CardBackgroundLight
-    val cardBorder = if (isDark) CardBorderDark else CardBorderLight
-    val textPrimary = if (isDark) TextPrimaryDark else TextPrimaryLight
-    val accentColor = if (isDark) AccentDark else AccentLight
+    val context = LocalContext.current
+    val density = LocalDensity.current
+    val thumbWidthPx = remember(thumbWidth, density) { with(density) { thumbWidth.roundToPx() } }
+    val thumbHeightPx = remember(thumbHeight, density) { with(density) { thumbHeight.roundToPx() } }
 
-    Card(
+    val snapshotUrl = remember(camera.id, baseUrl) {
+        if (baseUrl.isNullOrBlank()) ""
+        else "${baseUrl.trimEnd('/')}/api/v1/cameras/${camera.id}/frame?quality=30&width=480"
+    }
+
+    val imageRequest = remember(snapshotUrl, token, thumbWidthPx, thumbHeightPx) {
+        ImageRequest.Builder(context)
+            .data(snapshotUrl)
+            .apply {
+                if (!token.isNullOrEmpty()) {
+                    addHeader("Authorization", "Bearer $token")
+                }
+            }
+            .size(width = thumbWidthPx, height = thumbHeightPx)
+            .crossfade(150)
+            .placeholder(R.drawable.bg_thumbnail_placeholder)
+            .error(R.drawable.bg_thumbnail_placeholder)
+            .memoryCacheKey("camera_thumb_${camera.id}")
+            .diskCachePolicy(CachePolicy.ENABLED)
+            .memoryCachePolicy(CachePolicy.ENABLED)
+            .build()
+    }
+
+    LiquidGlassCard(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 8.dp)
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(containerColor = cardBackground),
-        border = androidx.compose.foundation.BorderStroke(1.2.dp, cardBorder),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+            .padding(horizontal = 14.dp, vertical = 6.dp),
+        hazeState = hazeState,
+        tokens = tokens,
+        performanceMode = performanceMode,
+        onClick = onClick,
     ) {
-        // v1.6.4 rev6: horizontal layout — bigger thumbnail on the
-        // left, slim text column on the right. Height comes from
-        // @dimen/camera_card_height so the card scales with the
-        // device's screen width.
-        // The thumbnail is now 1.78× taller and 1.5× wider than the
-        // previous 128×72 — easily big enough to read motion at a
-        // glance without opening the detail page.
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(cardHeight)
-                .padding(12.dp),
+                .padding(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // Thumbnail (16:9). Size from dimens so tablets get
-            // larger previews.
+            // Thumbnail (16:9)
             Box(
                 modifier = Modifier
                     .size(width = thumbWidth, height = thumbHeight)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(Color.Black),
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(if (tokens.isLight) Color(0x1F000000) else Color.Black.copy(alpha = 0.5f)),
             ) {
-                val imageBitmap = androidx.compose.runtime.remember(thumbnail) {
-                    thumbnail?.asImageBitmap()
-                }
-                when {
-                    imageBitmap != null -> {
-                        Image(
-                            bitmap = imageBitmap,
-                            contentDescription = "${camera.name} preview",
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Crop,
-                        )
-                    }
-                    thumbnailLoading -> {
-                        CircularProgressIndicator(
-                            modifier = Modifier
-                                .align(Alignment.Center)
-                                .size(26.dp),
-                            color = Color.White,
-                            strokeWidth = 2.dp,
-                        )
-                    }
-                    thumbnailError -> {
-                        Text(
-                            text = "无预览",
-                            color = Color.White.copy(alpha = 0.7f),
+                if (camera.isOnline && snapshotUrl.isNotEmpty()) {
+                    AsyncImage(
+                        model = imageRequest,
+                        contentDescription = "${camera.name} preview",
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop,
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        com.homedatacenter.app.ui.components.GlassText(
+                            text = if (!camera.isOnline) "离线" else "无预览",
+                            type = com.homedatacenter.app.ui.components.GlassTextType.Secondary,
+                            tokens = tokens,
                             fontSize = 12.sp,
-                            modifier = Modifier.align(Alignment.Center),
                         )
                     }
                 }
 
-                // Online indicator pill (bottom-left of thumbnail).
-                // Slightly enlarged from 9sp → 10sp + thicker padding
-                // since the thumbnail is now bigger and the previous
-                // pill looked cramped.
-                Surface(
+                // Online indicator pill (bottom-left of thumbnail overlay).
+                com.homedatacenter.app.ui.components.GlassTag(
+                    text = if (camera.isOnline) "在线" else "离线",
+                    type = if (camera.isOnline) com.homedatacenter.app.ui.components.GlassTagType.Success else com.homedatacenter.app.ui.components.GlassTagType.Error,
+                    tokens = tokens,
+                    onDarkSurface = true,
                     modifier = Modifier
                         .align(Alignment.BottomStart)
-                        .padding(6.dp),
-                    shape = RoundedCornerShape(8.dp),
-                    color = if (camera.isOnline) OnlineColor else OfflineColor,
-                ) {
-                    Text(
-                        text = if (camera.isOnline) "在线" else "离线",
-                        color = Color.White,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                    )
-                }
+                        .padding(5.dp),
+                )
             }
 
-            Spacer(modifier = Modifier.size(14.dp))
+            Spacer(modifier = Modifier.size(10.dp))
 
-            // v1.6.4 rev6: text column — vendor line removed
-            // entirely (user said "文字占比可以少一些"), so only
-            // the camera name + codec/audio badges remain.
+            // Text column
             Column(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight(),
+                verticalArrangement = Arrangement.Center,
             ) {
-                Text(
+                com.homedatacenter.app.ui.components.GlassText(
                     text = camera.name,
-                    color = textPrimary,
-                    fontWeight = FontWeight.SemiBold,
+                    type = com.homedatacenter.app.ui.components.GlassTextType.Title,
+                    tokens = tokens,
                     fontSize = 15.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Spacer(modifier = Modifier.size(8.dp))
+
+                Spacer(modifier = Modifier.size(6.dp))
+
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    StatusBadge(
+                    com.homedatacenter.app.ui.components.GlassTag(
                         text = camera.codec.ifBlank { "H264" }.uppercase(),
-                        color = accentColor,
+                        type = com.homedatacenter.app.ui.components.GlassTagType.Info,
+                        tokens = tokens,
                     )
-                    if (camera.hasAudio) {
-                        StatusBadge(
-                            text = "音频",
-                            color = OnlineColor,
-                        )
-                    } else {
-                        StatusBadge(
-                            text = "静音",
-                            color = Color(0xFFA0968B),
-                        )
-                    }
+                    com.homedatacenter.app.ui.components.GlassTag(
+                        text = if (camera.hasAudio) "音频" else "静音",
+                        type = if (camera.hasAudio) com.homedatacenter.app.ui.components.GlassTagType.Audio else com.homedatacenter.app.ui.components.GlassTagType.Neutral,
+                        tokens = tokens,
+                    )
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun StatusBadge(text: String, color: Color) {
-    Surface(
-        shape = RoundedCornerShape(6.dp),
-        color = color.copy(alpha = 0.92f),
-    ) {
-        Text(
-            text = text,
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-            color = Color.White,
-            style = MaterialTheme.typography.labelSmall,
-            fontSize = 9.sp,
-            fontWeight = FontWeight.Medium,
-        )
     }
 }

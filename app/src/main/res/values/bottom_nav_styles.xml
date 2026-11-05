@@ -7,9 +7,9 @@
          it a sharper pill (16dp corners instead of the default 50%). -->
     <style name="BottomNavActiveIndicator" parent="Widget.Material3.BottomNavigationView.ActiveIndicator">
         <item name="shapeAppearance">@style/BottomNavPillShape</item>
-        <item name="backgroundTint">@color/primary</item>
-        <item name="android:paddingLeft">14dp</item>
-        <item name="android:paddingRight">14dp</item>
+        <item name="backgroundTint">@color/bottom_nav_active_indicator</item>
+        <item name="android:paddingLeft">16dp</item>
+        <item name="android:paddingRight">16dp</item>
         <item name="android:paddingTop">8dp</item>
         <item name="android:paddingBottom">8dp</item>
     </style>

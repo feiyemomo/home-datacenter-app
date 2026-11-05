@@ -1,0 +1,7 @@
+v1.18.5: 全局弹窗微晶高不透明度表面与遮罩重构 (消除下层穿透与穿帮)
+
+【核心修复与视觉调优】
+1. 设计系统 Tokens 升级：在 GlassTokens 与 4 套预设（晨曦浅色、曜夜深色、北欧苍翠、日落琥珀）中引入高不透明度专属弹窗表面 `dialogBg`（>= 97% 实底微晶）与沉浸遮罩 `dialogScrim`（浅色 50% / 深色 70%），彻底终结下层图文透过弹窗叠加的视觉穿帮；
+2. 录像回放全屏弹窗重构：RecordingsDialog 日期卡片切换为 `dialogBg` 实底微晶，背景层搭载全量 Solid 遮罩，解决回放列表与下层摄像头设置/拾音按钮重叠的问题；
+3. 告警抓拍快照弹窗调优：AlertSnapshotDialogFragment 移除全局透明属性，采用 `dialogBg` 与 `dialogScrim` 双层实底防护，抓拍预览与操作卡片完全清晰无透底；
+4. 全量业务弹窗统一：全面重构 UserDialogs（用户管理/编辑）、FamilyFacesPageContent（人脸录入/删除确认）、FilterOptionsDialog（筛选）、RegisterCameraDialog（添加摄像头）、ShareCameraDialog（共享管理）、OpsSecurityDialogs（IP阻断/白名单）及 SettingsDialogs（版本更新/配额设置），统一绑定 Design Tokens 主题变量，浅色与深色模式下均获得极佳的可读性与对比度。

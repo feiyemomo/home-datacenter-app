@@ -1,7 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- v1.5.3: fitsSystemWindows=true on root ScrollView pushes the
-     whole layout below the status bar so the MaterialToolbar isn't
-     clipped under the time/battery/icons. -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
@@ -16,34 +13,20 @@
         android:layout_height="wrap_content"
         android:orientation="vertical">
 
-        <!-- v1.6.10: toolbar theme was ThemeOverlay.Material3.Dark.ActionBar
-             but the toolbar background is the light card_bg color, so
-             the Dark.ActionBar overlay (which forces colorOnSurface to
-             white) made the navigation icon white-on-near-white and
-             nearly invisible. Switched to Light overlay so the
-             navigation icon + title text both render dark. Also added
-             explicit app:navigationIconTint to match titleTextColor —
-             guarantees contrast regardless of how the drawable is tinted. -->
-        <com.google.android.material.appbar.MaterialToolbar
-            android:id="@+id/toolbar"
+        <!-- Compose TopBar: Pure Liquid Glass navigation bar with online dot & IP -->
+        <androidx.compose.ui.platform.ComposeView
+            android:id="@+id/composeTopBar"
             android:layout_width="match_parent"
-            android:layout_height="?attr/actionBarSize"
-            android:background="@drawable/bg_glass_toolbar"
-            app:navigationIcon="@drawable/ic_baseline_arrow_back_24"
-            app:navigationIconTint="@color/text_primary"
-            app:titleTextColor="@color/text_primary" />
+            android:layout_height="wrap_content" />
 
-        <!-- Video player + action buttons: rendered edge-to-edge
-             below the toolbar so the live feed gets maximum width.
-             v1.5.2: moved inline playback here from the camera list
-             so the list stays cheap to scroll. -->
+        <!-- Video player: rendered edge-to-edge below the toolbar -->
         <FrameLayout
             android:id="@+id/videoContainer"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:background="#CC000000">
+            android:background="@android:color/transparent">
 
-            <!-- v1.13.0: Digital Pinch-to-Zoom container -->
+            <!-- Digital Pinch-to-Zoom container -->
             <com.homedatacenter.app.ui.cameras.PinchToZoomFrameLayout
                 android:id="@+id/pinchZoomContainer"
                 android:layout_width="match_parent"
@@ -57,7 +40,7 @@
                     <com.google.android.exoplayer2.ui.StyledPlayerView
                         android:id="@+id/playerView"
                         android:layout_width="match_parent"
-                        android:layout_height="200dp"
+                        android:layout_height="match_parent"
                         android:layout_gravity="center"
                         app:surface_type="texture_view"
                         app:resize_mode="fit"
@@ -65,9 +48,7 @@
                         app:show_buffering="when_playing"
                         app:show_timeout="3000" />
 
-                    <!-- WebRTC surface: shown when the live stream is delivered
-                         via WebRtcClient (v1.5.3 primary path). Hidden when the
-                         ExoPlayer MP4/HLS fallback is active. -->
+                    <!-- WebRTC surface -->
                     <com.homedatacenter.app.ui.cameras.SafeSurfaceViewRenderer
                         android:id="@+id/surfaceRenderer"
                         android:layout_width="match_parent"
@@ -75,13 +56,7 @@
                         android:layout_gravity="center"
                         android:visibility="gone" />
 
-                    <!-- v1.6.16: JPEG preview frame shown immediately while
-                         WebRTC/MP4 is connecting. Mirrors the web dashboard's
-                         strategy of showing a cheap JPEG frame (/api/v1/cameras/:id/frame)
-                         before the expensive video stream cold-starts, so the
-                         user sees content within ~1.5s instead of staring at a
-                         black screen + spinner for 5-15s on remote networks.
-                         Hidden once any video surface becomes visible. -->
+                    <!-- JPEG preview frame -->
                     <ImageView
                         android:id="@+id/ivPreviewFrame"
                         android:layout_width="match_parent"
@@ -93,7 +68,7 @@
                 </FrameLayout>
             </com.homedatacenter.app.ui.cameras.PinchToZoomFrameLayout>
 
-            <!-- v1.13.0: Zoom factor indicator badge -->
+            <!-- Zoom factor indicator badge -->
             <TextView
                 android:id="@+id/tvZoomBadge"
                 android:layout_width="wrap_content"
@@ -111,12 +86,7 @@
                 android:visibility="gone"
                 tools:ignore="HardcodedText" />
 
-            <!-- v1.5.9: Stream strategy badge (top-left). Shows
-                 the active live transport so the user knows whether
-                 WebRTC, MP4 (fMP4 proxy), or HLS is feeding the
-                 player. Helps debug latency: a LAN session stuck on
-                 HLS means WebRTC signaling failed and the fallback
-                 kicked in. -->
+            <!-- Stream strategy badge -->
             <TextView
                 android:id="@+id/tvStreamStrategy"
                 android:layout_width="wrap_content"
@@ -134,12 +104,7 @@
                 android:visibility="gone"
                 tools:ignore="HardcodedText" />
 
-            <!-- v1.6.24: HLS latency notice. Shows the Chinese text below
-                 when the active transport is HLS. HLS is only selected on
-                 Tunnel path (where WebRTC failed or was skipped) so latency
-                 is 1.5s+ vs WebRTC sub-second. Style matches the CameraCard
-                 warm liquid-glass palette: warm peach border, frosted white
-                 surface, slate text. Hidden when WebRTC or MP4 is active. -->
+            <!-- HLS latency notice -->
             <TextView
                 android:id="@+id/tvHlsNotice"
                 android:layout_width="wrap_content"
@@ -158,15 +123,7 @@
                 android:visibility="gone"
                 tools:ignore="HardcodedText" />
 
-
-
-            <!-- v1.5.8: WebRTC control overlay. When WebRTC is the
-                 active renderer, the ExoPlayer controller (pause /
-                 volume / scrubber) isn't available because playerView
-                 is GONE. We provide a minimal control bar at the
-                 bottom of the video area so the user can pause the
-                 live stream (which freezes the last frame) and mute/
-                 unmute the audio track. -->
+            <!-- WebRTC control overlay -->
             <LinearLayout
                 android:id="@+id/webRtcControls"
                 android:layout_width="match_parent"
@@ -234,8 +191,7 @@
                     app:iconTint="@android:color/white"
                     app:iconSize="24dp" />
 
-                <!-- Fullscreen button placed inside the control bar
-                     so it's alongside the other controls. -->
+                <!-- Fullscreen button -->
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnWebRtcFullscreen"
                     style="@style/Widget.Material3.Button.IconButton"
@@ -266,531 +222,11 @@
                 android:visibility="gone" />
         </FrameLayout>
 
-        <LinearLayout
+        <!-- Pure Jetpack Compose Controls: Action Row, PTZ Compass, Presets, Settings -->
+        <androidx.compose.ui.platform.ComposeView
+            android:id="@+id/composeControls"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:padding="16dp">
+            android:layout_height="wrap_content" />
 
-            <!-- Quick actions row: reload, talkback, recordings, alerts in one beautiful unified row -->
-            <LinearLayout
-                android:id="@+id/actionButtonsRow"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:layout_marginBottom="8dp">
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnReloadStream"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:layout_height="44dp"
-                    android:layout_marginEnd="4dp"
-                    android:paddingHorizontal="4dp"
-                    android:paddingVertical="0dp"
-                    android:insetTop="0dp"
-                    android:insetBottom="0dp"
-                    android:background="@drawable/bg_glass_btn_reload"
-                    app:backgroundTint="@null"
-                    android:text="重载"
-                    android:textColor="@color/btn_reload_text"
-                    android:textSize="13sp"
-                    android:textStyle="bold"
-                    app:icon="@drawable/ic_refresh"
-                    app:iconTint="@color/btn_reload_icon"
-                    app:iconSize="18dp"
-                    app:iconPadding="4dp"
-                    app:iconGravity="textStart"
-                    app:cornerRadius="14dp" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnAudioPickup"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:layout_height="44dp"
-                    android:layout_marginStart="4dp"
-                    android:layout_marginEnd="4dp"
-                    android:paddingHorizontal="2dp"
-                    android:paddingVertical="0dp"
-                    android:insetTop="0dp"
-                    android:insetBottom="0dp"
-                    android:singleLine="true"
-                    android:maxLines="1"
-                    android:ellipsize="none"
-                    android:background="@drawable/bg_glass_btn_audio"
-                    app:backgroundTint="@null"
-                    android:text="拾音开"
-                    android:textColor="@color/btn_audio_text"
-                    android:textSize="12sp"
-                    android:textStyle="bold"
-                    app:icon="@drawable/ic_volume_on"
-                    app:iconTint="@color/btn_audio_icon"
-                    app:iconSize="16dp"
-                    app:iconPadding="3dp"
-                    app:iconGravity="textStart"
-                    app:cornerRadius="14dp" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnTalkback"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:layout_height="44dp"
-                    android:layout_marginStart="4dp"
-                    android:layout_marginEnd="4dp"
-                    android:paddingHorizontal="4dp"
-                    android:paddingVertical="0dp"
-                    android:insetTop="0dp"
-                    android:insetBottom="0dp"
-                    android:background="@drawable/bg_glass_btn_reload"
-                    app:backgroundTint="@null"
-                    android:text="对讲"
-                    android:textColor="@color/btn_reload_text"
-                    android:textSize="13sp"
-                    android:textStyle="bold"
-                    app:icon="@drawable/ic_mic"
-                    app:iconTint="@color/btn_reload_icon"
-                    app:iconSize="18dp"
-                    app:iconPadding="4dp"
-                    app:iconGravity="textStart"
-                    app:cornerRadius="14dp"
-                    android:visibility="gone" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnRecordings"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:layout_height="44dp"
-                    android:layout_marginStart="4dp"
-                    android:layout_marginEnd="4dp"
-                    android:paddingHorizontal="4dp"
-                    android:paddingVertical="0dp"
-                    android:insetTop="0dp"
-                    android:insetBottom="0dp"
-                    android:background="@drawable/bg_glass_btn_playback"
-                    app:backgroundTint="@null"
-                    android:text="回放"
-                    android:textColor="@color/btn_playback_text"
-                    android:textSize="13sp"
-                    android:textStyle="bold"
-                    app:icon="@drawable/ic_video"
-                    app:iconTint="@color/btn_playback_icon"
-                    app:iconSize="18dp"
-                    app:iconPadding="4dp"
-                    app:iconGravity="textStart"
-                    app:cornerRadius="14dp" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnAlerts"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:layout_height="44dp"
-                    android:layout_marginStart="4dp"
-                    android:paddingHorizontal="4dp"
-                    android:paddingVertical="0dp"
-                    android:insetTop="0dp"
-                    android:insetBottom="0dp"
-                    android:background="@drawable/bg_glass_btn_alerts"
-                    app:backgroundTint="@null"
-                    android:text="告警"
-                    android:textColor="@color/btn_alerts_text"
-                    android:textSize="13sp"
-                    android:textStyle="bold"
-                    app:icon="@drawable/ic_alerts"
-                    app:iconTint="@color/btn_alerts_icon"
-                    app:iconSize="18dp"
-                    app:iconPadding="4dp"
-                    app:iconGravity="textStart"
-                    app:cornerRadius="14dp" />
-            </LinearLayout>
-
-            <!-- Subtle talkback guidance text below action row -->
-            <TextView
-                android:id="@+id/tvTalkbackHint"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_gravity="center_horizontal"
-                android:layout_marginBottom="12dp"
-                android:text="按住「对讲」向摄像机喊话"
-                android:textSize="11sp"
-                android:textColor="@color/text_hint"
-                android:visibility="gone" />
-
-            <!-- PTZ section -->
-            <TextView
-                android:id="@+id/tvPtzSectionTitle"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/camera_ptz_section"
-                android:textSize="14sp"
-                android:textStyle="bold"
-                android:textColor="@color/text_primary"
-                android:layout_marginBottom="8dp" />
-
-            <LinearLayout
-                android:id="@+id/cardPtz"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/bg_glass_card"
-                android:orientation="vertical"
-                android:padding="16dp"
-                android:layout_marginBottom="16dp">
-
-                <TextView
-                    android:id="@+id/tvPtzUnsupported"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="@string/camera_ptz_unsupported"
-                    android:textSize="13sp"
-                    android:textColor="@color/text_hint"
-                    android:visibility="gone" />
-
-                <!-- Dial D-pad: Unified circular gimbal compass -->
-                <FrameLayout
-                    android:id="@+id/ptzGrid"
-                    android:layout_width="210dp"
-                    android:layout_height="210dp"
-                    android:layout_gravity="center"
-                    android:background="@drawable/bg_ptz_dial">
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnPtzUp"
-                        style="@style/Widget.Material3.Button.IconButton"
-                        android:layout_width="54dp"
-                        android:layout_height="54dp"
-                        android:layout_gravity="top|center_horizontal"
-                        android:layout_marginTop="8dp"
-                        android:background="@drawable/bg_ptz_btn_ripple"
-                        app:icon="@drawable/ic_ptz_up"
-                        app:iconSize="28dp"
-                        app:iconTint="@color/text_primary"
-                        android:contentDescription="@string/camera_ptz_up" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnPtzLeft"
-                        style="@style/Widget.Material3.Button.IconButton"
-                        android:layout_width="54dp"
-                        android:layout_height="54dp"
-                        android:layout_gravity="start|center_vertical"
-                        android:layout_marginStart="8dp"
-                        android:background="@drawable/bg_ptz_btn_ripple"
-                        app:icon="@drawable/ic_ptz_left"
-                        app:iconSize="28dp"
-                        app:iconTint="@color/text_primary"
-                        android:contentDescription="@string/camera_ptz_left" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnPtzStop"
-                        style="@style/Widget.Material3.Button.IconButton"
-                        android:layout_width="58dp"
-                        android:layout_height="58dp"
-                        android:layout_gravity="center"
-                        android:background="@drawable/bg_ptz_stop_btn"
-                        app:icon="@drawable/ic_ptz_stop"
-                        app:iconSize="30dp"
-                        app:iconTint="@color/error"
-                        android:contentDescription="@string/camera_ptz_stop" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnPtzRight"
-                        style="@style/Widget.Material3.Button.IconButton"
-                        android:layout_width="54dp"
-                        android:layout_height="54dp"
-                        android:layout_gravity="end|center_vertical"
-                        android:layout_marginEnd="8dp"
-                        android:background="@drawable/bg_ptz_btn_ripple"
-                        app:icon="@drawable/ic_ptz_right"
-                        app:iconSize="28dp"
-                        app:iconTint="@color/text_primary"
-                        android:contentDescription="@string/camera_ptz_right" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnPtzDown"
-                        style="@style/Widget.Material3.Button.IconButton"
-                        android:layout_width="54dp"
-                        android:layout_height="54dp"
-                        android:layout_gravity="bottom|center_horizontal"
-                        android:layout_marginBottom="8dp"
-                        android:background="@drawable/bg_ptz_btn_ripple"
-                        app:icon="@drawable/ic_ptz_down"
-                        app:iconSize="28dp"
-                        app:iconTint="@color/text_primary"
-                        android:contentDescription="@string/camera_ptz_down" />
-                </FrameLayout>
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="center_horizontal"
-                    android:layout_marginTop="8dp"
-                    android:text="长按方向键持续调整 · 松开即停"
-                    android:textSize="11sp"
-                    android:textColor="@color/text_hint" />
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:layout_marginTop="14dp"
-                    android:paddingHorizontal="14dp"
-                    android:paddingVertical="10dp"
-                    android:background="@drawable/bg_glass_subtle_row">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="@string/camera_ptz_speed"
-                        android:textSize="13sp"
-                        android:textStyle="bold"
-                        android:textColor="@color/text_primary" />
-
-                    <SeekBar
-                        android:id="@+id/seekPtzSpeed"
-                        android:layout_width="0dp"
-                        android:layout_weight="1"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="10dp"
-                        android:layout_marginEnd="10dp"
-                        android:max="100"
-                        android:progress="25"
-                        android:progressTint="@color/primary"
-                        android:thumbTint="@color/primary" />
-
-                    <TextView
-                        android:id="@+id/tvPtzSpeed"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="0.25x"
-                        android:textSize="12sp"
-                        android:textStyle="bold"
-                        android:textColor="@color/primary" />
-                </LinearLayout>
-            </LinearLayout>
-
-            <!-- Presets section -->
-            <TextView
-                android:id="@+id/tvPresetsSectionTitle"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/camera_presets_section"
-                android:textSize="14sp"
-                android:textStyle="bold"
-                android:textColor="@color/text_primary"
-                android:layout_marginBottom="8dp" />
-
-            <LinearLayout
-                android:id="@+id/cardPresets"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/bg_glass_card"
-                android:orientation="vertical"
-                android:padding="16dp"
-                android:layout_marginBottom="16dp">
-
-                <androidx.recyclerview.widget.RecyclerView
-                    android:id="@+id/rvPresets"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:nestedScrollingEnabled="false" />
-
-                <TextView
-                    android:id="@+id/tvPresetsEmpty"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="@string/camera_presets_empty"
-                    android:textSize="13sp"
-                    android:textColor="@color/text_hint" />
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:orientation="horizontal">
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnSaveCurrentPreset"
-                        android:layout_width="wrap_content"
-                        android:layout_height="42dp"
-                        android:paddingHorizontal="14dp"
-                        android:paddingVertical="0dp"
-                        android:insetTop="0dp"
-                        android:insetBottom="0dp"
-                        android:background="@drawable/bg_glass_btn_primary"
-                        app:backgroundTint="@null"
-                        android:textColor="@color/btn_primary_glass_text"
-                        android:textStyle="bold"
-                        android:textSize="13sp"
-                        app:cornerRadius="12dp"
-                        android:text="@string/camera_preset_save_current"
-                        app:icon="@drawable/ic_add"
-                        app:iconTint="@color/btn_primary_glass_text"
-                        app:iconSize="18dp" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnAddPreset"
-                        android:layout_width="wrap_content"
-                        android:layout_height="42dp"
-                        android:layout_marginStart="8dp"
-                        android:paddingHorizontal="14dp"
-                        android:paddingVertical="0dp"
-                        android:insetTop="0dp"
-                        android:insetBottom="0dp"
-                        android:background="@drawable/bg_glass_action_pill"
-                        app:backgroundTint="@null"
-                        android:textColor="@color/text_primary"
-                        android:textSize="13sp"
-                        app:cornerRadius="12dp"
-                        android:text="@string/camera_preset_add" />
-                </LinearLayout>
-            </LinearLayout>
-
-            <!-- Settings section: share / audio / recording / codec / delete -->
-            <TextView
-                android:id="@+id/tvSettingsSectionTitle"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/camera_settings_section"
-                android:textSize="14sp"
-                android:textStyle="bold"
-                android:textColor="@color/text_primary"
-                android:layout_marginBottom="8dp" />
-
-            <LinearLayout
-                android:id="@+id/cardSettings"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:background="@drawable/bg_glass_card"
-                android:orientation="vertical"
-                android:padding="16dp"
-                android:layout_marginBottom="16dp">
-
-                <!-- Share button: visible for admin OR camera owner.
-                     The admin-only controls below are wrapped in
-                     groupAdminControls so a non-admin owner sees only
-                     this share button and not the audio/recording/
-                     codec/delete controls. -->
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnShareCamera"
-                    android:layout_width="match_parent"
-                    android:layout_height="46dp"
-                    android:layout_marginBottom="12dp"
-                    android:background="@drawable/bg_glass_btn_primary"
-                    app:backgroundTint="@null"
-                    android:text="@string/camera_share_title"
-                    android:textColor="@color/btn_primary_glass_text"
-                    android:textStyle="bold"
-                    app:icon="@drawable/ic_user_plus"
-                    app:iconTint="@color/btn_primary_glass_text"
-                    app:iconGravity="textStart"
-                    app:iconSize="18dp"
-                    app:iconPadding="6dp"
-                    app:cornerRadius="14dp"
-                    android:visibility="gone" />
-
-                <!-- Audio pickup switch: visible to all users -->
-                <com.google.android.material.materialswitch.MaterialSwitch
-                    android:id="@+id/switchAudio"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:text="@string/camera_audio_enable"
-                    android:textStyle="bold"
-                    android:textColor="@color/text_primary" />
-
-                <TextView
-                    android:id="@+id/tvAudioSummary"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="0dp"
-                    android:layout_marginTop="2dp"
-                    android:text="@string/camera_audio_summary"
-                    android:textSize="12sp"
-                    android:textColor="@color/text_secondary" />
-
-                <View
-                    android:layout_width="match_parent"
-                    android:layout_height="1dp"
-                    android:background="@color/divider"
-                    android:layout_marginTop="12dp"
-                    android:layout_marginBottom="12dp" />
-
-                <LinearLayout
-                    android:id="@+id/groupAdminControls"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:visibility="gone">
-
-                    <com.google.android.material.materialswitch.MaterialSwitch
-                        android:id="@+id/switchRecording"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="@string/camera_recording_enable"
-                        android:textStyle="bold"
-                        android:textColor="@color/text_primary" />
-
-                    <TextView
-                        android:id="@+id/tvRecordingSummary"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="0dp"
-                        android:layout_marginTop="2dp"
-                        android:text="@string/camera_recording_summary"
-                        android:textSize="12sp"
-                        android:textColor="@color/text_secondary" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnCodecH264"
-                        android:layout_width="match_parent"
-                        android:layout_height="46dp"
-                        android:layout_marginTop="16dp"
-                        android:background="@drawable/bg_glass_btn_playback"
-                        app:backgroundTint="@null"
-                        android:textColor="@color/btn_playback_text"
-                        android:textStyle="bold"
-                        app:icon="@drawable/ic_video"
-                        app:iconTint="@color/btn_playback_icon"
-                        app:iconGravity="textStart"
-                        app:iconSize="18dp"
-                        app:iconPadding="6dp"
-                        app:cornerRadius="14dp"
-                        android:text="@string/camera_codec_h264" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnDetectFps"
-                        android:layout_width="match_parent"
-                        android:layout_height="46dp"
-                        android:layout_marginTop="10dp"
-                        android:background="@drawable/bg_glass_btn_audio"
-                        app:backgroundTint="@null"
-                        android:textColor="@color/btn_audio_text"
-                        android:textStyle="bold"
-                        app:icon="@drawable/ic_bolt"
-                        app:iconTint="@color/btn_audio_icon"
-                        app:iconGravity="textStart"
-                        app:iconSize="18dp"
-                        app:iconPadding="6dp"
-                        app:cornerRadius="14dp"
-                        android:text="AI 抽样检测频率 (2 fps)" />
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnDelete"
-                        android:layout_width="match_parent"
-                        android:layout_height="46dp"
-                        android:layout_marginTop="12dp"
-                        android:background="@drawable/bg_glass_btn_danger"
-                        app:backgroundTint="@null"
-                        android:text="@string/camera_delete"
-                        android:textColor="@color/btn_danger_glass_text"
-                        android:textStyle="bold"
-                        app:icon="@drawable/ic_delete"
-                        app:iconTint="@color/btn_danger_glass_text"
-                        app:iconGravity="textStart"
-                        app:iconSize="18dp"
-                        app:iconPadding="6dp"
-                        app:cornerRadius="14dp" />
-                </LinearLayout>
-            </LinearLayout>
-
-        </LinearLayout>
     </LinearLayout>
 </ScrollView>

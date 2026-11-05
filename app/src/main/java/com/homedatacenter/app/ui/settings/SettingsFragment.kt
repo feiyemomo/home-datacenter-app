@@ -55,6 +55,7 @@ class SettingsFragment : Fragment() {
     private var activeUpdateInfo by mutableStateOf<com.homedatacenter.app.data.model.UpdateInfo?>(null)
     private var storageDialogState by mutableStateOf<StorageDialogUiState?>(null)
     private var showEditQuotaDialog by mutableStateOf<Int?>(null)
+    private var showAiSourceDialog by mutableStateOf<Pair<String, List<AiSourceOption>>?>(null)
 
     private var uiState by mutableStateOf(SettingsUiState())
 
@@ -142,6 +143,20 @@ class SettingsFragment : Fragment() {
                                 onDismiss = { showEditQuotaDialog = null },
                                 onConfirm = { newQuota ->
                                     updateQuota(newQuota)
+                                }
+                            )
+                        }
+
+                        showAiSourceDialog?.let { (curKey, options) ->
+                            AiSourceModeDialog(
+                                currentKey = curKey,
+                                options = options,
+                                onDismiss = { showAiSourceDialog = null },
+                                onSelect = { chosenKey, label ->
+                                    uiState = uiState.copy(aiSourceMode = label)
+                                    if (chosenKey != curKey) {
+                                        applyAiSourceSelection(chosenKey)
+                                    }
                                 }
                             )
                         }
@@ -628,63 +643,50 @@ class SettingsFragment : Fragment() {
                 return@launch
             }
 
-            val keys = if (sourceList.isNotEmpty()) {
-                sourceList.map { it.key }.toTypedArray()
-            } else {
-                arrayOf("camera", "frigate", "both")
-            }
-            val displayNames = if (sourceList.isNotEmpty()) {
-                sourceList.map { "${it.name}\n${it.description}" }.toTypedArray()
-            } else {
-                arrayOf(
-                    "摄像头自带硬件AI (默认)\n只推摄像头人形，0% NAS CPU开销，无重复",
-                    "Frigate NVR 软件检测\n由NAS主机运行模型，支持精细防区与跌倒检测",
-                    "双路冗余互备 (智能去重)\n两边都接收，6秒内同相机自动合并去重"
-                )
-            }
-
-            val selectedIdx = keys.indexOf(currentSource).let { if (it >= 0) it else 0 }
-
-            com.google.android.material.dialog.MaterialAlertDialogBuilder(requireContext())
-                .setTitle(getString(R.string.ai_alert_source_dialog_title))
-                .setSingleChoiceItems(displayNames, selectedIdx) { dialog, which ->
-                    val chosenKey = keys[which]
-                    dialog.dismiss()
-                    val targetLabel = when (chosenKey) {
-                        "frigate" -> "Frigate NVR 软件检测"
-                        "both" -> "双路冗余互备 (智能去重)"
-                        else -> "摄像头自带硬件AI"
-                    }
-                    uiState = uiState.copy(aiSourceMode = targetLabel)
-                    if (chosenKey == currentSource) return@setSingleChoiceItems
-
-                    lifecycleScope.launch {
-                        try {
-                            val updated = repo.setAISource(token, chosenKey)
-                            val label = when (updated.currentSource) {
-                                "frigate" -> "Frigate NVR 软件检测"
-                                "both" -> "双路冗余互备 (智能去重)"
-                                else -> "摄像头自带硬件AI"
-                            }
-                            uiState = uiState.copy(aiSourceMode = label)
-                            val ctx = context ?: return@launch
-                            Toast.makeText(
-                                ctx,
-                                getString(R.string.ai_alert_source_success, label),
-                                Toast.LENGTH_SHORT
-                            ).show()
-                        } catch (e: Exception) {
-                            val ctx = context ?: return@launch
-                            Toast.makeText(
-                                ctx,
-                                getString(R.string.ai_alert_source_failed, e.message),
-                                Toast.LENGTH_LONG
-                            ).show()
-                        }
-                    }
+            val options = if (sourceList.isNotEmpty()) {
+                sourceList.map {
+                    AiSourceOption(
+                        key = it.key,
+                        title = it.name,
+                        description = it.description
+                    )
                 }
-                .setNegativeButton(R.string.btn_cancel, null)
-                .show()
+            } else {
+                DefaultAiSourceOptions
+            }
+
+            showAiSourceDialog = currentSource to options
+        }
+    }
+
+    private fun applyAiSourceSelection(chosenKey: String) {
+        val mainActivity = activity as? MainActivity ?: return
+        val token = mainActivity.container.prefsManager.token ?: return
+        val repo = mainActivity.container.getRepository()
+
+        lifecycleScope.launch {
+            try {
+                val updated = repo.setAISource(token, chosenKey)
+                val label = when (updated.currentSource) {
+                    "frigate" -> "Frigate NVR 软件检测"
+                    "both" -> "双路冗余互备 (智能去重)"
+                    else -> "摄像头自带硬件AI"
+                }
+                uiState = uiState.copy(aiSourceMode = label)
+                val ctx = context ?: return@launch
+                Toast.makeText(
+                    ctx,
+                    getString(R.string.ai_alert_source_success, label),
+                    Toast.LENGTH_SHORT
+                ).show()
+            } catch (e: Exception) {
+                val ctx = context ?: return@launch
+                Toast.makeText(
+                    ctx,
+                    getString(R.string.ai_alert_source_failed, e.message),
+                    Toast.LENGTH_LONG
+                ).show()
+            }
         }
     }
 

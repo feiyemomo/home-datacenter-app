@@ -104,7 +104,7 @@ class DashboardFragment : Fragment() {
                     baseUrl = baseUrl,
                     token = token,
                     userName = userName,
-                    onRefresh = { refreshAll() },
+                    onRefresh = { refreshAll(isUserTriggered = true) },
                     onNavigateOps = {
                         (activity as? MainActivity)?.selectTab(MainTab.Ops)
                     },
@@ -112,18 +112,22 @@ class DashboardFragment : Fragment() {
                         (activity as? MainActivity)?.selectTab(MainTab.Users)
                     },
                     onToggleSecurity = {
-                        val currentMode = securityGuard?.mode
-                        val targetMode = if (securityGuard?.isDisarmed != true) "disarmed" else "armed_away"
-                        viewModel.setSecurityGuard(
-                            token = token,
-                            mode = targetMode,
-                            onSuccess = {
-                                toast(if (targetMode == "disarmed") "已撤防" else "已布防")
-                            },
-                            onError = { err ->
-                                toast(err)
-                            }
-                        )
+                        if (!isAdmin) {
+                            toast("普通成员仅支持查看安防状态，更改布防请联系管理员")
+                        } else {
+                            val currentMode = securityGuard?.mode
+                            val targetMode = if (securityGuard?.isDisarmed != true) "disarmed" else "armed_away"
+                            viewModel.setSecurityGuard(
+                                token = token,
+                                mode = targetMode,
+                                onSuccess = {
+                                    toast(if (targetMode == "disarmed") "已撤防" else "已布防")
+                                },
+                                onError = { err ->
+                                    toast(err)
+                                }
+                            )
+                        }
                     },
                     onNavigateAutomations = {
                         context?.let { ctx -> startActivity(Intent(ctx, AutomationsActivity::class.java)) }
@@ -192,10 +196,20 @@ class DashboardFragment : Fragment() {
         }
     }
 
+    companion object {
+        private const val THROTTLE_MS = 30_000L
+    }
+
+    private var lastRefreshTimestamp: Long = 0L
+
     override fun onResume() {
         super.onResume()
         if (isAdded && !isHidden) {
-            refreshAll()
+            val now = System.currentTimeMillis()
+            if (now - lastRefreshTimestamp > THROTTLE_MS) {
+                lastRefreshTimestamp = now
+                refreshAll(isUserTriggered = false)
+            }
             startStatusPolling()
         }
     }
@@ -208,20 +222,25 @@ class DashboardFragment : Fragment() {
     override fun onHiddenChanged(hidden: Boolean) {
         super.onHiddenChanged(hidden)
         if (!hidden && isAdded) {
-            refreshAll()
+            val now = System.currentTimeMillis()
+            if (now - lastRefreshTimestamp > THROTTLE_MS) {
+                lastRefreshTimestamp = now
+                refreshAll(isUserTriggered = false)
+            }
             startStatusPolling()
         } else if (hidden) {
             stopStatusPolling()
         }
     }
 
-    private fun refreshAll() {
+    private fun refreshAll(isUserTriggered: Boolean = false) {
+        lastRefreshTimestamp = System.currentTimeMillis()
         val mainActivity = activity as? MainActivity ?: return
         val baseUrl = mainActivity.container.getApiBaseUrl()
         val token = mainActivity.container.prefsManager.token
         val isAdmin = mainActivity.container.prefsManager.isAdmin
 
-        viewModel.refreshAll(token, baseUrl, isAdmin)
+        viewModel.refreshAll(token, baseUrl, isAdmin, isUserTriggered = isUserTriggered)
         loadCameras()
         mainActivity.container.prefetchIceConfig()
     }

@@ -1,24 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Subtle card surface for alerts/recordings — warm cream in light mode,
-     warm slate in dark mode, with soft border. Not full glass (alerts
-     should feel slightly more solid) but still part of the warm palette.
-     Corner radius unified at 20dp with bg_card_rounded. -->
+<!-- Subtle card surface for alerts/recordings/logs: Liquid glass surface with
+     translucent substrate, specular border and soft highlight. -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <!-- Soft shadow -->
-    <item android:top="1dp">
+    <item android:top="2dp">
         <shape android:shape="rectangle">
-            <solid android:color="#0A000000" />
+            <solid android:color="@color/glass_shadow" />
             <corners android:radius="20dp" />
         </shape>
     </item>
     <!-- Main card body -->
     <item android:bottom="1dp">
         <shape android:shape="rectangle">
-            <solid android:color="@color/card_bg" />
+            <solid android:color="@color/glass_bg" />
             <corners android:radius="20dp" />
             <stroke
-                android:width="1dp"
-                android:color="@color/card_stroke" />
+                android:width="1.2dp"
+                android:color="@color/glass_border" />
         </shape>
     </item>
     <!-- Subtle top highlight for depth -->
@@ -31,7 +29,7 @@
             <gradient
                 android:type="linear"
                 android:angle="270"
-                android:startColor="#0DFFFFFF"
+                android:startColor="@color/glass_highlight"
                 android:endColor="@android:color/transparent" />
             <corners
                 android:radius="19dp"

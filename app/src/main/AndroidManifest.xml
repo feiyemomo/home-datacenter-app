@@ -90,10 +90,7 @@
             android:exported="false"
             android:label="@string/users_title" />
 
-        <activity
-            android:name=".ui.admin.SecurityDefenseActivity"
-            android:exported="false"
-            android:label="@string/security_defense_title" />
+
 
         <activity
             android:name=".ui.automations.AutomationsActivity"

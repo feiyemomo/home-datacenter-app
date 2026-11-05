@@ -1,0 +1,12 @@
+v1.18.7: 根治省电模式背景脏斑穿帮、人脸识别页主题跟随、播放器折叠防御
+
+【省电模式与渲染引擎攻坚】
+- 根治直播详情页发脏/泥巴色问题：彻底消除 AmbientFluidBackground 中 StaticDegradedBackground 与动态流体中向 Color.Transparent (0x00000000 纯黑透明) 插值导致的 sRGB 互补色泥巴斑，改为同色相零透明度插值，画面纯净柔光。
+- 根治录像回放页下层穿帮：在 RecordingsDialog 中强化 100% 不透明基底 Surface(color = tokens.bgBase)，并在底层 CameraDetailActivity 中暂停直播时将下层控制器置为 alpha = 0，彻底杜绝 SurfaceFlinger 在省电模式下的任何透光穿帮。
+- 消除家庭人脸档案与视觉识别页“深底白卡”突变：纠正 FamilyFacesPageContent 形参硬编码 AmethystDark 预设，动态接入 ThemeManager.currentPreset。
+
+【播放器折叠与界面交互加固】
+- 修复摄像头直播详情页在横竖屏切换或全屏退出时播放器高度折叠变小的问题：在 CameraDetailActivity 中重写 onConfigurationChanged 动态重新测算高宽比并恢复竖屏高度。
+- 修复用户管理中心“添加用户”卡片组件缺失的 Add 图标与样式跟随。
+- 全面提升暗色模式（曜夜深色、北欧苍翠、日落琥珀）卡片边框宽度至 1.8dp，边框高光反光度提升至 40%，轮廓清晰立体，绝不与背景融为一体。
+- 开屏动画在亮色模式下文字对比度强化（加粗 ExtraBold + 深色板岩字色）。

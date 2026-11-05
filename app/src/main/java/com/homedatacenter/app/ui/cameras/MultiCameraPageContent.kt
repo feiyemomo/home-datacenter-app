@@ -255,10 +255,11 @@ fun MultiCameraPageContent(
 
                     // Mode Toggle Pill
                     Surface(
-                        shape = RoundedCornerShape(14.dp),
-                        color = if (isDark) Color(0x331E293B) else Color(0x66FFFFFF),
-                        border = BorderStroke(1.dp, borderCol),
+                        shape = RoundedCornerShape(16.dp),
+                        color = tokens.controlBg,
+                        border = BorderStroke(1.2.dp, tokens.cardBorder),
                         modifier = Modifier
+                            .clip(RoundedCornerShape(16.dp))
                             .clickable {
                                 gridMode = when (gridMode) {
                                     MultiCameraGridMode.ONE -> MultiCameraGridMode.FOUR
@@ -266,40 +267,55 @@ fun MultiCameraPageContent(
                                     MultiCameraGridMode.NINE -> MultiCameraGridMode.ONE
                                 }
                             }
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                        ) {
                             Icon(
                                 painter = painterResource(id = R.drawable.ic_grid_view),
                                 contentDescription = null,
-                                tint = cyberCyan,
-                                modifier = Modifier.size(14.dp)
+                                tint = tokens.accentColor,
+                                modifier = Modifier.size(18.dp)
                             )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(gridMode.label, color = cyberCyan, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = gridMode.label,
+                                color = tokens.accentColor,
+                                fontSize = 13.5.sp,
+                                fontWeight = FontWeight.Bold
+                            )
                         }
                     }
 
-                    Spacer(modifier = Modifier.width(6.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
 
                     // Aspect Ratio Pill
                     Surface(
-                        shape = RoundedCornerShape(14.dp),
-                        color = if (isDark) Color(0x331E293B) else Color(0x66FFFFFF),
-                        border = BorderStroke(1.dp, borderCol),
+                        shape = RoundedCornerShape(16.dp),
+                        color = tokens.controlBg,
+                        border = BorderStroke(1.2.dp, tokens.cardBorder),
                         modifier = Modifier
+                            .clip(RoundedCornerShape(16.dp))
                             .clickable { isFillCrop = !isFillCrop }
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                        ) {
                             Icon(
                                 painter = painterResource(id = R.drawable.ic_aspect_ratio),
                                 contentDescription = null,
                                 tint = textPrimary,
-                                modifier = Modifier.size(14.dp)
+                                modifier = Modifier.size(18.dp)
                             )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(if (isFillCrop) "铺满" else "适应", color = textPrimary, fontSize = 12.sp)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = if (isFillCrop) "铺满" else "适应",
+                                color = textPrimary,
+                                fontSize = 13.5.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
                         }
                     }
 

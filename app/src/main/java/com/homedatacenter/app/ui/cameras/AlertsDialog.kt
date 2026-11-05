@@ -1,435 +1,337 @@
 package com.homedatacenter.app.ui.cameras
 
-import android.app.Dialog
 import android.content.Context
-import android.graphics.BitmapFactory
-import android.util.Base64
-import android.view.LayoutInflater
-import android.view.View
-import android.view.ViewGroup
-import androidx.recyclerview.widget.DiffUtil
-import androidx.recyclerview.widget.LinearLayoutManager
-import androidx.recyclerview.widget.ListAdapter
-import androidx.recyclerview.widget.RecyclerView
-import com.google.android.exoplayer2.ExoPlayer
-import com.google.android.exoplayer2.MediaItem
-import com.google.android.exoplayer2.PlaybackException
-import com.google.android.exoplayer2.Player
-import com.google.android.exoplayer2.source.ProgressiveMediaSource
-import com.google.android.exoplayer2.upstream.DefaultHttpDataSource
+import android.os.Bundle
+import androidx.appcompat.app.AppCompatDialog
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.runtime.collectAsState
+import com.homedatacenter.app.ui.glass.AmbientFluidBackground
+import com.homedatacenter.app.ui.glass.GlassTheme
+import com.homedatacenter.app.ui.glass.ProvideGlassTheme
+import com.homedatacenter.app.util.ThemeManager
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.homedatacenter.app.R
-import com.homedatacenter.app.data.api.NetworkFactory
 import com.homedatacenter.app.data.model.Alert
 import com.homedatacenter.app.data.model.AlertListData
 import com.homedatacenter.app.data.model.Camera
 import com.homedatacenter.app.di.AppContainer
 import com.homedatacenter.app.ui.alerts.AlertSnapshotDialog
-import com.homedatacenter.app.databinding.DialogAlertsBinding
-import com.homedatacenter.app.databinding.ItemAlertBinding
-import com.homedatacenter.app.util.ExoPlayerRendererFactory
-import com.homedatacenter.app.util.PlayerFullscreenHelper
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-import androidx.fragment.app.FragmentActivity
-import com.homedatacenter.app.ui.alerts.AlertListAdapter
-import com.homedatacenter.app.ui.alerts.AlertSnapshotDialogFragment
 
+/**
+ * Pure Jetpack Compose Alerts Dialog with Liquid Glass styling.
+ * Eliminates legacy dialog_alerts.xml, item_alert.xml, and AlertListAdapter.
+ */
 class AlertsDialog(
     context: Context,
     private val camera: Camera,
     private val container: AppContainer
-) : Dialog(context, R.style.FullScreenDialog) {
+) : AppCompatDialog(context, R.style.FullScreenDialog) {
 
-    private lateinit var binding: DialogAlertsBinding
-    private lateinit var adapter: AlertListAdapter
-    private val baseUrl = container.getApiBaseUrl()
-    private val token = container.prefsManager.token
-    private val okHttpClient = container.okHttpClient
-    private var player: ExoPlayer? = null
-    private var fullscreenHelper: PlayerFullscreenHelper? = null
-
-    // v1.5.10: virtual pagination state. The backend's
-    // /api/v1/cameras/alerts?limit=50 returns up to 50 alerts in
-    // one shot — that's normally fine, but the alert dialog ALSO
-    // fetches thumbnails per item (base64 decode + Bitmap alloc),
-    // so loading all 50 at once causes a noticeable hitch on
-    // first display. We keep [allAlerts] as the source of truth
-    // and expose [visibleAlerts] (default 20) to the adapter.
-    private val allAlerts = mutableListOf<Alert>()
-    private var currentFilteredAlerts: List<Alert> = emptyList()
-    private val visibleAlerts = mutableListOf<Alert>()
-    private var isLoadingMore = false
-    private val pageBatchSize = 20
-    private var selectedCategory: String? = null
-
-    init {
-        binding = DialogAlertsBinding.inflate(LayoutInflater.from(context))
-        setContentView(binding.root)
-        setupRecyclerView()
-        setupFilters()
-        loadAlerts()
-        binding.toolbar.setNavigationOnClickListener {
-            if (!onBackPressedCustom()) {
-                dismiss()
-            }
-        }
-        binding.toolbar.title = "${camera.name} - 报警"
-    }
-
-    private fun setupFilters() {
-        binding.chipGroupFilter.setOnCheckedStateChangeListener { _, checkedIds ->
-            selectedCategory = when (checkedIds.firstOrNull()) {
-                R.id.chipPerson -> "person"
-                R.id.chipCar -> "car"
-                R.id.chipAnimal -> "dog"
-                else -> null
-            }
-            applyCategoryFilter()
-        }
-    }
-
-    private fun applyCategoryFilter() {
-        val cat = selectedCategory
-        val filtered = if (cat.isNullOrEmpty()) {
-            allAlerts
-        } else {
-            allAlerts.filter { it.label.equals(cat, ignoreCase = true) }
-        }
-        currentFilteredAlerts = filtered
-        visibleAlerts.clear()
-        visibleAlerts.addAll(filtered.take(pageBatchSize))
-        adapter.submitList(visibleAlerts.toList())
-        binding.tvEmpty.visibility = if (filtered.isEmpty()) View.VISIBLE else View.GONE
-        if (filtered.isEmpty()) {
-            binding.tvEmpty.text = "未找到${when(cat) { "person" -> "人形"; "car" -> "车辆"; "dog" -> "动物"; else -> "" }}相关报警"
-        }
-    }
-
-    private fun showSnapshotDialog(alert: Alert) {
-        AlertSnapshotDialog(context, alert, baseUrl, token, okHttpClient).show()
-    }
-
-    private fun setupRecyclerView() {
-        adapter = AlertListAdapter(
-            baseUrl = baseUrl,
-            token = token,
-            okHttpClient = okHttpClient,
-            onSnapshotClick = { alert -> showSnapshotDialog(alert) },
-            onJumpCamera = { alert -> playAlert(alert) },
-            onRowClick = { alert -> playAlert(alert) }
-        )
-        binding.recyclerView.layoutManager = LinearLayoutManager(context)
-        binding.recyclerView.adapter = adapter
-        // v1.5.10: paginate on scroll. Same threshold as
-        // RecordingsDialog — trigger when within 5 items of the
-        // end (smaller batch size since each row carries a
-        // thumbnail load).
-        binding.recyclerView.addOnScrollListener(object : RecyclerView.OnScrollListener() {
-            override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
-                if (dy <= 0 || isLoadingMore) return
-                val lm = rv.layoutManager as? LinearLayoutManager ?: return
-                val lastVisible = lm.findLastVisibleItemPosition()
-                val total = adapter.itemCount
-                if (lastVisible >= total - 5) {
-                    loadMoreAlerts()
-                }
-            }
-        })
-    }
-
-    private fun loadAlerts() {
-        binding.progressBar.visibility = View.VISIBLE
-        binding.recyclerView.visibility = View.GONE
-        binding.tvEmpty.visibility = View.GONE
-
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val authHeader = if (!token.isNullOrEmpty()) "Bearer $token" else ""
-                android.util.Log.d("AlertsDialog",
-                    "Fetching alerts (camera_id=${camera.id}, name='${camera.name}')")
-                val resp = container.getApi().listAlerts(authHeader, limit = 50)
-                android.util.Log.d("AlertsDialog",
-                    "API response: code=${resp.code}, message='${resp.message}', data=${resp.data}")
-
-                val fetchedAlerts = if (resp.isSuccess) {
-                    val decoded = resp.decodeData<AlertListData>()
-                    android.util.Log.d("AlertsDialog",
-                        "Decoded ${decoded?.alerts?.size ?: 0} alerts (total=${decoded?.total})")
-                    decoded?.alerts ?: emptyList()
-                } else {
-                    android.util.Log.w("AlertsDialog",
-                        "API returned error: code=${resp.code}, message='${resp.message}'")
-                    emptyList()
-                }
-
-                // Filter alerts for this camera. The backend annotates alerts with
-                // camera_id via LookupByFrigateSlug — if the slug doesn't match,
-                // camera_id is null/0. Try multiple matching strategies.
-                val filtered = filterAlertsForCamera(fetchedAlerts, fetchedAlerts)
-
-                withContext(Dispatchers.Main) {
-                    val filteredCopy = filtered.toList()
-                    allAlerts.clear()
-                    allAlerts.addAll(filteredCopy)
-                    binding.progressBar.visibility = View.GONE
-                    binding.recyclerView.visibility = View.VISIBLE
-                    applyCategoryFilter()
-                }
-            } catch (e: Exception) {
-                android.util.Log.e("AlertsDialog", "Exception loading alerts: ${e.message}", e)
-                withContext(Dispatchers.Main) {
-                    binding.progressBar.visibility = View.GONE
-                    binding.tvEmpty.visibility = View.VISIBLE
-                    binding.tvEmpty.text = "加载失败: ${e.message}"
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        window?.setBackgroundDrawableResource(R.color.bg_primary)
+        val composeView = ComposeView(context).apply {
+            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindowOrReleasedFromPool)
+            setContent {
+                val preset by ThemeManager.themePresetFlow.collectAsState()
+                ProvideGlassTheme(preset = preset) {
+                    AlertsDialogContent(
+                        camera = camera,
+                        container = container,
+                        onDismiss = { dismiss() },
+                        preset = preset,
+                        onOpenRecording = { ts ->
+                            val act = context as? CameraDetailActivity
+                            if (act != null) {
+                                dismiss()
+                                act.showRecordings(ts)
+                            } else {
+                                dismiss()
+                                RecordingsDialog(
+                                    context = context,
+                                    camera = camera,
+                                    container = container,
+                                    initialTimestamp = ts
+                                ).show()
+                            }
+                        }
+                    )
                 }
             }
         }
-    }
-
-    /**
-     * v1.5.10: append the next page of alerts to the visible list.
-     * Mirrors [RecordingsDialog.loadMoreRecordings]. No-op when
-     * we've already exposed everything from [allAlerts].
-     */
-    private fun loadMoreAlerts() {
-        if (isLoadingMore) return
-        val targetList = currentFilteredAlerts
-        if (visibleAlerts.size >= targetList.size) return
-        isLoadingMore = true
-        val nextEnd = (visibleAlerts.size + pageBatchSize).coerceAtMost(targetList.size)
-        visibleAlerts.addAll(targetList.subList(visibleAlerts.size, nextEnd))
-        adapter.submitList(visibleAlerts.toList()) {
-            isLoadingMore = false
-        }
-    }
-
-    // Try to match alerts to this camera using multiple strategies.
-    // 1. Match by camera_id (most reliable when backend maps correctly)
-    // 2. Match by camera_slug against the camera's slugified stream name
-    // 3. If nothing matches but there are alerts, show all (so the user sees something)
-    private fun filterAlertsForCamera(
-        alerts: List<Alert>,
-        allAlerts: List<Alert>
-    ): List<Alert> {
-        if (alerts.isEmpty()) return emptyList()
-
-        // Strategy 1: match by camera_id
-        val byId = alerts.filter { it.cameraId != null && it.cameraId == camera.id }
-        if (byId.isNotEmpty()) {
-            android.util.Log.d("AlertsDialog", "Matched ${byId.size} alerts by camera_id")
-            return byId
-        }
-
-        // Strategy 2: match by camera_slug against slugified stream name
-        val streamName = camera.stream?.streamName?.trim() ?: ""
-        if (streamName.isNotEmpty()) {
-            val slug = slugify(streamName)
-            val bySlug = alerts.filter {
-                it.cameraSlug.equals(slug, ignoreCase = true) ||
-                it.cameraSlug.equals(streamName, ignoreCase = true) ||
-                it.cameraName.equals(camera.name, ignoreCase = true)
-            }
-            if (bySlug.isNotEmpty()) {
-                android.util.Log.d("AlertsDialog", "Matched ${bySlug.size} alerts by slug/name")
-                return bySlug
-            }
-        }
-
-        // Strategy 3: if alerts exist but none match, return all — better than showing nothing.
-        // The user can see cameraName in each item to identify which camera it belongs to.
-        android.util.Log.d("AlertsDialog",
-            "No alerts matched camera ${camera.id}; showing all ${allAlerts.size}")
-        return allAlerts
-    }
-
-    private fun slugify(name: String): String {
-        val cn = mapOf(
-            "前门" to "front_door", "后门" to "back_door",
-            "客厅" to "living_room", "卧室" to "bedroom",
-            "厨房" to "kitchen", "院子" to "yard", "车库" to "garage"
-        )
-        cn[name]?.let { return it }
-        return name.lowercase()
-            .replace(Regex("[^a-z0-9_-]"), "_")
-            .replace(Regex("_+"), "_")
-            .trim('_')
-    }
-
-    private fun playAlert(alert: Alert) {
-        // v1.6.10: switched from inline single-clip ExoPlayer
-        // playback to reusing RecordingsDialog with the alert's
-        // start timestamp. Previously the user only saw the 60s
-        // Frigate clip with no SeekBar, no motion chips, no
-        // surrounding context — felt like a dead-end. Now we open
-        // the full day-based recording UI at the alert's exact
-        // moment so the user can scrub backward/forward, see the
-        // motion timeline, jump to other alerts nearby, etc.
-        // RecordingsDialog's initialTimestamp mechanism handles:
-        //   1. compute the LOCAL day containing alert.startTime
-        //   2. build the 24h playlist of recordings for that day
-        //   3. seek ExoPlayer to the exact alert second on STATE_READY
-        // The user lands at the alert moment with full controls.
-        val ts = alert.startTime.toLong()
-        if (ts <= 0L) {
-            android.util.Log.w("AlertsDialog", "playAlert: invalid ts=$ts, falling back to clip")
-            playAlertClipInline(alert)
-            return
-        }
-        try {
-            // Dismiss this alerts dialog first so the recordings
-            // dialog doesn't stack on top (otherwise the user has
-            // to close TWO dialogs to get back to the camera detail
-            // page). The recordings dialog has its own back button.
-            if (context is CameraDetailActivity) {
-                val act = context as CameraDetailActivity
-                act.pauseLivePlayback()
-                dismiss()
-                act.showRecordings(ts)
-            } else {
-                dismiss()
-                RecordingsDialog(
-                    context = context,
-                    camera = camera,
-                    container = container,
-                    initialTimestamp = ts,
-                ).show()
-            }
-        } catch (e: Exception) {
-            android.util.Log.e("AlertsDialog",
-                "RecordingsDialog launch failed: ${e.message}", e)
-            // Fall back to the old inline single-clip playback path
-            // if the recordings dialog can't be opened (e.g. backend
-            // has no recordings for this day).
-            playAlertClipInline(alert)
-        }
-    }
-
-    /** Legacy single-clip inline playback — only used as a fallback
-     *  when RecordingsDialog can't be opened. */
-    private fun playAlertClipInline(alert: Alert) {
-        // The :recId path param is a unix timestamp; backend buckets it to the
-        // containing minute and concatenates 10s Frigate segments into one MP4.
-        val recId = alert.startTime.toLong()
-        val url = buildAlertPlayUrl(recId)
-        if (url.isEmpty()) return
-
-        android.util.Log.d("AlertsDialog", "Playing alert clip from $url")
-
-        binding.videoContainer.visibility = View.VISIBLE
-        binding.recyclerView.visibility = View.GONE
-
-        player?.release()
-        // Delegate to ExoPlayerRendererFactory: on emulators it filters
-        // out the broken goldfish decoders, on real devices it just
-        // enables decoder fallback. See util/ExoPlayerRendererFactory.kt.
-        val renderersFactory = ExoPlayerRendererFactory.create(context)
-        player = ExoPlayer.Builder(context, renderersFactory).build().apply {
-            // Route audio through the media stream and let ExoPlayer
-            // manage AudioFocus — pauses on phone call, resumes after.
-            setAudioAttributes(
-                com.google.android.exoplayer2.audio.AudioAttributes.Builder()
-                    .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
-                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MOVIE)
-                    .build(),
-                /* handleAudioFocus = */ true,
-            )
-            val dataSourceFactory = DefaultHttpDataSource.Factory().apply {
-                setUserAgent(NetworkFactory.USER_AGENT)
-                setConnectTimeoutMs(15000)
-                setReadTimeoutMs(60000)
-                if (!token.isNullOrEmpty()) {
-                    setDefaultRequestProperties(mutableMapOf(
-                        "Authorization" to "Bearer $token",
-                        "Cookie" to "home_token=$token"
-                    ))
-                }
-            }
-            val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory)
-                .createMediaSource(MediaItem.fromUri(url))
-            setMediaSource(mediaSource)
-            playWhenReady = true
-            addListener(object : Player.Listener {
-                override fun onPlaybackStateChanged(state: Int) {
-                    binding.progressPlayer.visibility = if (state == Player.STATE_BUFFERING) View.VISIBLE else View.GONE
-                }
-                override fun onPlayerError(error: PlaybackException) {
-                    android.util.Log.e("AlertsDialog", "Player error: ${error.message}")
-                }
-            })
-        }
-        binding.playerView.player = player
-        player?.prepare()
-        binding.btnBack.setOnClickListener {
-            if (!onBackPressedCustom()) {
-                dismiss()
-            }
-        }
-
-        // Attach fullscreen + speed button handlers. Same pattern as
-        // RecordingsDialog: fullscreen rotates the host Activity to
-        // landscape + hides toolbar/back button; speed button opens
-        // a popup with 0.5x / 1x / 1.5x / 2x options.
-        if (fullscreenHelper == null) {
-            val helper = PlayerFullscreenHelper(
-                playerView = binding.playerView,
-                hostView = binding.root,
-                hideOnFullscreen = listOf(binding.toolbar, binding.btnBack),
-                speedButton = binding.btnPlaybackSpeed,
-                fullscreenButton = binding.btnFullscreen,
-            )
-            helper.attach()
-            fullscreenHelper = helper
-        }
-        fullscreenHelper?.onPlayerChanged(player)
-        binding.btnPlaybackSpeed.visibility = View.VISIBLE
-        binding.btnFullscreen.visibility = View.VISIBLE
-    }
-
-    private fun buildAlertPlayUrl(recId: Long): String {
-        if (baseUrl.isNullOrBlank()) return ""
-        val base = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"
-        return "${base}api/v1/cameras/${camera.id}/recordings/$recId/file"
+        setContentView(composeView)
     }
 
     fun onBackPressedCustom(): Boolean {
-        if (fullscreenHelper?.isFullscreen == true) {
-            fullscreenHelper?.exitFullscreen()
-            return true
-        }
-        if (binding.videoContainer.visibility == View.VISIBLE) {
-            player?.stop()
-            player?.release()
-            player = null
-            fullscreenHelper?.release()
-            fullscreenHelper = null
-            binding.btnPlaybackSpeed.visibility = View.GONE
-            binding.btnFullscreen.visibility = View.GONE
-            binding.videoContainer.visibility = View.GONE
-            binding.recyclerView.visibility = View.VISIBLE
-            return true
-        }
         return false
     }
+}
 
-    override fun onBackPressed() {
-        if (!onBackPressedCustom()) {
-            super.onBackPressed()
+@Composable
+fun AlertsDialogContent(
+    camera: Camera,
+    container: AppContainer,
+    onDismiss: () -> Unit,
+    onOpenRecording: (Long) -> Unit,
+    preset: com.homedatacenter.app.ui.glass.AppThemePreset = com.homedatacenter.app.ui.glass.AppThemePreset.WarmLight
+) {
+    val context = LocalContext.current
+    val baseUrl = remember { container.getApiBaseUrl() }
+    val token = remember { container.prefsManager.token }
+    val okHttpClient = remember { container.okHttpClient }
+
+    val tokens = GlassTheme.tokens
+    val textPrimary = tokens.textColor
+    val textSecondary = tokens.textSecondaryColor
+    val accent = tokens.accentColor
+
+    var allAlerts by remember { mutableStateOf<List<Alert>>(emptyList()) }
+    var isLoading by remember { mutableStateOf(true) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var selectedCategory by remember { mutableStateOf("全部") }
+
+    val scope = rememberCoroutineScope()
+
+    fun loadAlerts() {
+        isLoading = true
+        errorMessage = null
+        scope.launch {
+            try {
+                val authHeader = if (!token.isNullOrEmpty()) "Bearer $token" else ""
+                val resp = withContext(Dispatchers.IO) {
+                    container.getApi().listAlerts(authHeader, limit = 50, cameraId = camera.id)
+                }
+                val rawAlerts = if (resp.isSuccess) {
+                    resp.decodeData<AlertListData>()?.alerts ?: emptyList()
+                } else {
+                    emptyList()
+                }
+
+                // Strict Camera Matching
+                val expectedName = camera.name.trim()
+                val matched = rawAlerts.filter { alert ->
+                    if (!alert.cameraName.isNullOrBlank() && !alert.cameraName.equals(expectedName, ignoreCase = true)) {
+                        return@filter false
+                    }
+                    if (alert.cameraId != null && alert.cameraId > 0 && alert.cameraId != camera.id) {
+                        return@filter false
+                    }
+                    if (alert.cameraId != null && alert.cameraId == camera.id) {
+                        return@filter true
+                    }
+                    if (!alert.cameraName.isNullOrBlank() && alert.cameraName.equals(expectedName, ignoreCase = true)) {
+                        return@filter true
+                    }
+                    true
+                }
+                allAlerts = matched
+                isLoading = false
+            } catch (e: Exception) {
+                errorMessage = "加载失败: ${e.message}"
+                isLoading = false
+            }
         }
     }
 
-    override fun dismiss() {
-        player?.release()
-        player = null
-        fullscreenHelper?.release()
-        fullscreenHelper = null
-        super.dismiss()
+    LaunchedEffect(camera.id) {
+        loadAlerts()
+    }
+
+    val filteredAlerts = remember(allAlerts, selectedCategory) {
+        when (selectedCategory) {
+            "人形" -> allAlerts.filter { it.label.equals("person", ignoreCase = true) }
+            "车辆" -> allAlerts.filter {
+                it.label.equals("car", ignoreCase = true) ||
+                    it.label.equals("truck", ignoreCase = true) ||
+                    it.label.equals("bus", ignoreCase = true) ||
+                    it.label.equals("motorcycle", ignoreCase = true) ||
+                    it.label.equals("bicycle", ignoreCase = true)
+            }
+            "其他" -> allAlerts.filter {
+                !it.label.equals("person", ignoreCase = true) &&
+                    !it.label.equals("car", ignoreCase = true) &&
+                    !it.label.equals("truck", ignoreCase = true) &&
+                    !it.label.equals("bus", ignoreCase = true) &&
+                    !it.label.equals("motorcycle", ignoreCase = true) &&
+                    !it.label.equals("bicycle", ignoreCase = true)
+            }
+            else -> allAlerts
+        }
+    }
+
+    Box(
+        modifier = Modifier.fillMaxSize()
+    ) {
+        AmbientFluidBackground(
+            modifier = Modifier.fillMaxSize(),
+            preset = preset
+        )
+
+        Column(modifier = Modifier.fillMaxSize()) {
+            // Toolbar
+            Surface(
+                color = tokens.dialogBg,
+                border = BorderStroke(1.dp, tokens.cardBorder),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onDismiss) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.ic_baseline_arrow_back_24),
+                            contentDescription = "返回",
+                            tint = textPrimary
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "${camera.name} - 报警历史",
+                        color = textPrimary,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            // Category Filter Chips
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                listOf("全部", "人形", "车辆", "其他").forEach { category ->
+                    val isSelected = selectedCategory == category
+                    FilterChip(
+                        selected = isSelected,
+                        onClick = { selectedCategory = category },
+                        label = {
+                            Text(
+                                text = category,
+                                color = if (isSelected) tokens.accentColor else textSecondary,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                            )
+                        },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = tokens.accentBg,
+                            containerColor = tokens.controlBg
+                        ),
+                        border = FilterChipDefaults.filterChipBorder(
+                            enabled = true,
+                            selected = isSelected,
+                            borderColor = if (isSelected) tokens.accentColor else tokens.cardBorder
+                        ),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                }
+            }
+
+            // Content
+            if (isLoading) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(color = accent)
+                }
+            } else if (errorMessage != null) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(errorMessage ?: "", color = tokens.statusDanger, fontSize = 14.sp)
+                        Spacer(modifier = Modifier.height(12.dp))
+                        TextButton(onClick = { loadAlerts() }) {
+                            Text("点击重试", color = accent)
+                        }
+                    }
+                }
+            } else if (filteredAlerts.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("暂无此类报警记录", color = textSecondary, fontSize = 14.sp)
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(filteredAlerts, key = { it.id }) { alert ->
+                        AlertCard(
+                            alert = alert,
+                            baseUrl = baseUrl,
+                            token = token,
+                            onSnapshotClick = { a ->
+                                AlertSnapshotDialog(context, a, baseUrl, token, okHttpClient).show()
+                            },
+                            onJumpCamera = { a ->
+                                val ts = a.startTime.toLong()
+                                if (ts > 0) {
+                                    onOpenRecording(ts)
+                                }
+                            }
+                        )
+                    }
+                    item {
+                        Spacer(modifier = Modifier.height(24.dp))
+                    }
+                }
+            }
+        }
     }
 }

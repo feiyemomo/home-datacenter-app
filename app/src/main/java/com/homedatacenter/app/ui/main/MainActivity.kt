@@ -46,6 +46,8 @@ class MainActivity : AppCompatActivity() {
     private var activeFragment: Fragment? = null
     private var currentTab by mutableStateOf(MainTab.Dashboard)
     var isAdminState by mutableStateOf(false)
+    private val tabHistory = java.util.ArrayDeque<MainTab>()
+    private var lastBackPressTime = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -101,7 +103,30 @@ class MainActivity : AppCompatActivity() {
 
         NotificationHelper.createChannels(this)
         checkNotificationPermission()
-        handleIntentNavigation(intent)
+
+        onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (tabHistory.isNotEmpty()) {
+                    val prevTab = tabHistory.pop()
+                    selectTab(prevTab, addToHistory = false)
+                    return
+                }
+                if (currentTab != MainTab.Dashboard) {
+                    selectTab(MainTab.Dashboard, addToHistory = false)
+                    return
+                }
+                val now = System.currentTimeMillis()
+                if (now - lastBackPressTime < 2000L) {
+                    finish()
+                } else {
+                    lastBackPressTime = now
+                    android.widget.Toast.makeText(this@MainActivity, "再按一次退出应用", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        })
+        if (savedInstanceState == null) {
+            handleIntentNavigation(intent)
+        }
         ensureWebSocketConnected()
 
         binding.offlineBanner.setOnClickListener {
@@ -163,6 +188,8 @@ class MainActivity : AppCompatActivity() {
     private fun handleIntentNavigation(intent: Intent) {
         val tabId = intent.getIntExtra(NotificationHelper.EXTRA_NAVIGATE_TAB, 0)
         if (tabId != 0) {
+            intent.removeExtra(NotificationHelper.EXTRA_NAVIGATE_TAB)
+            setIntent(intent)
             val targetTab = when (tabId) {
                 R.id.nav_cameras -> MainTab.Cameras
                 R.id.nav_logs -> MainTab.Ops
@@ -175,6 +202,9 @@ class MainActivity : AppCompatActivity() {
         val cameraId = intent.getLongExtra(NotificationHelper.EXTRA_ALERT_CAMERA_ID, 0L)
         val startTs = intent.getLongExtra(NotificationHelper.EXTRA_ALERT_START_TS, 0L)
         if (cameraId > 0L) {
+            intent.removeExtra(NotificationHelper.EXTRA_ALERT_CAMERA_ID)
+            intent.removeExtra(NotificationHelper.EXTRA_ALERT_START_TS)
+            setIntent(intent)
             jumpToCameraDetail(cameraId, startTs)
         }
     }
@@ -253,9 +283,13 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    fun selectTab(tab: MainTab) {
+    fun selectTab(tab: MainTab, addToHistory: Boolean = true) {
         // Guard admin-only tabs
         val target = if (tab.requiresAdmin && !isAdminState) MainTab.Dashboard else tab
+        if (target != currentTab && addToHistory) {
+            tabHistory.remove(target)
+            tabHistory.push(currentTab)
+        }
         currentTab = target
         when (target) {
             MainTab.Dashboard -> showFragmentByTag(TAG_DASHBOARD) { DashboardFragment() }

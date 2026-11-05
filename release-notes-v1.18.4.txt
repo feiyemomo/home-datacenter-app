@@ -1,0 +1,13 @@
+v1.18.4 (build 224) 发布说明:
+
+1. 【录像与报警下层防穿帮修复】:
+   - 全面修复 RecordingsDialog 与 AlertsDialog 在展开时的背景穿帮问题，底层强制叠加 100% 不透明微晶流体背景 (Pass 0 solid base fill)，消除下层直播画面与操作按钮透显问题。
+   - 弹窗窗口属性在 init 与 onStart 阶段严格锁定全屏及主题背景，杜绝遮罩层失效。
+
+2. 【直播详情页与全场景深浅色主题统一】:
+   - 彻底修复低电量模式 / 省电降级模式 (Power Save Mode) 下 StaticDegradedBackground 导致浅色模式全屏突变黑屏底色的硬伤，Pass 0 强制绘制基底色，确保 4 套主题（晨曦浅色、曜夜深色、北欧苍翠、日落琥珀）纯正无偏差。
+   - 彻底杜绝直播播放器高度塌缩问题，提供 16:9 动态防抖兜底高度，严禁 WRAP_CONTENT 穿透。
+
+3. 【人脸档案与用户管理色彩解耦】:
+   - 家庭人脸档案中心 (FamilyFacesPageContent) 与相关对话框 (AddFamilyFaceDialog, ConfirmDeletePersonDialog) 彻底剥离硬编码冷青与暗黑背景，全面接入 GlassTheme.tokens 动态语义色。
+   - 用户管理中心 (UsersActivity) 与新增/编辑用户卡片对话框色彩完全跟随主题流光切换，输入框增加键盘安全避让与滑动支持。

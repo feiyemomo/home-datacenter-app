@@ -1,9 +1,41 @@
 <?xml version="1.0" encoding="utf-8"?>
-<shape xmlns:android="http://schemas.android.com/apk/res/android"
-    android:shape="rectangle">
-    <solid android:color="#FDFBF7" />
-    <corners android:radius="24dp" />
-    <stroke
-        android:width="1.2dp"
-        android:color="@color/divider" />
-</shape>
+<!-- Liquid glass dialog surface for filter and config dialogs:
+     24dp corners, translucent frosted body with specular glass border,
+     soft drop shadow, and top-edge light refraction highlight. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Soft drop shadow under the dialog -->
+    <item android:top="2dp">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/glass_shadow" />
+            <corners android:radius="24dp" />
+        </shape>
+    </item>
+    <!-- Frosted glass body -->
+    <item android:bottom="1dp">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/glass_bg_dialog" />
+            <corners android:radius="24dp" />
+            <stroke
+                android:width="1.2dp"
+                android:color="@color/glass_border" />
+        </shape>
+    </item>
+    <!-- Top-edge refraction highlight -->
+    <item
+        android:left="1dp"
+        android:right="1dp"
+        android:top="1dp"
+        android:bottom="23dp">
+        <shape android:shape="rectangle">
+            <gradient
+                android:type="linear"
+                android:angle="270"
+                android:startColor="@color/glass_highlight"
+                android:endColor="@android:color/transparent" />
+            <corners
+                android:radius="23dp"
+                android:bottomLeftRadius="0dp"
+                android:bottomRightRadius="0dp" />
+        </shape>
+    </item>
+</layer-list>

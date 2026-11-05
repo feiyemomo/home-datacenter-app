@@ -63,6 +63,8 @@ fun NetworkDetailPageContent(
 ) {
     val pullRefreshState = rememberPullToRefreshState()
     val tokens = GlassTheme.tokens
+    val textColor = if (tokens.isLight) Color(0xFF1E1B24) else Color(0xFFF8FAFC)
+    val textSecondaryColor = if (tokens.isLight) Color(0xFF5A5260) else Color(0xFFD4CDDB)
     val buttonBg = if (tokens.isLight) Color(0x14000000) else Color.White.copy(alpha = 0.08f)
 
     Column(
@@ -90,14 +92,14 @@ fun NetworkDetailPageContent(
                     Icon(
                         painter = painterResource(R.drawable.ic_baseline_arrow_back_24),
                         contentDescription = "返回",
-                        tint = tokens.textColor,
+                        tint = textColor,
                         modifier = Modifier.size(20.dp)
                     )
                 }
                 Spacer(modifier = Modifier.width(12.dp))
                 Text(
                     text = "网络连接质量",
-                    color = tokens.textColor,
+                    color = textColor,
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold
                 )
@@ -121,7 +123,7 @@ fun NetworkDetailPageContent(
                     Icon(
                         painter = painterResource(R.drawable.ic_refresh),
                         contentDescription = "刷新",
-                        tint = tokens.textColor,
+                        tint = textColor,
                         modifier = Modifier.size(18.dp)
                     )
                 }
@@ -190,6 +192,9 @@ private fun ClientPathCard(
     onPreferenceSelected: (NetworkPathPreference) -> Unit
 ) {
     val tokens = GlassTheme.tokens
+    val textColor = if (tokens.isLight) Color(0xFF1E1B24) else Color(0xFFF8FAFC)
+    val textSecondaryColor = if (tokens.isLight) Color(0xFF5A5260) else Color(0xFFD4CDDB)
+
     LiquidGlassCard(
         modifier = Modifier.fillMaxWidth()
     ) {
@@ -201,7 +206,7 @@ private fun ClientPathCard(
             ) {
                 Text(
                     text = "客户端实际链路",
-                    color = tokens.textColor,
+                    color = textColor,
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold
                 )
@@ -235,7 +240,7 @@ private fun ClientPathCard(
 
             Text(
                 text = "链路偏好设定",
-                color = tokens.textSecondaryColor,
+                color = textSecondaryColor,
                 fontSize = 12.sp
             )
 
@@ -279,6 +284,8 @@ private fun PreferenceOption(
     onClick: () -> Unit
 ) {
     val tokens = GlassTheme.tokens
+    val textSecondaryColor = if (tokens.isLight) Color(0xFF5A5260) else Color(0xFFD4CDDB)
+
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(8.dp))
@@ -292,7 +299,7 @@ private fun PreferenceOption(
     ) {
         Text(
             text = title,
-            color = if (isSelected) CyanAccent else tokens.textSecondaryColor,
+            color = if (isSelected) CyanAccent else textSecondaryColor,
             fontSize = 12.sp,
             fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
         )
@@ -302,13 +309,16 @@ private fun PreferenceOption(
 @Composable
 private fun QualityCard(networkStatus: NetworkStatus) {
     val tokens = GlassTheme.tokens
+    val textColor = if (tokens.isLight) Color(0xFF1E1B24) else Color(0xFFF8FAFC)
+    val textSecondaryColor = if (tokens.isLight) Color(0xFF5A5260) else Color(0xFFD4CDDB)
+
     LiquidGlassCard(
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(18.dp)) {
             Text(
                 text = "网络连接品质评分",
-                color = tokens.textColor,
+                color = textColor,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold
             )
@@ -323,7 +333,7 @@ private fun QualityCard(networkStatus: NetworkStatus) {
                             if (i <= q) R.drawable.ic_star_on else R.drawable.ic_star_off
                         ),
                         contentDescription = null,
-                        tint = if (i <= q) Color(0xFFFFB703) else tokens.textSecondaryColor.copy(alpha = 0.35f),
+                        tint = if (i <= q) Color(0xFFFFB703) else textSecondaryColor.copy(alpha = 0.35f),
                         modifier = Modifier.size(24.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
@@ -331,7 +341,7 @@ private fun QualityCard(networkStatus: NetworkStatus) {
                 Spacer(modifier = Modifier.width(12.dp))
                 Text(
                     text = "${q}/5 颗星",
-                    color = tokens.textColor,
+                    color = textColor,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Medium
                 )
@@ -349,13 +359,15 @@ private fun QualityCard(networkStatus: NetworkStatus) {
 @Composable
 private fun NatCard(nat: NatStatus) {
     val tokens = GlassTheme.tokens
+    val textColor = if (tokens.isLight) Color(0xFF1E1B24) else Color(0xFFF8FAFC)
+
     LiquidGlassCard(
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(18.dp)) {
             Text(
                 text = "NAT 穿透与公网地址",
-                color = tokens.textColor,
+                color = textColor,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold
             )
@@ -372,13 +384,15 @@ private fun NatCard(nat: NatStatus) {
 @Composable
 private fun P2PAndRelayCard(p2p: P2PStatus, relay: RelayStatus) {
     val tokens = GlassTheme.tokens
+    val textColor = if (tokens.isLight) Color(0xFF1E1B24) else Color(0xFFF8FAFC)
+
     LiquidGlassCard(
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(18.dp)) {
             Text(
                 text = "P2P 打洞与中继服务",
-                color = tokens.textColor,
+                color = textColor,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold
             )
@@ -398,13 +412,15 @@ private fun P2PAndRelayCard(p2p: P2PStatus, relay: RelayStatus) {
 @Composable
 private fun ServerEndpointCard(endpoint: ServerEndpoint) {
     val tokens = GlassTheme.tokens
+    val textColor = if (tokens.isLight) Color(0xFF1E1B24) else Color(0xFFF8FAFC)
+
     LiquidGlassCard(
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(18.dp)) {
             Text(
                 text = "NAS 服务端公开入口",
-                color = tokens.textColor,
+                color = textColor,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold
             )
@@ -421,13 +437,15 @@ private fun ServerEndpointCard(endpoint: ServerEndpoint) {
 @Composable
 private fun InfrastructureCard(system: SystemStatus) {
     val tokens = GlassTheme.tokens
+    val textColor = if (tokens.isLight) Color(0xFF1E1B24) else Color(0xFFF8FAFC)
+
     LiquidGlassCard(
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(18.dp)) {
             Text(
                 text = "基础设施与长连接",
-                color = tokens.textColor,
+                color = textColor,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold
             )
@@ -444,6 +462,9 @@ private fun InfrastructureCard(system: SystemStatus) {
 @Composable
 private fun InfoRow(label: String, value: String) {
     val tokens = GlassTheme.tokens
+    val textColor = if (tokens.isLight) Color(0xFF1E1B24) else Color(0xFFF8FAFC)
+    val textSecondaryColor = if (tokens.isLight) Color(0xFF5A5260) else Color(0xFFD4CDDB)
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -453,12 +474,12 @@ private fun InfoRow(label: String, value: String) {
     ) {
         Text(
             text = label,
-            color = tokens.textSecondaryColor,
+            color = textSecondaryColor,
             fontSize = 13.sp
         )
         Text(
             text = value,
-            color = tokens.textColor,
+            color = textColor,
             fontSize = 13.sp,
             fontWeight = FontWeight.Medium
         )

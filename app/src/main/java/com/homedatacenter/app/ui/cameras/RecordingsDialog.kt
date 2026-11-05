@@ -33,7 +33,39 @@ import com.homedatacenter.app.data.model.Camera
 import com.homedatacenter.app.data.model.Recording
 import com.homedatacenter.app.di.AppContainer
 import com.homedatacenter.app.databinding.DialogRecordingsBinding
-import com.homedatacenter.app.databinding.ItemDayRecordingBinding
+import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.ViewCompositionStrategy
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import com.homedatacenter.app.ui.glass.AmbientFluidBackground
+import com.homedatacenter.app.ui.glass.GlassTheme
+import com.homedatacenter.app.ui.glass.ProvideGlassTheme
+import com.homedatacenter.app.util.ThemeManager
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.homedatacenter.app.util.ExoPlayerRendererFactory
 import com.homedatacenter.app.util.PlayerFullscreenHelper
 import com.homedatacenter.app.util.PlayerGestureHelper
@@ -65,7 +97,7 @@ class RecordingsDialog(
     // ExoPlayer to the matching clip + offset immediately. The user
     // thus lands at the alert's exact moment without manual scrubbing.
     private val initialTimestamp: Long = 0L,
-) : Dialog(context, R.style.FullScreenDialog) {
+) : androidx.appcompat.app.AppCompatDialog(context, R.style.FullScreenDialog) {
 
     private lateinit var binding: DialogRecordingsBinding
     private lateinit var dayAdapter: DayRecordingAdapter
@@ -211,6 +243,31 @@ class RecordingsDialog(
     init {
         binding = DialogRecordingsBinding.inflate(LayoutInflater.from(context))
         setContentView(binding.root)
+        val isDark = ThemeManager.isDarkMode(context)
+        val bgColor = if (isDark) 0xFF090B10.toInt() else 0xFFF7F3EC.toInt()
+        window?.apply {
+            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            setBackgroundDrawable(android.graphics.drawable.ColorDrawable(bgColor))
+        }
+        binding.dialogFluidBg.apply {
+            setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindowOrReleasedFromPool)
+            setContent {
+                val preset by ThemeManager.themePresetFlow.collectAsState()
+                ProvideGlassTheme(preset = preset) {
+                    val tokens = GlassTheme.tokens
+                    Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = tokens.bgBase
+                    ) {
+                        AmbientFluidBackground(
+                            modifier = Modifier.fillMaxSize(),
+                            preset = preset
+                        )
+                    }
+                }
+            }
+        }
+
         setupRecyclerView()
         loadRecordings()
         binding.toolbar.setNavigationOnClickListener {
@@ -245,6 +302,25 @@ class RecordingsDialog(
         if (initialTimestamp > 0L) {
             pendingInitialTimestamp = initialTimestamp
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        val isDark = ThemeManager.isDarkMode(context)
+        val bgColor = if (isDark) 0xFF090B10.toInt() else 0xFFF7F3EC.toInt()
+        window?.apply {
+            setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            setBackgroundDrawable(android.graphics.drawable.ColorDrawable(bgColor))
+        }
+    }
+
+    public override fun onStop() {
+        super.onStop()
+        player?.pause()
+    }
+
+    fun pausePlayback() {
+        player?.pause()
     }
 
     private fun setupRecyclerView() {
@@ -1401,6 +1477,25 @@ class RecordingsDialog(
      * on each chip (e.g. "14:32:05") — chip.startUnixSec is in UTC,
      * we convert to LOCAL for display.
      */
+    private fun createMotionChipTextView(ctx: Context): android.widget.TextView {
+        val dp = ctx.resources.displayMetrics.density
+        return android.widget.TextView(ctx).apply {
+            layoutParams = android.widget.LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                marginStart = (1 * dp).toInt()
+                marginEnd = (1 * dp).toInt()
+            }
+            setPadding((4 * dp).toInt(), (2 * dp).toInt(), (4 * dp).toInt(), (2 * dp).toInt())
+            textSize = 9f
+            typeface = android.graphics.Typeface.MONOSPACE
+            setTextColor(android.graphics.Color.WHITE)
+            isClickable = true
+            isFocusable = true
+        }
+    }
+
     private fun populateMotionChips(
         chips: List<MotionChip>,
         dayStartLocalMillis: Long,
@@ -1491,7 +1586,7 @@ class RecordingsDialog(
                 // "⋯" chip. Click → seek to the middle chip of the
                 // run (visually meaningful — lands in the middle of
                 // the quiet stretch).
-                val tv = inflater.inflate(R.layout.item_motion_chip, container, false) as android.widget.TextView
+                val tv = createMotionChipTextView(context)
                 tv.text = "⋯"
                 tv.tag = "⋯" // tag used by FisheyeChipScroller for text hide/restore
                 tv.setBackgroundResource(R.drawable.bg_chip_motion_low)
@@ -1506,7 +1601,7 @@ class RecordingsDialog(
                 // Non-collapsed run: emit each chip individually.
                 for (i in run.startIdx..run.endIdx) {
                     val chip = sorted[i]
-                    val tv = inflater.inflate(R.layout.item_motion_chip, container, false) as android.widget.TextView
+                    val tv = createMotionChipTextView(context)
                     val label = fmt.format(Date(chip.startUnixSec * 1000L))
                     tv.text = label
                     tv.tag = label
@@ -1889,9 +1984,14 @@ class RecordingsDialog(
     ) : ListAdapter<DayRecording, DayRecordingAdapter.DayViewHolder>(DiffCallback()) {
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): DayViewHolder {
-            val b = ItemDayRecordingBinding.inflate(
-                LayoutInflater.from(parent.context), parent, false)
-            return DayViewHolder(b)
+            val cv = ComposeView(parent.context).apply {
+                setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindowOrReleasedFromPool)
+                layoutParams = ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                )
+            }
+            return DayViewHolder(cv)
         }
 
         override fun onBindViewHolder(holder: DayViewHolder, position: Int) {
@@ -1899,52 +1999,23 @@ class RecordingsDialog(
         }
 
         inner class DayViewHolder(
-            private val binding: ItemDayRecordingBinding,
-        ) : RecyclerView.ViewHolder(binding.root) {
-            fun bind(day: DayRecording) {
-                val cal = day.dayStartCalendar
-                // Date block.
-                binding.tvDayOfMonth.text =
-                    cal.get(Calendar.DAY_OF_MONTH).toString()
-                binding.tvMonthYear.text = String.format(Locale.US,
-                    "%04d年%d月", cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1)
-                // Weekday — Locale.CHINA gives "星期X" in Chinese.
-                binding.tvWeekday.text = String.format(Locale.CHINA, "%tA", cal)
-                // Stats: "N 段 · HH:mm:ss 总时长"
-                val h = day.totalDurationSeconds / 3600
-                val m = (day.totalDurationSeconds % 3600) / 60
-                val s = day.totalDurationSeconds % 60
-                val durStr = if (h > 0) String.format("%d时%02d分", h, m)
-                             else String.format("%02d分%02d秒", m, s)
-                binding.tvStats.text = "${day.recordingCount} 段 · $durStr"
-                // v1.6.8: status chip now shows the total duration in
-                // compact form (e.g. "5h12m" or "42m") instead of
-                // duplicating the segment count already shown in
-                // tvStats. This gives the user two complementary
-                // pieces of info at a glance: row text = "N 段 · HH时MM分"
-                // (precise), chip = "5h12m" (compact). Compact form
-                // is built without locale-specific separators so it
-                // stays short inside the pill.
-                val compactDur = if (h > 0) "${h}h${m}m"
-                                 else "${m}m${s}s"
-                binding.tvStatus.text = compactDur
-                // v1.6.8: show "今天" badge when the card's LOCAL day
-                // matches the current LOCAL day. Compare by ERA + YEAR
-                // + DAY_OF_YEAR to avoid false matches across year
-                // boundaries. The badge is gone by default in the
-                // layout; we only flip to VISIBLE here.
-                val today = Calendar.getInstance()
-                val isToday = cal.get(Calendar.ERA) == today.get(Calendar.ERA) &&
-                              cal.get(Calendar.YEAR) == today.get(Calendar.YEAR) &&
-                              cal.get(Calendar.DAY_OF_YEAR) == today.get(Calendar.DAY_OF_YEAR)
-                binding.tvTodayBadge.visibility =
-                    if (isToday) View.VISIBLE else View.GONE
-                binding.tvCloudBadge.visibility =
-                    if (day.isCloud) View.VISIBLE else View.GONE
-                if (day.isCloud) {
-                    binding.tvStats.text = "${day.recordingCount} 段 · $durStr (蓝奏云归档)"
+            val composeView: ComposeView,
+        ) : RecyclerView.ViewHolder(composeView) {
+            private val dayState = androidx.compose.runtime.mutableStateOf<DayRecording?>(null)
+
+            init {
+                composeView.setContent {
+                    val preset by ThemeManager.themePresetFlow.collectAsState()
+                    ProvideGlassTheme(preset = preset) {
+                        dayState.value?.let { day ->
+                            DayRecordingCard(day = day, onClick = { onPlayDay(day) })
+                        }
+                    }
                 }
-                binding.root.setOnClickListener { onPlayDay(day) }
+            }
+
+            fun bind(day: DayRecording) {
+                dayState.value = day
             }
         }
 
@@ -1955,6 +2026,141 @@ class RecordingsDialog(
             }
             override fun areContentsTheSame(oldItem: DayRecording, newItem: DayRecording): Boolean {
                 return oldItem == newItem
+            }
+        }
+    }
+}
+
+@Composable
+fun DayRecordingCard(
+    day: RecordingsDialog.DayRecording,
+    onClick: () -> Unit
+) {
+    val tokens = GlassTheme.tokens
+    val cal = day.dayStartCalendar
+    val today = Calendar.getInstance()
+    val isToday = cal.get(Calendar.ERA) == today.get(Calendar.ERA) &&
+                  cal.get(Calendar.YEAR) == today.get(Calendar.YEAR) &&
+                  cal.get(Calendar.DAY_OF_YEAR) == today.get(Calendar.DAY_OF_YEAR)
+
+    val h = day.totalDurationSeconds / 3600
+    val m = (day.totalDurationSeconds % 3600) / 60
+    val s = day.totalDurationSeconds % 60
+    val durStr = if (h > 0) String.format(Locale.getDefault(), "%d时%02d分", h, m)
+                 else String.format(Locale.getDefault(), "%02d分%02d秒", m, s)
+    val compactDur = if (h > 0) "${h}h${m}m" else "${m}m${s}s"
+
+    val accent = tokens.accentColor
+    val textPrimary = tokens.textColor
+    val textSecondary = tokens.textSecondaryColor
+    val dialogBg = tokens.dialogBg
+    val borderCol = tokens.cardBorder
+
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = dialogBg,
+        border = BorderStroke(1.dp, borderCol),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 5.dp)
+            .clickable { onClick() }
+    ) {
+        Row(
+            modifier = Modifier
+                .padding(14.dp)
+                .fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Left Accent Stripe
+            Box(
+                modifier = Modifier
+                    .width(3.dp)
+                    .height(42.dp)
+                    .background(accent, RoundedCornerShape(2.dp))
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+
+            // Date Block
+            Column(
+                modifier = Modifier.width(68.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                if (isToday) {
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = accent,
+                        modifier = Modifier.padding(bottom = 2.dp)
+                    ) {
+                        Text(
+                            text = "今天",
+                            color = tokens.bgBase,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                        )
+                    }
+                } else if (day.isCloud) {
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = tokens.accentBg,
+                        border = BorderStroke(1.dp, tokens.cardBorder),
+                        modifier = Modifier.padding(bottom = 2.dp)
+                    ) {
+                        Text(
+                            text = "蓝奏云",
+                            color = tokens.accentColor,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                        )
+                    }
+                }
+
+                Text(
+                    text = cal.get(Calendar.DAY_OF_MONTH).toString(),
+                    color = textPrimary,
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = String.format(Locale.US, "%04d年%d月", cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1),
+                    color = textSecondary,
+                    fontSize = 11.sp
+                )
+            }
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            // Middle: Weekday & Stats
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = String.format(Locale.CHINA, "%tA", cal),
+                    color = textPrimary,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = if (day.isCloud) "${day.recordingCount} 段 · $durStr (蓝奏云归档)"
+                           else "${day.recordingCount} 段 · $durStr",
+                    color = textSecondary,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
+            }
+
+            // Right Status Chip
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = tokens.controlBg,
+                border = BorderStroke(1.dp, tokens.cardBorder)
+            ) {
+                Text(
+                    text = compactDur,
+                    color = tokens.accentColor,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                )
             }
         }
     }

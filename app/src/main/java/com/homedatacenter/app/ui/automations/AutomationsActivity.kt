@@ -52,6 +52,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -102,8 +103,8 @@ class AutomationsActivity : AppCompatActivity() {
             val isDark = ThemeManager.isDarkMode(this)
             val colorScheme = if (isDark) {
                 darkColorScheme(
-                    primary = Color(0xFFD7A064),
-                    secondary = Color(0xFFE8A87C),
+                    primary = Color(0xFF38BDF8),
+                    secondary = Color(0xFF818CF8),
                     background = Color(0xFF16141C),
                     surface = Color(0xFF2A2632),
                     onPrimary = Color(0xFF16141C),
@@ -111,8 +112,8 @@ class AutomationsActivity : AppCompatActivity() {
                 )
             } else {
                 lightColorScheme(
-                    primary = Color(0xFFD7A064),
-                    secondary = Color(0xFFE8A87C),
+                    primary = Color(0xFF0284C7),
+                    secondary = Color(0xFF6366F1),
                     background = Color(0xFFF6F1EA),
                     surface = Color(0xFFFFFCF8),
                     onPrimary = Color.White,
@@ -120,11 +121,20 @@ class AutomationsActivity : AppCompatActivity() {
                 )
             }
 
-            MaterialTheme(colorScheme = colorScheme) {
-                AutomationsScreen(
-                    container = container,
-                    onBack = { finish() }
-                )
+            val preset by ThemeManager.themePresetFlow.collectAsState()
+            com.homedatacenter.app.ui.glass.ProvideGlassTheme(preset = preset) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    com.homedatacenter.app.ui.glass.AmbientFluidBackground(
+                        modifier = Modifier.fillMaxSize(),
+                        preset = preset
+                    )
+                    MaterialTheme(colorScheme = colorScheme) {
+                        AutomationsScreen(
+                            container = container,
+                            onBack = { finish() }
+                        )
+                    }
+                }
             }
         }
     }
@@ -286,7 +296,7 @@ private fun AutomationsScreen(
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface
+                    containerColor = Color.Transparent
                 )
             )
         },
@@ -307,7 +317,7 @@ private fun AutomationsScreen(
                 )
             }
         },
-        containerColor = MaterialTheme.colorScheme.background
+        containerColor = Color.Transparent
     ) { innerPadding ->
         Column(
             modifier = Modifier
@@ -623,7 +633,7 @@ private fun AutomationPipelineCard(
                     "camera.online" -> "设备上线"
                     else -> rule.trigger
                 }
-                PipelineNodeChip(text = triggerLabel, bgColor = Color(0x28D7A064), textColor = Color(0xFFD7A064))
+                PipelineNodeChip(text = triggerLabel, bgColor = Color(0x2838BDF8), textColor = Color(0xFF38BDF8))
 
                 Text("➔", color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f), fontSize = 12.sp, modifier = Modifier.align(Alignment.CenterVertically))
 
@@ -715,7 +725,7 @@ private fun PipelineNodeChip(text: String, bgColor: Color, textColor: Color) {
 private fun HeatBadge(fireCount: Long) {
     val (text, color, bg) = when {
         fireCount >= 20 -> Triple("高频", Color(0xFFE07070), Color(0x28E07070))
-        fireCount > 0 -> Triple("正常", Color(0xFFD7A064), Color(0x28D7A064))
+        fireCount > 0 -> Triple("正常", Color(0xFF38BDF8), Color(0x2838BDF8))
         else -> Triple("未触发", Color(0xFF8A7E72), Color(0x188A7E72))
     }
     Box(

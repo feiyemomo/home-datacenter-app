@@ -34,13 +34,13 @@
     <color name="bg_primary">#F7F3EC</color>
     <color name="bg_secondary">#EDE8E0</color>
     <color name="bg_surface">#FFFFFF</color>
-    <color name="card_bg">#F2FFFFFF</color>
+    <color name="card_bg">#BFFFFFFF</color>
     <color name="card_stroke">#26D7A064</color>
     <color name="card_bottom_bg">#F5F2EB</color>
     <color name="divider">#1F2A1C0E</color>
 
     <!-- Glass effect — clean translucent frosted white crystal with warm amber specular edge -->
-    <color name="glass_bg">#F2FFFFFF</color>
+    <color name="glass_bg">#BFFFFFFF</color>
     <color name="glass_bg_dialog">#F7FFFFFF</color>
     <color name="glass_bg_nav">#F2FFFFFF</color>
     <color name="glass_border">#26D7A064</color>
@@ -75,39 +75,44 @@
     <color name="chip_unselected_bg">#0D000000</color>
     <color name="chip_unselected_text">#5A5260</color>
 
+    <!-- Control & Card Border Design Tokens -->
+    <color name="control_bg">#0D0F172A</color>
+    <color name="card_border">#0F000000</color>
+    <color name="accent_bg">#1F0284C7</color>
+
     <!-- Toolbar liquid glass -->
     <color name="toolbar_glass_start">#E6FFFFFF</color>
     <color name="toolbar_glass_end">#CCFFFFFF</color>
-    <color name="toolbar_glass_border">#26D7A064</color>
+    <color name="toolbar_glass_border">#0F000000</color>
 
-    <!-- Action button semantic colors — Light Theme (high-contrast vivid pills) -->
-    <color name="btn_reload_bg">#1F0284C7</color>
-    <color name="btn_reload_stroke">#4D0284C7</color>
-    <color name="btn_reload_ripple">#330284C7</color>
-    <color name="btn_reload_highlight">#40FFFFFF</color>
-    <color name="btn_reload_text">#0284C7</color>
-    <color name="btn_reload_icon">#0284C7</color>
+    <!-- Action button semantic colors — Light Theme (unified decluttered styling) -->
+    <color name="btn_reload_bg">#0D0F172A</color>
+    <color name="btn_reload_stroke">#0F000000</color>
+    <color name="btn_reload_ripple">#1A000000</color>
+    <color name="btn_reload_highlight">#00000000</color>
+    <color name="btn_reload_text">#0F172A</color>
+    <color name="btn_reload_icon">#0F172A</color>
 
-    <color name="btn_audio_bg">#1F10B981</color>
-    <color name="btn_audio_stroke">#4D10B981</color>
-    <color name="btn_audio_ripple">#3310B981</color>
-    <color name="btn_audio_highlight">#40FFFFFF</color>
-    <color name="btn_audio_text">#059669</color>
-    <color name="btn_audio_icon">#059669</color>
+    <color name="btn_audio_bg">#1F0284C7</color>
+    <color name="btn_audio_stroke">#0284C7</color>
+    <color name="btn_audio_ripple">#330284C7</color>
+    <color name="btn_audio_highlight">#00000000</color>
+    <color name="btn_audio_text">#0284C7</color>
+    <color name="btn_audio_icon">#0284C7</color>
 
-    <color name="btn_playback_bg">#1F6366F1</color>
-    <color name="btn_playback_stroke">#4D6366F1</color>
-    <color name="btn_playback_ripple">#336366F1</color>
-    <color name="btn_playback_highlight">#40FFFFFF</color>
-    <color name="btn_playback_text">#4F46E5</color>
-    <color name="btn_playback_icon">#4F46E5</color>
+    <color name="btn_playback_bg">#0D0F172A</color>
+    <color name="btn_playback_stroke">#0F000000</color>
+    <color name="btn_playback_ripple">#1A000000</color>
+    <color name="btn_playback_highlight">#00000000</color>
+    <color name="btn_playback_text">#0F172A</color>
+    <color name="btn_playback_icon">#0F172A</color>
 
     <color name="btn_alerts_bg">#1FF59E0B</color>
     <color name="btn_alerts_stroke">#4DF59E0B</color>
     <color name="btn_alerts_ripple">#33F59E0B</color>
-    <color name="btn_alerts_highlight">#40FFFFFF</color>
-    <color name="btn_alerts_text">#D97706</color>
-    <color name="btn_alerts_icon">#D97706</color>
+    <color name="btn_alerts_highlight">#00000000</color>
+    <color name="btn_alerts_text">#F59E0B</color>
+    <color name="btn_alerts_icon">#F59E0B</color>
 
     <color name="btn_primary_start">#1F0284C7</color>
     <color name="btn_primary_mid">#1A6366F1</color>

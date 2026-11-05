@@ -170,6 +170,27 @@ class AppContainer(private val context: Context) {
     val warmScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var warmJob: Job? = null
 
+    init {
+        // Non-blocking startup sweep: prune historical APKs and orphaned partial downloads
+        warmScope.launch {
+            try {
+                if (!downloadingApk) {
+                    val freed = com.homedatacenter.app.util.ApkInstaller.pruneStaleDownloads(context)
+                    if (freed > 0) {
+                        val freedStr = if (freed >= 1024 * 1024) {
+                            String.format(java.util.Locale.getDefault(), "%.1f MB", freed / (1024.0 * 1024.0))
+                        } else {
+                            "${(freed + 1023) / 1024} KB"
+                        }
+                        Log.i("AppContainer", "Startup downloads sweep freed $freedStr")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("AppContainer", "Startup downloads sweep failed: ${e.message}")
+            }
+        }
+    }
+
     /**
      * Kick off WebRTC client pre-warming. Called from
      * HomeCenterApp.onCreate after we know the user is logged in
@@ -293,6 +314,11 @@ class AppContainer(private val context: Context) {
                     cachedUpdateInfo = info
                     Log.d("AppContainer",
                         "Update available: ${info.version_name} (flavor=${info.flavor.ifEmpty { if (info.isRelease) "release" else "debug" }}, installed=$installedName)")
+                    // Prune historical APKs preserving only this active target update
+                    val targetName = if (info.file_name.isNotEmpty()) info.file_name else "app-debug-v${info.version_name}.apk"
+                    val targetFile = java.io.File(java.io.File(context.filesDir, "downloads"), targetName)
+                    com.homedatacenter.app.util.ApkInstaller.pruneStaleDownloads(context, targetFile)
+
                     // v1.6.28: start downloading the APK immediately
                     // so it's ready on disk when the user visits the
                     // settings page — no manual "download" step.
@@ -300,6 +326,8 @@ class AppContainer(private val context: Context) {
                 } else {
                     Log.d("AppContainer",
                         "App is up-to-date (installed=$installedName, latest=${info.version_name})")
+                    // App is up to date, purge any remaining historical update files
+                    com.homedatacenter.app.util.ApkInstaller.pruneStaleDownloads(context, null)
                 }
             } catch (e: Exception) {
                 updateCheckFailed = true
@@ -375,9 +403,10 @@ class AppContainer(private val context: Context) {
     }
 
     /** Clear the cached update info (e.g. after the user installs
-     *  the new version and the app restarts). */
+     *  the new version and the app restarts, or changes release track). */
     fun clearCachedUpdateInfo() {
         cachedUpdateInfo = null
+        cachedDownloadedApk = null
         updateCheckFailed = false
     }
 

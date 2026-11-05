@@ -87,6 +87,10 @@ object ApkInstaller {
             }
             val apkFile = File(downloadsDir, fileName)
 
+            // Prune any older APKs and abandoned .part files before downloading,
+            // preserving only the active target file and its .part companion.
+            pruneStaleDownloads(downloadsDir, installedVersionName(context), apkFile)
+
             // v1.7.22: resumable download. If a partial file from a
             // previous interrupted attempt exists AND the server
             // reports a size for this release, send an HTTP Range
@@ -171,11 +175,10 @@ object ApkInstaller {
             }
 
             // Integrity check: verify the downloaded file matches
-            // the server-reported size. If size_bytes is unknown
-            // (<=0), skip the check and trust the stream completion.
-            if (totalSize > 0 && partFile.length() != totalSize) {
-                Log.e(TAG, "Download size mismatch: got ${partFile.length()}, expected $totalSize")
-                // Keep the .part file so the next attempt can resume.
+            // the server-reported size, SHA-256 checksum (if provided), and is a valid APK package.
+            if (!verifyApkIntegrity(context, partFile, info.sha256, totalSize)) {
+                Log.e(TAG, "Download integrity verification failed for ${partFile.name}")
+                partFile.delete()
                 return@withContext null
             }
 
@@ -259,10 +262,59 @@ object ApkInstaller {
         val fileName = if (info.file_name.isNotEmpty()) info.file_name
             else "app-debug-v${info.version_name}.apk"
         val apkFile = File(File(context.filesDir, "downloads"), fileName)
-        // size_bytes <= 0 means the server didn't report a size —
-        // can't verify integrity, so treat as not cached.
-        return info.size_bytes > 0 && apkFile.exists() &&
-            apkFile.length() == info.size_bytes
+        return verifyApkIntegrity(context, apkFile, info.sha256, info.size_bytes)
+    }
+
+    /**
+     * Verifies that the given APK file exists, matches expected size / SHA-256
+     * (if specified), and can be parsed by Android's PackageManager.
+     */
+    fun verifyApkIntegrity(
+        context: Context,
+        file: File,
+        expectedSha256: String? = null,
+        expectedSize: Long = 0L,
+    ): Boolean {
+        if (!file.exists() || !file.isFile) return false
+        if (expectedSize > 0L && file.length() != expectedSize) {
+            Log.e(TAG, "Integrity check failed: file size ${file.length()} != expected $expectedSize")
+            return false
+        }
+        if (!expectedSha256.isNullOrBlank()) {
+            val actualHash = computeSha256(file)
+            if (!actualHash.equals(expectedSha256, ignoreCase = true)) {
+                Log.e(TAG, "Integrity check failed: sha256 mismatch ($actualHash vs $expectedSha256)")
+                return false
+            }
+        }
+        val pm = runCatching { context.packageManager }.getOrNull()
+        if (pm != null) {
+            val archiveInfo = runCatching { pm.getPackageArchiveInfo(file.absolutePath, 0) }.getOrNull()
+            if (archiveInfo == null) {
+                Log.e(TAG, "Integrity check failed: failed to parse APK archive (corrupt or invalid package)")
+                return false
+            }
+            if (archiveInfo.packageName != context.packageName) {
+                Log.e(TAG, "Integrity check failed: package name mismatch (${archiveInfo.packageName} != ${context.packageName})")
+                return false
+            }
+        }
+        return true
+    }
+
+    /**
+     * Computes the SHA-256 hex digest of the given file.
+     */
+    fun computeSha256(file: File): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buf = ByteArray(64 * 1024)
+            var read: Int
+            while (input.read(buf).also { read = it } != -1) {
+                digest.update(buf, 0, read)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
     /**
@@ -369,15 +421,25 @@ object ApkInstaller {
      * "X.Y.Z" naming convention.
      */
     fun compareVersions(a: String, b: String): Int {
-        val pa = a.split(".").map { it.toIntOrNull() ?: 0 }
-        val pb = b.split(".").map { it.toIntOrNull() ?: 0 }
+        val cleanA = a.trim().removePrefix("v").removePrefix("V")
+        val cleanB = b.trim().removePrefix("v").removePrefix("V")
+        val pa = cleanA.split(".").map { it.substringBefore("-").toIntOrNull() ?: 0 }
+        val pb = cleanB.split(".").map { it.substringBefore("-").toIntOrNull() ?: 0 }
         val n = maxOf(pa.size, pb.size)
         for (i in 0 until n) {
             val va = pa.getOrElse(i) { 0 }
             val vb = pb.getOrElse(i) { 0 }
             if (va != vb) return va - vb
         }
-        return 0
+        // Numeric components are identical (e.g. "1.17.1-rc1" vs "1.17.1")
+        val preA = if (cleanA.contains("-")) cleanA.substringAfter("-") else null
+        val preB = if (cleanB.contains("-")) cleanB.substringAfter("-") else null
+        return when {
+            preA == null && preB == null -> 0
+            preA == null && preB != null -> 1   // 1.17.1 (release) > 1.17.1-rc1 (prerelease)
+            preA != null && preB == null -> -1  // 1.17.1-rc1 < 1.17.1
+            else -> preA!!.compareTo(preB!!)    // 1.17.1-rc2 > 1.17.1-rc1
+        }
     }
 
     /**
@@ -386,11 +448,11 @@ object ApkInstaller {
      * Returns 0 if string is not in MAJOR.MINOR.PATCH format.
      */
     fun parseVersionCode(versionName: String): Int {
-        val parts = versionName.split(".")
+        val parts = versionName.trim().removePrefix("v").removePrefix("V").split(".")
         if (parts.size != 3) return 0
         val major = parts[0].toIntOrNull() ?: return 0
         val minor = parts[1].toIntOrNull() ?: return 0
-        val patch = parts[2].toIntOrNull() ?: return 0
+        val patch = parts[2].substringBefore("-").toIntOrNull() ?: return 0
         return major * 10000 + minor * 100 + patch
     }
 
@@ -443,5 +505,122 @@ object ApkInstaller {
         val installedCode = installedVersionCode(context)
         val installedName = installedVersionName(context)
         return hasUpdate(installedCode, installedName, info.version_code, info.version_name)
+    }
+
+    /**
+     * Extracts semantic version string from standard APK file names:
+     * e.g. "app-debug-v1.17.0.apk" -> "1.17.0"
+     *      "app-release-v1.6.11.apk" -> "1.6.11"
+     *      "home-datacenter-app-1.15.0.apk" -> "1.15.0"
+     */
+    fun extractVersionFromFileName(fileName: String): String? {
+        val regex = Regex("""[-_vV](\d+\.\d+(?:\.\d+)?(?:-[a-zA-Z0-9.]+)?)\.apk$""")
+        val match = regex.find(fileName)
+        return match?.groupValues?.get(1)
+    }
+
+    /**
+     * Clean up stale APK and .part files from the downloads directory to prevent
+     * storage accumulation over repeated updates.
+     *
+     * 1. If [preserveTargetFile] is specified, it and its companion .part file are preserved.
+     *    All other files in the directory are considered obsolete and purged.
+     * 2. If [preserveTargetFile] is null:
+     *    - All .part and .tmp files are purged (interrupted or orphaned downloads).
+     *    - Any APK whose version is <= [installedVersionName] is purged (already installed).
+     *    - Any unparseable APK is purged.
+     *    - Future pending updates (version > installed) are kept.
+     *
+     * @param downloadsDir directory holding the update files
+     * @param installedVersionName currently installed versionName (e.g. "1.17.0")
+     * @param preserveTargetFile optional File that should not be touched
+     * @return Total bytes freed
+     */
+    fun pruneStaleDownloads(
+        downloadsDir: File,
+        installedVersionName: String,
+        preserveTargetFile: File? = null,
+    ): Long {
+        if (!downloadsDir.exists() || !downloadsDir.isDirectory) return 0L
+        var reclaimedBytes = 0L
+
+        val targetName = preserveTargetFile?.name
+        val targetPartName = if (targetName != null) "$targetName.part" else null
+
+        val files = downloadsDir.listFiles() ?: return 0L
+        for (file in files) {
+            if (!file.isFile) continue
+
+            // 1. Preserve active target file and its partial download companion
+            if (targetName != null && (file.name == targetName || file.name == targetPartName)) {
+                continue
+            }
+
+            // 2. Stale or orphaned partial/temporary files
+            if (file.name.endsWith(".part") || file.name.endsWith(".tmp")) {
+                val shouldDeletePart = if (preserveTargetFile != null) {
+                    // An explicit pending target update is specified, so any other partial download is obsolete
+                    true
+                } else if (installedVersionName.isNotBlank()) {
+                    val baseName = if (file.name.endsWith(".part")) file.name.removeSuffix(".part") else file.name.removeSuffix(".tmp")
+                    val partVer = extractVersionFromFileName(baseName)
+                    if (partVer != null) {
+                        // Delete if part belongs to an already installed or older version; preserve if newer for resume
+                        compareVersions(partVer, installedVersionName) <= 0
+                    } else {
+                        // Orphaned temporary file without identifiable newer version
+                        true
+                    }
+                } else {
+                    false
+                }
+
+                if (shouldDeletePart) {
+                    val len = file.length()
+                    if (file.delete()) {
+                        reclaimedBytes += len
+                        Log.d(TAG, "Deleted stale partial download: ${file.name} ($len bytes)")
+                    }
+                }
+                continue
+            }
+
+            // 3. Obsolete APK files
+            if (file.name.endsWith(".apk")) {
+                val shouldDelete = if (preserveTargetFile != null) {
+                    // An explicit pending target update is specified, so all other historical APKs are stale
+                    true
+                } else if (installedVersionName.isNotBlank()) {
+                    val fileVer = extractVersionFromFileName(file.name)
+                    if (fileVer != null) {
+                        compareVersions(fileVer, installedVersionName) <= 0
+                    } else {
+                        // Unparseable APK name with no target preservation
+                        true
+                    }
+                } else {
+                    false
+                }
+
+                if (shouldDelete) {
+                    val len = file.length()
+                    if (file.delete()) {
+                        reclaimedBytes += len
+                        Log.d(TAG, "Deleted obsolete APK: ${file.name} ($len bytes)")
+                    }
+                }
+            }
+        }
+
+        return reclaimedBytes
+    }
+
+    /**
+     * Convenience context-aware wrapper for [pruneStaleDownloads].
+     */
+    fun pruneStaleDownloads(context: Context, preserveTargetFile: File? = null): Long {
+        val downloadsDir = File(context.filesDir, "downloads")
+        val installedName = installedVersionName(context)
+        return pruneStaleDownloads(downloadsDir, installedName, preserveTargetFile)
     }
 }

@@ -16,8 +16,4 @@
                 android:endColor="@color/gradient_end" />
         </shape>
     </item>
-    <!-- Centered brand mark -->
-    <item
-        android:drawable="@drawable/splash_bg_icon"
-        android:gravity="center" />
 </layer-list>

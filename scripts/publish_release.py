@@ -81,18 +81,25 @@ def connect():
     for host, port in targets:
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        try:
-            connect_kwargs = {"username": user, "timeout": 10}
-            if os.path.isfile(key_file):
-                connect_kwargs["key_filename"] = key_file
-            if pw:
-                connect_kwargs["password"] = pw
-            ssh.connect(host, port=port, **connect_kwargs)
-            print(f"==> connected to {host}:{port}")
-            return ssh
-        except Exception as e:  # try next path
-            last = e
-            print(f"    {host}:{port} failed: {e}")
+        # Try key auth first
+        if os.path.isfile(key_file):
+            try:
+                ssh.connect(host, port=port, username=user, key_filename=key_file, timeout=10)
+                print(f"==> connected to {host}:{port} via SSH key")
+                return ssh
+            except Exception as e_key:
+                print(f"    {host}:{port} key auth failed: {e_key}")
+        # Try password auth if provided
+        if pw:
+            try:
+                ssh.connect(host, port=port, username=user, password=pw, timeout=10)
+                print(f"==> connected to {host}:{port} via password")
+                return ssh
+            except Exception as e_pw:
+                last = e_pw
+                print(f"    {host}:{port} password auth failed: {e_pw}")
+        else:
+            last = "No password or valid key available"
     sys.exit(f"ERROR: cannot reach NAS: {last}")
 
 

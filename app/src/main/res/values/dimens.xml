@@ -24,11 +24,11 @@
     <!-- Camera list column count. Phones use 1 column (full-width
          cards); tablets use 2 columns (side-by-side cards). -->
     <integer name="camera_list_column_count">1</integer>
-    <!-- Camera card thumbnail size. Bigger on tablets so the
-         extra horizontal real estate is put to use. -->
-    <dimen name="camera_card_thumb_width">192dp</dimen>
-    <dimen name="camera_card_thumb_height">108dp</dimen>
-    <dimen name="camera_card_height">132dp</dimen>
+    <!-- Camera card thumbnail size. Optimized for mobile phone viewports
+         (360-411dp) to leave sufficient width for text & badges without wrapping. -->
+    <dimen name="camera_card_thumb_width">144dp</dimen>
+    <dimen name="camera_card_thumb_height">81dp</dimen>
+    <dimen name="camera_card_height">105dp</dimen>
     <!-- Fragment content max width on wide screens. 0dp = no cap
          (full width). Tablets cap to keep content readable. -->
     <dimen name="fragment_content_max_width">0dp</dimen>

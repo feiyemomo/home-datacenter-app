@@ -1,61 +1,64 @@
 package com.homedatacenter.app.ui.vision
 
 import android.Manifest
-import android.app.AlertDialog
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.os.Bundle
 import android.util.Base64
-import android.view.Menu
-import android.view.MenuItem
-import android.view.View
 import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AppCompatActivity
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
-import androidx.recyclerview.widget.LinearLayoutManager
 import com.homedatacenter.app.HomeCenterApp
 import com.homedatacenter.app.R
 import com.homedatacenter.app.data.model.VisionPerson
 import com.homedatacenter.app.data.model.VisionStatus
-import com.homedatacenter.app.databinding.ActivityFamilyFacesBinding
-import com.homedatacenter.app.databinding.DialogAddFamilyFaceBinding
 import com.homedatacenter.app.di.AppContainer
+import com.homedatacenter.app.ui.glass.ProvideGlassTheme
+import com.homedatacenter.app.util.ThemeManager
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.InputStream
-import java.util.Locale
 
 /**
  * Family Faces Management and Vision AI Status activity.
- *
- * Allows family administrators to:
- * 1. Monitor edge Vision AI service status, CPU usage & safety gate thresholds.
- * 2. View registered family members whose face embeddings are loaded.
- * 3. Register new family face profiles via gallery pick or camera photo.
- * 4. Remove family face profiles.
+ * Full Jetpack Compose declarative architecture.
  */
-class FamilyFacesActivity : AppCompatActivity() {
+class FamilyFacesActivity : ComponentActivity() {
 
-    private lateinit var binding: ActivityFamilyFacesBinding
     private lateinit var container: AppContainer
-    private lateinit var adapter: FamilyFaceAdapter
 
-    private var selectedBitmap: Bitmap? = null
+    private val _visionStatus = MutableStateFlow(VisionStatus(online = false))
+    private val _persons = MutableStateFlow<List<VisionPerson>>(emptyList())
+    private val _isRefreshing = MutableStateFlow(false)
+
+    // Dialog state
+    private var showAddDialog by mutableStateOf(false)
+    private var addName by mutableStateOf("")
+    private var addNameError by mutableStateOf<String?>(null)
+    private var selectedBitmap by mutableStateOf<Bitmap?>(null)
+    private var isSubmitting by mutableStateOf(false)
+
+    private var personToDelete by mutableStateOf<VisionPerson?>(null)
     private var currentPhotoUri: Uri? = null
-    private var activeAddDialog: AlertDialog? = null
-    private var activeDialogBinding: DialogAddFamilyFaceBinding? = null
 
     companion object {
-        private const val MENU_ADD = 1
         private const val KEY_PHOTO_URI = "key_current_photo_uri"
+        private const val KEY_SHOW_ADD_DIALOG = "key_show_add_dialog"
+        private const val KEY_ADD_NAME = "key_add_name"
     }
 
     private val pickImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
@@ -63,7 +66,7 @@ class FamilyFacesActivity : AppCompatActivity() {
             lifecycleScope.launch(Dispatchers.IO) {
                 val bmp = decodeSampledBitmap(uri, 1024, 1024)
                 withContext(Dispatchers.Main) {
-                    onImagePicked(bmp)
+                    selectedBitmap = bmp
                 }
             }
         }
@@ -85,7 +88,7 @@ class FamilyFacesActivity : AppCompatActivity() {
                     val bmp = decodeSampledBitmap(uri, 1024, 1024)
                     withContext(Dispatchers.Main) {
                         if (bmp != null) {
-                            onImagePicked(bmp)
+                            selectedBitmap = bmp
                         } else {
                             Toast.makeText(this@FamilyFacesActivity, "解析拍摄照片失败", Toast.LENGTH_SHORT).show()
                         }
@@ -100,63 +103,84 @@ class FamilyFacesActivity : AppCompatActivity() {
         if (savedInstanceState != null) {
             @Suppress("DEPRECATION")
             currentPhotoUri = savedInstanceState.getParcelable(KEY_PHOTO_URI)
+            showAddDialog = savedInstanceState.getBoolean(KEY_SHOW_ADD_DIALOG, false)
+            addName = savedInstanceState.getString(KEY_ADD_NAME, "")
         }
-        binding = ActivityFamilyFacesBinding.inflate(layoutInflater)
-        setContentView(binding.root)
 
         container = (application as HomeCenterApp).container
 
-        setupToolbar()
-        setupRecyclerView()
-        setupListeners()
+        setContent {
+            val preset by ThemeManager.themePresetFlow.collectAsState()
+            ProvideGlassTheme(preset = preset) {
+                val status by _visionStatus.collectAsState()
+                val personsList by _persons.collectAsState()
+                val refreshing by _isRefreshing.collectAsState()
 
-        fetchData()
-    }
+                FamilyFacesPageContent(
+                    visionStatus = status,
+                    persons = personsList,
+                    isRefreshing = refreshing,
+                    onRefresh = { fetchData() },
+                    onBackClick = { finish() },
+                    onAddFaceClick = {
+                        addName = ""
+                        addNameError = null
+                        selectedBitmap = null
+                        isSubmitting = false
+                        showAddDialog = true
+                    },
+                    onDeletePersonClick = { person ->
+                        personToDelete = person
+                    },
+                    preset = preset
+                )
 
-    private fun setupToolbar() {
-        binding.toolbar.setNavigationOnClickListener { finish() }
-        binding.toolbar.menu.add(Menu.NONE, MENU_ADD, Menu.NONE, R.string.vision_btn_add)
-            .setIcon(R.drawable.ic_add)
-            .setShowAsAction(MenuItem.SHOW_AS_ACTION_ALWAYS)
-
-        binding.toolbar.setOnMenuItemClickListener { item ->
-            when (item.itemId) {
-                MENU_ADD -> {
-                    showAddFaceDialog()
-                    true
+                // Add Face Dialog in Compose
+                if (showAddDialog) {
+                    AddFamilyFaceDialog(
+                        name = addName,
+                        onNameChange = {
+                            addName = it
+                            if (addNameError != null) addNameError = null
+                        },
+                        nameError = addNameError,
+                        selectedBitmap = selectedBitmap,
+                        isSubmitting = isSubmitting,
+                        onPickGallery = { pickImageLauncher.launch("image/*") },
+                        onPickCamera = { launchCamera() },
+                        onDismiss = { showAddDialog = false },
+                        onSubmit = { submitRegisterFace() }
+                    )
                 }
-                else -> false
+
+                // Delete Confirmation Dialog in Compose
+                personToDelete?.let { person ->
+                    ConfirmDeletePersonDialog(
+                        personName = person.name,
+                        onDismiss = { personToDelete = null },
+                        onConfirm = {
+                            val target = person
+                            personToDelete = null
+                            deletePerson(target.name)
+                        }
+                    )
+                }
             }
         }
-    }
 
-    private fun setupRecyclerView() {
-        adapter = FamilyFaceAdapter { person ->
-            confirmDeletePerson(person)
-        }
-        binding.rvFaces.layoutManager = LinearLayoutManager(this)
-        binding.rvFaces.adapter = adapter
-    }
-
-    private fun setupListeners() {
-        binding.swipeRefresh.setOnRefreshListener {
-            fetchData()
-        }
-        binding.btnAddFace.setOnClickListener {
-            showAddFaceDialog()
-        }
+        fetchData()
     }
 
     private fun fetchData() {
         val token = container.prefsManager.token
         if (token.isNullOrEmpty()) {
-            binding.swipeRefresh.isRefreshing = false
+            _isRefreshing.value = false
             Toast.makeText(this, "登录状态失效", Toast.LENGTH_SHORT).show()
             return
         }
         val validToken: String = token
 
-        binding.swipeRefresh.isRefreshing = true
+        _isRefreshing.value = true
 
         lifecycleScope.launch {
             // 1. Fetch Vision AI status
@@ -164,9 +188,9 @@ class FamilyFacesActivity : AppCompatActivity() {
                 val status = withContext(Dispatchers.IO) {
                     container.getRepository().getVisionStatus(validToken)
                 }
-                updateStatusUi(status)
+                _visionStatus.value = status
             } catch (e: Exception) {
-                updateStatusUi(VisionStatus(online = false, error = e.message))
+                _visionStatus.value = VisionStatus(online = false, error = e.message)
             }
 
             // 2. Fetch Persons
@@ -174,191 +198,56 @@ class FamilyFacesActivity : AppCompatActivity() {
                 val persons = withContext(Dispatchers.IO) {
                     container.getRepository().listVisionPersons(validToken)
                 }
-                adapter.submitList(persons)
-                binding.tvPersonsCount.text = getString(R.string.vision_persons_count, persons.size)
-                binding.layoutEmpty.visibility = if (persons.isEmpty()) View.VISIBLE else View.GONE
-                binding.rvFaces.visibility = if (persons.isEmpty()) View.GONE else View.VISIBLE
+                _persons.value = persons
             } catch (e: Exception) {
                 Toast.makeText(this@FamilyFacesActivity, "获取人脸档案失败: ${e.message}", Toast.LENGTH_SHORT).show()
-                binding.layoutEmpty.visibility = View.VISIBLE
-                binding.rvFaces.visibility = View.GONE
             } finally {
-                binding.swipeRefresh.isRefreshing = false
+                _isRefreshing.value = false
             }
         }
     }
 
-    private fun updateStatusUi(status: VisionStatus) {
-        val greenColor = ContextCompat.getColor(this, R.color.online)
-        val redColor = ContextCompat.getColor(this, R.color.error)
-        val warningColor = ContextCompat.getColor(this, R.color.warning)
-
-        if (status.online) {
-            binding.tvVisionOnlineStatus.text = getString(R.string.vision_status_online)
-            binding.tvVisionOnlineStatus.setBackgroundResource(R.drawable.bg_badge_admin)
-
-            binding.tvFaceEngineStatus.text = if (status.faceEngineReady) {
-                getString(R.string.vision_engine_ready)
-            } else {
-                getString(R.string.vision_engine_not_ready)
-            }
-            binding.tvFaceEngineStatus.setTextColor(if (status.faceEngineReady) greenColor else redColor)
-
-            binding.tvPoseEngineStatus.text = if (status.poseEngineReady) {
-                getString(R.string.vision_engine_ready)
-            } else {
-                getString(R.string.vision_engine_not_ready)
-            }
-            binding.tvPoseEngineStatus.setTextColor(if (status.poseEngineReady) greenColor else redColor)
-
-            binding.tvCpuUsage.text = String.format(Locale.getDefault(), "%.1f%% CPU", status.cpuUsagePercent)
-
-            when (status.cpuGate.lowercase(Locale.getDefault())) {
-                "circuit_break" -> {
-                    binding.tvCpuGate.text = getString(R.string.vision_cpu_gate_circuit_break)
-                    binding.tvCpuGate.setTextColor(redColor)
-                }
-                "degraded" -> {
-                    binding.tvCpuGate.text = getString(R.string.vision_cpu_gate_degraded)
-                    binding.tvCpuGate.setTextColor(warningColor)
-                }
-                else -> {
-                    binding.tvCpuGate.text = getString(R.string.vision_cpu_gate_normal)
-                    binding.tvCpuGate.setTextColor(greenColor)
-                }
-            }
-        } else {
-            val text = if (status.error?.contains("not configured", ignoreCase = true) == true) {
-                getString(R.string.vision_status_unconfigured)
-            } else {
-                getString(R.string.vision_status_offline)
-            }
-            binding.tvVisionOnlineStatus.text = text
-            binding.tvVisionOnlineStatus.setBackgroundResource(R.drawable.bg_badge_user)
-
-            binding.tvFaceEngineStatus.text = getString(R.string.vision_engine_not_ready)
-            binding.tvFaceEngineStatus.setTextColor(redColor)
-            binding.tvPoseEngineStatus.text = getString(R.string.vision_engine_not_ready)
-            binding.tvPoseEngineStatus.setTextColor(redColor)
-            binding.tvCpuUsage.text = "—"
-            binding.tvCpuGate.text = "不可用"
-            binding.tvCpuGate.setTextColor(redColor)
+    private fun submitRegisterFace() {
+        val name = addName.trim()
+        if (name.isEmpty()) {
+            addNameError = "请输入姓名或称呼"
+            return
         }
-    }
-
-    private fun showAddFaceDialog() {
-        selectedBitmap = null
-        val dialogBinding = DialogAddFamilyFaceBinding.inflate(layoutInflater)
-        activeDialogBinding = dialogBinding
-
-        dialogBinding.btnPickGallery.setOnClickListener {
-            pickImageLauncher.launch("image/*")
+        val bitmap = selectedBitmap
+        if (bitmap == null) {
+            Toast.makeText(this, "请先选择或拍摄人脸照片", Toast.LENGTH_SHORT).show()
+            return
         }
 
-        dialogBinding.btnPickCamera.setOnClickListener {
-            launchCamera()
-        }
-
-        dialogBinding.btnCancel.setOnClickListener {
-            activeAddDialog?.dismiss()
-        }
-
-        dialogBinding.btnSubmit.setOnClickListener {
-            val name = dialogBinding.etName.text?.toString()?.trim().orEmpty()
-            if (name.isEmpty()) {
-                dialogBinding.tilName.error = "请输入姓名或称呼"
-                return@setOnClickListener
-            }
-            dialogBinding.tilName.error = null
-
-            val bitmap = selectedBitmap
-            if (bitmap == null) {
-                Toast.makeText(this, "请先选择或拍摄人脸照片", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-
-            submitRegisterFace(name, bitmap, dialogBinding)
-        }
-
-        val dialog = AlertDialog.Builder(this)
-            .setView(dialogBinding.root)
-            .create()
-
-        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
-        activeAddDialog = dialog
-        dialog.show()
-    }
-
-    private fun onImagePicked(bitmap: Bitmap?) {
-        selectedBitmap = bitmap
-        activeDialogBinding?.let { b ->
-            if (bitmap != null) {
-                b.ivFacePreview.setImageBitmap(bitmap)
-                b.ivFacePreview.visibility = View.VISIBLE
-                b.layoutPickPrompt.visibility = View.GONE
-            } else {
-                b.ivFacePreview.visibility = View.GONE
-                b.layoutPickPrompt.visibility = View.VISIBLE
-            }
-        }
-    }
-
-    private fun submitRegisterFace(name: String, bitmap: Bitmap, dialogBinding: DialogAddFamilyFaceBinding) {
-        val token = container.prefsManager.token
-        if (token.isNullOrEmpty()) return
-        val validToken: String = token
-
-        dialogBinding.btnSubmit.isEnabled = false
-        dialogBinding.btnCancel.isEnabled = false
-        dialogBinding.btnPickGallery.isEnabled = false
-        dialogBinding.btnPickCamera.isEnabled = false
-        dialogBinding.progressRegister.visibility = View.VISIBLE
+        val token = container.prefsManager.token ?: return
+        isSubmitting = true
 
         lifecycleScope.launch {
             try {
                 val base64 = withContext(Dispatchers.IO) {
                     bitmapToBase64(bitmap)
                 }
-
                 withContext(Dispatchers.IO) {
-                    container.getRepository().registerVisionPerson(validToken, name, base64)
+                    container.getRepository().registerVisionPerson(token, name, base64)
                 }
-
                 Toast.makeText(this@FamilyFacesActivity, getString(R.string.vision_register_success), Toast.LENGTH_SHORT).show()
-                activeAddDialog?.dismiss()
+                showAddDialog = false
                 fetchData()
             } catch (e: Exception) {
                 val errMsg = e.message ?: "录入失败"
                 Toast.makeText(this@FamilyFacesActivity, errMsg, Toast.LENGTH_LONG).show()
-                dialogBinding.btnSubmit.isEnabled = true
-                dialogBinding.btnCancel.isEnabled = true
-                dialogBinding.btnPickGallery.isEnabled = true
-                dialogBinding.btnPickCamera.isEnabled = true
-                dialogBinding.progressRegister.visibility = View.GONE
+            } finally {
+                isSubmitting = false
             }
         }
     }
 
-    private fun confirmDeletePerson(person: VisionPerson) {
-        AlertDialog.Builder(this)
-            .setTitle(R.string.vision_delete_confirm_title)
-            .setMessage(getString(R.string.vision_delete_confirm_message, person.name))
-            .setPositiveButton(R.string.btn_delete) { _, _ ->
-                deletePerson(person.name)
-            }
-            .setNegativeButton(R.string.btn_cancel, null)
-            .show()
-    }
-
     private fun deletePerson(name: String) {
-        val token = container.prefsManager.token
-        if (token.isNullOrEmpty()) return
-        val validToken: String = token
-
+        val token = container.prefsManager.token ?: return
         lifecycleScope.launch {
             try {
                 withContext(Dispatchers.IO) {
-                    container.getRepository().deleteVisionPerson(validToken, name)
+                    container.getRepository().deleteVisionPerson(token, name)
                 }
                 Toast.makeText(this@FamilyFacesActivity, "已删除成员 $name", Toast.LENGTH_SHORT).show()
                 fetchData()
@@ -370,8 +259,6 @@ class FamilyFacesActivity : AppCompatActivity() {
 
     private fun decodeSampledBitmap(uri: Uri, reqWidth: Int, reqHeight: Int): Bitmap? {
         return try {
-            // v1.15.2: inspect Exif orientation so camera photos taken in
-            // portrait aren't uploaded sideways (which breaks face embedding extraction).
             val rotationDegrees = try {
                 contentResolver.openInputStream(uri)?.use { stream ->
                     val exif = android.media.ExifInterface(stream)
@@ -386,19 +273,19 @@ class FamilyFacesActivity : AppCompatActivity() {
                 0f
             }
 
-            var stream: InputStream? = contentResolver.openInputStream(uri)
             val options = BitmapFactory.Options().apply {
                 inJustDecodeBounds = true
             }
-            BitmapFactory.decodeStream(stream, null, options)
-            stream?.close()
+            contentResolver.openInputStream(uri)?.use { stream ->
+                BitmapFactory.decodeStream(stream, null, options)
+            }
 
             options.inSampleSize = calculateInSampleSize(options, reqWidth, reqHeight)
             options.inJustDecodeBounds = false
 
-            stream = contentResolver.openInputStream(uri)
-            val sampled = BitmapFactory.decodeStream(stream, null, options)
-            stream?.close()
+            val sampled = contentResolver.openInputStream(uri)?.use { stream ->
+                BitmapFactory.decodeStream(stream, null, options)
+            }
 
             if (sampled != null && rotationDegrees != 0f) {
                 val matrix = android.graphics.Matrix().apply { postRotate(rotationDegrees) }
@@ -440,6 +327,8 @@ class FamilyFacesActivity : AppCompatActivity() {
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         currentPhotoUri?.let { outState.putParcelable(KEY_PHOTO_URI, it) }
+        outState.putBoolean(KEY_SHOW_ADD_DIALOG, showAddDialog)
+        outState.putString(KEY_ADD_NAME, addName)
     }
 
     private fun launchCamera() {
@@ -469,13 +358,5 @@ class FamilyFacesActivity : AppCompatActivity() {
         } catch (e: Exception) {
             Toast.makeText(this, "启动相机失败: ${e.message}", Toast.LENGTH_SHORT).show()
         }
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        activeAddDialog?.dismiss()
-        activeAddDialog = null
-        activeDialogBinding = null
-        selectedBitmap = null
     }
 }

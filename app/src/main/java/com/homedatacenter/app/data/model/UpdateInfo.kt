@@ -32,6 +32,8 @@ data class UpdateInfo(
     val release_notes: String = "",
     /** Build flavor: "release" or "debug". */
     val flavor: String = "",
+    /** SHA-256 checksum for package integrity verification. */
+    val sha256: String = "",
 ) {
     /** True if this is a production release build. */
     val isRelease: Boolean

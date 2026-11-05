@@ -1,312 +1,273 @@
 package com.homedatacenter.app.ui.admin
 
-import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.os.Bundle
 import android.view.LayoutInflater
-import android.view.Menu
-import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
-import android.widget.CheckBox
-import android.widget.EditText
-import android.widget.LinearLayout
-import android.widget.TextView
 import android.widget.Toast
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
-import androidx.recyclerview.widget.LinearLayoutManager
 import com.homedatacenter.app.HomeCenterApp
 import com.homedatacenter.app.R
 import com.homedatacenter.app.data.model.User
-import com.homedatacenter.app.databinding.ActivityUsersBinding
 import com.homedatacenter.app.di.AppContainer
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Admin-only user management fragment, shown as a tab in [com.homedatacenter.app.ui.main.MainActivity].
- *
- * Shows the full user list (GET /api/v1/user), lets the admin create
- * new users (POST /api/v1/user), rename / toggle admin (PUT), and
- * delete (DELETE).
- *
- * Self-guard: the backend rejects self-delete and self-demote, so we
- * surface the error message verbatim. The last-admin guard is also
- * enforced by the server.
+ * 100% Jetpack Compose declarative architecture.
  */
 class UsersFragment : Fragment() {
 
-    private var _binding: ActivityUsersBinding? = null
-    private val binding get() = _binding!!
     private lateinit var container: AppContainer
-    private lateinit var adapter: UserListAdapter
 
-    companion object {
-        private const val MENU_ADD_USER = 1
-    }
+    private val _users = MutableStateFlow<List<User>>(emptyList())
+    private val _isRefreshing = MutableStateFlow(false)
 
-    override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
-        _binding = ActivityUsersBinding.inflate(inflater, container, false)
-        return binding.root
+    override fun onCreateView(
+        inflater: LayoutInflater,
+        container: ViewGroup?,
+        savedInstanceState: Bundle?
+    ): View {
+        this.container = (requireContext().applicationContext as HomeCenterApp).container
+
+        return ComposeView(requireContext()).apply {
+            setViewCompositionStrategy(
+                ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed
+            )
+            setContent {
+                val users by _users.collectAsState()
+                val isRefreshing by _isRefreshing.collectAsState()
+
+                var showCreateDialog by remember { mutableStateOf(false) }
+                var userToEdit by remember { mutableStateOf<User?>(null) }
+                var isDialogSubmitting by remember { mutableStateOf(false) }
+
+                Box(modifier = Modifier.fillMaxSize()) {
+                    UsersPageContent(
+                        users = users,
+                        isRefreshing = isRefreshing,
+                        onRefresh = { loadUsers() },
+                        onAddUserClick = { showCreateDialog = true },
+                        onEditUserClick = { user -> userToEdit = user },
+                        onDeleteUserClick = { user -> confirmDeleteUser(user) },
+                        onToggleAdminClick = { user, newAdminState ->
+                            updateUserAdmin(user, newAdminState)
+                        }
+                    )
+
+                    if (showCreateDialog) {
+                        CreateUserDialog(
+                            isSubmitting = isDialogSubmitting,
+                            onDismiss = { showCreateDialog = false },
+                            onConfirm = { name, password, isAdmin ->
+                                createUser(
+                                    name = name,
+                                    pass = password,
+                                    isAdmin = isAdmin,
+                                    onSubmittingChange = { isDialogSubmitting = it },
+                                    onSuccess = { showCreateDialog = false }
+                                )
+                            }
+                        )
+                    }
+
+                    userToEdit?.let { user ->
+                        EditUserDialog(
+                            user = user,
+                            isSubmitting = isDialogSubmitting,
+                            onDismiss = { userToEdit = null },
+                            onConfirm = { newName, newIsAdmin ->
+                                updateUser(
+                                    user = user,
+                                    newName = newName,
+                                    newIsAdmin = newIsAdmin,
+                                    onSubmittingChange = { isDialogSubmitting = it },
+                                    onSuccess = { userToEdit = null }
+                                )
+                            }
+                        )
+                    }
+                }
+            }
+        }
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        this.container = (requireContext().applicationContext as HomeCenterApp).container
+        loadUsers()
+    }
 
-        // No back button since it's a tab
-        binding.toolbar.setNavigationIcon(null)
-        binding.toolbar.title = getString(R.string.users_title)
-        // Add "添加" menu item to the toolbar
-        binding.toolbar.menu.add(Menu.NONE, MENU_ADD_USER, Menu.NONE, R.string.users_create)
-            .setIcon(R.drawable.ic_add)
-            .setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
-        binding.toolbar.setOnMenuItemClickListener { item ->
-            when (item.itemId) {
-                MENU_ADD_USER -> {
-                    showCreateUserDialog()
-                    true
-                }
-                else -> false
-            }
-        }
-        binding.swipeRefresh.setOnRefreshListener { loadUsers() }
-
-        adapter = UserListAdapter { user -> showEditUserDialog(user) }
-        binding.rvUsers.layoutManager = LinearLayoutManager(requireContext())
-        binding.rvUsers.adapter = adapter
-
+    override fun onResume() {
+        super.onResume()
         loadUsers()
     }
 
     private fun loadUsers() {
         val token = container.prefsManager.token ?: return
-        lifecycleScope.launch {
+        viewLifecycleOwner.lifecycleScope.launch {
+            _isRefreshing.value = true
             try {
-                val users = container.getRepository().listUsers(token)
-                adapter.submitList(users)
-                binding.tvEmpty.visibility = if (users.isEmpty()) View.VISIBLE else View.GONE
+                val users = withContext(Dispatchers.IO) {
+                    container.getRepository().listUsers(token)
+                }
+                _users.value = users
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 toast("加载失败: ${e.message}")
             } finally {
-                if (view != null) {
-                    binding.swipeRefresh.isRefreshing = false
-                }
+                _isRefreshing.value = false
             }
         }
     }
 
-    private fun showCreateUserDialog() {
+    private fun createUser(
+        name: String,
+        pass: String,
+        isAdmin: Boolean,
+        onSubmittingChange: (Boolean) -> Unit,
+        onSuccess: () -> Unit
+    ) {
         val token = container.prefsManager.token ?: return
-
-        // v1.15.1: use the same warm glass dialog as the rest of the
-        // app instead of the bare platform AlertDialog + inline
-        // EditTexts, which rendered as an opaque white square box.
-        val dialogBinding =
-            com.homedatacenter.app.databinding.DialogCreateUserBinding.inflate(layoutInflater)
-
-        val dialog = com.google.android.material.dialog.MaterialAlertDialogBuilder(requireContext())
-            .setView(dialogBinding.root)
-            .create()
-        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
-
-        dialogBinding.btnCancel.setOnClickListener { dialog.dismiss() }
-
-        dialogBinding.btnConfirm.setOnClickListener {
-                val name = dialogBinding.etUserName.text?.toString()?.trim().orEmpty()
-                if (name.isEmpty()) {
-                    toast("请填写用户名")
-                    return@setOnClickListener
+        onSubmittingChange(true)
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val created = withContext(Dispatchers.IO) {
+                    container.getRepository().createUserDetailed(
+                        token,
+                        name = name,
+                        isAdmin = isAdmin,
+                        password = pass
+                    )
                 }
-                val password = dialogBinding.etPassword.text?.toString().orEmpty()
-                if (password.length < 6) {
-                    toast("密码长度至少为 6 位")
-                    return@setOnClickListener
-                }
-                dialog.dismiss()
-                lifecycleScope.launch {
-                    try {
-                        val created = container.getRepository().createUserDetailed(
-                            token,
-                            name = name,
-                            isAdmin = dialogBinding.switchIsAdmin.isChecked,
-                            password = password,
-                        )
-                        loadUsers()
-                        val idText = created?.id?.toString() ?: "未知"
-                        com.google.android.material.dialog.MaterialAlertDialogBuilder(requireContext())
-                            .setTitle("用户创建成功")
-                            .setMessage("用户名: $name\n用户 ID: $idText\n\n该成员在 App 端登录时，「用户 ID」栏需填写数字 $idText，密码为刚刚设置的密码。")
-                            .setPositiveButton("复制用户 ID") { _, _ ->
-                                val newId = created?.id
-                                if (newId != null) {
-                                    val cm = requireContext()
-                                        .getSystemService(android.content.Context.CLIPBOARD_SERVICE)
-                                            as? android.content.ClipboardManager
-                                    cm?.setPrimaryClip(
-                                        android.content.ClipData.newPlainText("User ID", newId.toString())
-                                    )
-                                    toast("用户 ID ($newId) 已复制到剪贴板")
-                                }
-                            }
-                            .setNegativeButton("好的", null)
-                            .show()
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        toast("创建失败: ${e.message}")
+                onSuccess()
+                loadUsers()
+                val idText = created?.id?.toString() ?: "未知"
+                val ctx = context ?: return@launch
+                android.app.AlertDialog.Builder(ctx)
+                    .setTitle("用户创建成功")
+                    .setMessage("用户名: $name\n用户 ID: $idText\n\n该成员登录时「用户 ID」栏需填写数字 $idText。")
+                    .setPositiveButton("复制用户 ID") { _, _ ->
+                        val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                        cm?.setPrimaryClip(ClipData.newPlainText("User ID", idText))
+                        toast("已复制用户 ID $idText")
                     }
-                }
+                    .setNegativeButton("好的", null)
+                    .show()
+            } catch (e: Exception) {
+                toast("创建失败: ${e.message}")
+            } finally {
+                onSubmittingChange(false)
+            }
         }
-
-        dialog.show()
     }
 
-//     private fun showAccessKeyDialog(accessKey: String) {
-//         val container = LinearLayout(requireContext()).apply {
-//             orientation = LinearLayout.VERTICAL
-//             setPadding(50, 30, 50, 10)
-//         }
-//         val tvLabel = TextView(requireContext()).apply {
-//             text = getString(R.string.device_register_access_key_label)
-//             textSize = 14f
-//         }
-//         val tvKey = TextView(requireContext()).apply {
-//             text = accessKey
-//             textSize = 16f
-//             setTextColor(
-//                 resources.getColor(android.R.color.holo_red_dark, requireContext().theme)
-//             )
-//             setPadding(0, 16, 0, 16)
-//             typeface = android.graphics.Typeface.MONOSPACE
-//         }
-//         container.apply {
-//             addView(tvLabel)
-//             addView(tvKey)
-//         }
-// 
-//         AlertDialog.Builder(requireContext())
-//             .setTitle(R.string.users_create)
-//             .setView(container)
-//             .setPositiveButton(R.string.device_register_copied) { _, _ ->
-//                 copyToClipboard(accessKey)
-//                 toast("已复制")
-//             }
-//             .setNeutralButton(R.string.btn_confirm) { _, _ -> }
-//             .show()
-//     }
-
-    private fun copyToClipboard(text: String) {
-        val ctx = requireContext()
-        val clipboard = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText("access_key", text))
+    private fun updateUser(
+        user: User,
+        newName: String,
+        newIsAdmin: Boolean,
+        onSubmittingChange: (Boolean) -> Unit,
+        onSuccess: () -> Unit
+    ) {
+        val token = container.prefsManager.token ?: return
+        onSubmittingChange(true)
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    container.getRepository().updateUser(
+                        token = token,
+                        userId = user.id,
+                        name = if (newName != user.name) newName else null,
+                        isAdmin = if (newIsAdmin != user.isAdmin) newIsAdmin else null
+                    )
+                }
+                onSuccess()
+                toast("更新成功")
+                loadUsers()
+            } catch (e: Exception) {
+                toast("更新失败: ${e.message}")
+            } finally {
+                onSubmittingChange(false)
+            }
+        }
     }
 
-    private fun showEditUserDialog(user: User) {
+    private fun updateUserAdmin(user: User, isAdmin: Boolean) {
         val token = container.prefsManager.token ?: return
         val currentUserId = container.prefsManager.userId
-
-        val dialogContainer = LinearLayout(requireContext()).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(50, 30, 50, 10)
-        }
-        val etName = EditText(requireContext()).apply {
-            setText(user.name)
-            hint = getString(R.string.user_name_label)
-        }
-        val cbAdmin = CheckBox(requireContext()).apply {
-            text = getString(R.string.user_admin_label)
-            isChecked = user.isAdmin
-            // Disable if editing self — backend rejects self-demote.
-            if (user.id == currentUserId) {
-                isEnabled = false
-                text = getString(R.string.user_admin_label) + " (当前用户)"
-            }
-        }
-        dialogContainer.apply {
-            addView(etName)
-            addView(cbAdmin)
-        }
-
-        AlertDialog.Builder(requireContext())
-            .setTitle(R.string.user_action_edit)
-            .setView(dialogContainer)
-            .setPositiveButton(R.string.action_save) { _, _ ->
-                val newName = etName.text.toString().trim()
-                if (newName.isEmpty()) {
-                    toast("用户名不能为空")
-                    return@setPositiveButton
-                }
-                val isAdminChanged = cbAdmin.isChecked != user.isAdmin
-                lifecycleScope.launch {
-                    try {
-                        container.getRepository().updateUser(
-                            token,
-                            userId = user.id,
-                            name = if (newName != user.name) newName else null,
-                            isAdmin = if (isAdminChanged) cbAdmin.isChecked else null,
-                        )
-                        toast("已更新")
-                        loadUsers()
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        toast("更新失败: ${e.message}")
-                    }
-                }
-            }
-            .setNeutralButton(R.string.user_action_delete) { _, _ ->
-                confirmDeleteUser(user)
-            }
-            .setNegativeButton(R.string.btn_cancel, null)
-            .show()
-    }
-
-    private fun confirmDeleteUser(user: User) {
-        val token = container.prefsManager.token ?: return
-        val currentUserId = container.prefsManager.userId
-
-        if (user.id == currentUserId) {
-            toast(getString(R.string.user_self_delete_guard))
+        if (user.id == currentUserId && !isAdmin) {
+            toast("无法取消自己的管理员权限")
             return
         }
 
-        AlertDialog.Builder(requireContext())
-            .setTitle(R.string.user_action_delete)
-            .setMessage(getString(R.string.user_delete_confirm) + "\n\n" + user.name)
-            .setPositiveButton(R.string.btn_confirm) { _, _ ->
-                lifecycleScope.launch {
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    container.getRepository().updateUser(
+                        token,
+                        userId = user.id,
+                        name = null,
+                        isAdmin = isAdmin
+                    )
+                }
+                toast("已更新权限")
+                loadUsers()
+            } catch (e: Exception) {
+                toast("更新失败: ${e.message}")
+            }
+        }
+    }
+
+    private fun confirmDeleteUser(user: User) {
+        val ctx = context ?: return
+        val token = container.prefsManager.token ?: return
+        val currentUserId = container.prefsManager.userId
+        if (user.id == currentUserId) {
+            toast("无法删除当前登录的管理员账户")
+            return
+        }
+
+        android.app.AlertDialog.Builder(ctx)
+            .setTitle("确认删除用户")
+            .setMessage("确定要删除用户「${user.name}」(ID: ${user.id}) 吗？此操作无法撤销。")
+            .setPositiveButton("删除") { _, _ ->
+                viewLifecycleOwner.lifecycleScope.launch {
                     try {
-                        val deleted = container.getRepository().deleteUser(token, user.id)
-                        toast("已删除 (吊销 $deleted 个设备)")
-                        loadUsers()
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        val msg = e.message.orEmpty()
-                        if (msg.contains("last", ignoreCase = true)) {
-                            toast(getString(R.string.user_last_admin_guard))
-                        } else {
-                            toast("删除失败: $msg")
+                        withContext(Dispatchers.IO) {
+                            container.getRepository().deleteUser(token, user.id)
                         }
+                        toast("已删除用户")
+                        loadUsers()
+                    } catch (e: Exception) {
+                        toast("删除失败: ${e.message}")
                     }
                 }
             }
-            .setNegativeButton(R.string.btn_cancel, null)
+            .setNegativeButton("取消", null)
             .show()
     }
 
     private fun toast(msg: String) {
-        Toast.makeText(requireContext(), msg, Toast.LENGTH_SHORT).show()
-    }
-
-    override fun onDestroyView() {
-        super.onDestroyView()
-        _binding = null
+        context?.let { ctx ->
+            Toast.makeText(ctx, msg, Toast.LENGTH_SHORT).show()
+        }
     }
 }
