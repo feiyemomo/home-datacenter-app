@@ -116,36 +116,57 @@ def main():
     if not os.path.isfile(notes):
         sys.exit(f"ERROR: missing release notes: {notes}")
 
-    files = [
+    # Only upload distinct local files over the wire to avoid duplicate 100MB transfers
+    upload_map = [
         (DEBUG_APK, f"{REMOTE_DIR}/app-debug-v{version}.apk"),
-        (DEBUG_APK, f"{REMOTE_DIR}/app-debug-latest.apk"),
         (notes, f"{REMOTE_DIR}/release-notes-v{version}.txt"),
     ]
     if not args.debug_only:
-        files = [
+        upload_map = [
             (RELEASE_APK, f"{REMOTE_DIR}/app-release-v{version}.apk"),
-            (RELEASE_APK, f"{REMOTE_DIR}/app-release-latest.apk"),
-            *files,
+            *upload_map,
         ]
     if args.dry_run:
-        for lp, rp in files:
+        for lp, rp in upload_map:
             print(f"    {lp} -> {rp}")
         return
 
     if not args.no_build:
         build(debug_only=args.debug_only)
-    for lp, _ in files:
+    for lp, _ in upload_map:
         if not os.path.isfile(lp):
             sys.exit(f"ERROR: missing build output: {lp}")
 
     ssh = connect()
     try:
         sftp = ssh.open_sftp()
-        for lp, rp in files:
+        for lp, rp in upload_map:
             print(f"==> upload {os.path.basename(lp)} -> {rp}")
             sftp.put(lp, rp)
             sftp.chmod(rp, 0o644)
         sftp.close()
+
+        # Create latest symlinks/copies directly on NAS to save bandwidth
+        print("==> linking latest versions on NAS directly...")
+        link_cmds = [
+            f"cp -f {REMOTE_DIR}/app-debug-v{version}.apk {REMOTE_DIR}/app-debug-latest.apk",
+        ]
+        if not args.debug_only:
+            link_cmds.append(f"cp -f {REMOTE_DIR}/app-release-v{version}.apk {REMOTE_DIR}/app-release-latest.apk")
+        for cmd in link_cmds:
+            ssh.exec_command(cmd)
+
+        files = [
+            (DEBUG_APK, f"{REMOTE_DIR}/app-debug-v{version}.apk"),
+            (DEBUG_APK, f"{REMOTE_DIR}/app-debug-latest.apk"),
+            (notes, f"{REMOTE_DIR}/release-notes-v{version}.txt"),
+        ]
+        if not args.debug_only:
+            files = [
+                (RELEASE_APK, f"{REMOTE_DIR}/app-release-v{version}.apk"),
+                (RELEASE_APK, f"{REMOTE_DIR}/app-release-latest.apk"),
+                *files,
+            ]
 
         remote = " ".join(rp for _, rp in files)
         _, out, _ = ssh.exec_command(f"sha256sum {remote}")
