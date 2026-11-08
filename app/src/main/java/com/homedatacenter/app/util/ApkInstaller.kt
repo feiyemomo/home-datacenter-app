@@ -194,6 +194,13 @@ object ApkInstaller {
                 return@withContext null
             }
 
+            // Post-rename verification: full PackageArchive parse on the final .apk file
+            if (!verifyApkIntegrity(context, apkFile, info.sha256, totalSize)) {
+                Log.e(TAG, "Post-rename integrity verification failed for ${apkFile.name}")
+                apkFile.delete()
+                return@withContext null
+            }
+
             Log.d(TAG, "Downloaded ${apkFile.length()} bytes to ${apkFile.absolutePath} " +
                 "(resumed=$isResume)")
             apkFile
@@ -266,6 +273,24 @@ object ApkInstaller {
     }
 
     /**
+     * Extracts and normalizes a 64-character hex SHA-256 string, tolerating
+     * protocol prefixes ("sha256:") and standard sha256sum output format ("<hash>  <filename>" or "<hash> *<filename>").
+     */
+    fun cleanSha256(raw: String?): String? {
+        if (raw.isNullOrBlank()) return null
+        val normalized = raw.trim()
+            .removePrefix("sha256:")
+            .removePrefix("SHA256:")
+            .trim()
+        val token = normalized.split(Regex("\\s+")).firstOrNull()?.trim() ?: return null
+        return if (token.length == 64 && token.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }) {
+            token.lowercase()
+        } else {
+            raw.trim().lowercase()
+        }
+    }
+
+    /**
      * Verifies that the given APK file exists, matches expected size / SHA-256
      * (if specified), and can be parsed by Android's PackageManager.
      */
@@ -275,15 +300,16 @@ object ApkInstaller {
         expectedSha256: String? = null,
         expectedSize: Long = 0L,
     ): Boolean {
-        if (!file.exists() || !file.isFile) return false
+        if (!file.exists() || !file.isFile || file.length() <= 0L) return false
         if (expectedSize > 0L && file.length() != expectedSize) {
             Log.e(TAG, "Integrity check failed: file size ${file.length()} != expected $expectedSize")
             return false
         }
-        if (!expectedSha256.isNullOrBlank()) {
+        val targetHash = cleanSha256(expectedSha256)
+        if (!targetHash.isNullOrBlank()) {
             val actualHash = computeSha256(file)
-            if (!actualHash.equals(expectedSha256, ignoreCase = true)) {
-                Log.e(TAG, "Integrity check failed: sha256 mismatch ($actualHash vs $expectedSha256)")
+            if (!actualHash.equals(targetHash, ignoreCase = true)) {
+                Log.e(TAG, "Integrity check failed: sha256 mismatch (actual=$actualHash vs expected=$targetHash)")
                 return false
             }
         }
@@ -291,12 +317,21 @@ object ApkInstaller {
         if (pm != null) {
             val archiveInfo = runCatching { pm.getPackageArchiveInfo(file.absolutePath, 0) }.getOrNull()
             if (archiveInfo == null) {
-                Log.e(TAG, "Integrity check failed: failed to parse APK archive (corrupt or invalid package)")
-                return false
-            }
-            if (archiveInfo.packageName != context.packageName) {
-                Log.e(TAG, "Integrity check failed: package name mismatch (${archiveInfo.packageName} != ${context.packageName})")
-                return false
+                // If checking an in-progress .part file on certain OEM devices, package parsing might fail
+                // solely due to the non-.apk extension. If size and/or sha256 passed, permit the .part file
+                // to proceed to rename, where post-rename verification on .apk will enforce full PackageArchive parsing.
+                val hasSizeOrHashCheck = expectedSize > 0L || !targetHash.isNullOrBlank()
+                if (!file.name.endsWith(".part") || !hasSizeOrHashCheck) {
+                    Log.e(TAG, "Integrity check failed: failed to parse APK archive (corrupt or invalid package)")
+                    return false
+                }
+            } else {
+                val expectedBase = context.packageName.removeSuffix(".debug")
+                val actualBase = archiveInfo.packageName?.removeSuffix(".debug")
+                if (actualBase != expectedBase) {
+                    Log.e(TAG, "Integrity check failed: package name mismatch (${archiveInfo.packageName} != ${context.packageName})")
+                    return false
+                }
             }
         }
         return true

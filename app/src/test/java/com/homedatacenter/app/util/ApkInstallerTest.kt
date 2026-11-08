@@ -286,4 +286,52 @@ class ApkInstallerTest {
         assertTrue(subDir.exists())
         assertTrue(nestedFile.exists())
     }
+
+    @Test
+    fun cleanSha256_handlesStandardSha256sumFormat() {
+        val rawSum = "a8287f643c8c380b96ecdef4db029994a00b39f724310e372c11e9a867534ffe  app-debug-v1.18.13.apk"
+        val cleaned = ApkInstaller.cleanSha256(rawSum)
+        assertEquals("a8287f643c8c380b96ecdef4db029994a00b39f724310e372c11e9a867534ffe", cleaned)
+    }
+
+    @Test
+    fun cleanSha256_handlesBinaryModeAsterisk() {
+        val rawSum = "a8287f643c8c380b96ecdef4db029994a00b39f724310e372c11e9a867534ffe *app-debug-v1.18.13.apk"
+        val cleaned = ApkInstaller.cleanSha256(rawSum)
+        assertEquals("a8287f643c8c380b96ecdef4db029994a00b39f724310e372c11e9a867534ffe", cleaned)
+    }
+
+    @Test
+    fun cleanSha256_handlesProtocolPrefix() {
+        val withPrefix = "sha256:a8287f643c8c380b96ecdef4db029994a00b39f724310e372c11e9a867534ffe"
+        assertEquals("a8287f643c8c380b96ecdef4db029994a00b39f724310e372c11e9a867534ffe", ApkInstaller.cleanSha256(withPrefix))
+
+        val upperPrefix = "SHA256:A8287F643C8C380B96ECDEF4DB029994A00B39F724310E372C11E9A867534FFE"
+        assertEquals("a8287f643c8c380b96ecdef4db029994a00b39f724310e372c11e9a867534ffe", ApkInstaller.cleanSha256(upperPrefix))
+    }
+
+    @Test
+    fun cleanSha256_handlesBareHashAndWhitespace() {
+        val bare = "  A8287F643C8C380B96ECDEF4DB029994A00B39F724310E372C11E9A867534FFE \n"
+        val cleaned = ApkInstaller.cleanSha256(bare)
+        assertEquals("a8287f643c8c380b96ecdef4db029994a00b39f724310e372c11e9a867534ffe", cleaned)
+    }
+
+    @Test
+    fun cleanSha256_nullOrBlankReturnsNull() {
+        assertNull(ApkInstaller.cleanSha256(null))
+        assertNull(ApkInstaller.cleanSha256(""))
+        assertNull(ApkInstaller.cleanSha256("   "))
+    }
+
+    @Test
+    fun cleanSha256_invalidLengthOrCharacters() {
+        // 63 characters (truncated)
+        val truncated = "a8287f643c8c380b96ecdef4db029994a00b39f724310e372c11e9a867534f"
+        assertEquals(truncated, ApkInstaller.cleanSha256(truncated))
+
+        // Non-hex character ('g')
+        val nonHex = "g8287f643c8c380b96ecdef4db029994a00b39f724310e372c11e9a867534ffe"
+        assertEquals(nonHex, ApkInstaller.cleanSha256(nonHex))
+    }
 }
