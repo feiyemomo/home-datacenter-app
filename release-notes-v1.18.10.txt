@@ -1,0 +1,10 @@
+v1.18.10 (versionCode 230) - 运维管理中心超级架构与自主协作 Agent 升级
+
+1. [UI/交互] 修复 OpsCenterScreen 底部浮动导航栏 (LiquidGlassBottomBar) 遮挡问题，完美联动软键盘 IME 高度避让。
+2. [1Panel 嵌入] 新增原生内置 OnePanelWebActivity，通过后端自动注入合法 psession 与 pcsrftoken 会话 Cookie，免密进入控制台。
+3. [大盘优化] 修复企业安全哨兵卡片 WAF 拦截文字截断 (LED 状态灯解耦)；存储池水位提供高精度百分比与 GB 刻度。
+4. [4-Tab 架构] 恢复【系统大盘】、【安全与日志】、【待审提案】、【Copilot 对话】完整 Tab。
+5. [安全中心] 恢复 IP 黑白名单管理 (封禁/解封/增删) 与系统日志等级过滤；新增管理员告警邮箱管理与推送规则过滤 (高危漏洞、回滚、封禁、崩溃)。
+6. [待审提案] 对称化操作按钮布局；新增【与 Copilot 讨论修改】一键派发入口，支持带入上下文连续协商。
+7. [数据统一] 主页大盘与运维大盘统一采用 1Panel OpenAPI 节点指标，具备纯 Go SQLite 健壮降级。
+8. [自主 Agent] 接入 OpsExecutionHistory 审计表、低谷期组件更新与 SQLite VACUUM 镜像快照安全 FSM (10秒探针+秒级回滚)，以及 Google OSV 漏洞情报源联动。

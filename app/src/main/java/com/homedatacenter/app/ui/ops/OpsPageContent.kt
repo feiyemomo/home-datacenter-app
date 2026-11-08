@@ -821,7 +821,7 @@ fun OpsServicesCard(
  * Security Defense Section (Bans, Whitelist, Events).
  */
 @Composable
-private fun SecurityDefenseSection(
+internal fun SecurityDefenseSection(
     defenseOverview: DefenseOverview?,
     bannedIps: List<BanEntry>,
     whitelist: List<SecurityWhitelistEntry>,
@@ -1275,7 +1275,7 @@ private fun SecurityDefenseSection(
  * Service Logs Section with search, level filters, and source filters.
  */
 @Composable
-private fun ServiceLogsSection(
+internal fun ServiceLogsSection(
     logs: List<SystemLog>,
     modifier: Modifier = Modifier,
     hazeState: HazeState? = null,

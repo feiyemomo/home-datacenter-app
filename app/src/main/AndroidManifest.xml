@@ -70,6 +70,7 @@
         <activity
             android:name=".ui.main.MainActivity"
             android:exported="false"
+            android:windowSoftInputMode="adjustResize"
             android:label="@string/app_name" />
 
         <activity
@@ -106,6 +107,12 @@
             android:name=".ui.network.NetworkDetailActivity"
             android:exported="false"
             android:label="@string/network_detail_title" />
+
+        <activity
+            android:name=".ui.ops.OnePanelWebActivity"
+            android:exported="false"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:label="1Panel 运维控制台" />
 
         <service
             android:name=".service.AlertKeepAliveService"

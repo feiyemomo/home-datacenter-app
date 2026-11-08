@@ -295,3 +295,105 @@ fun AddWhitelistDialog(
     }
 }
 }
+
+@Composable
+fun AddAlertRecipientDialog(
+    onDismiss: () -> Unit,
+    onConfirm: (email: String) -> Unit
+) {
+    var email by remember { mutableStateOf("") }
+    var emailError by remember { mutableStateOf(false) }
+
+    val preset by ThemeManager.themePresetFlow.collectAsState()
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        ProvideGlassTheme(preset = preset) {
+            val tokens = GlassTheme.tokens
+            val textPrimary = tokens.textColor
+            val textSecondary = tokens.textSecondaryColor
+            val controlBg = tokens.controlBg
+            val cardBorder = tokens.cardBorder
+            val accent = tokens.accentColor
+            val danger = tokens.statusDanger
+
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth(0.92f)
+                    .clip(RoundedCornerShape(24.dp)),
+                color = tokens.dialogBg,
+                border = BorderStroke(1.dp, tokens.cardBorder),
+                shadowElevation = 24.dp
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(22.dp)
+                ) {
+                    Text(
+                        text = "添加告警接收邮箱",
+                        color = textPrimary,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    OutlinedTextField(
+                        value = email,
+                        onValueChange = {
+                            email = it
+                            emailError = false
+                        },
+                        label = { Text("管理员邮箱地址", color = textSecondary) },
+                        placeholder = { Text("如 admin@homedatacenter.local", color = textSecondary.copy(alpha = 0.5f)) },
+                        isError = emailError,
+                        supportingText = if (emailError) {
+                            { Text("请输入有效的邮箱格式 (如 name@domain.com)", color = danger) }
+                        } else null,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                        singleLine = true,
+                        colors = TextFieldDefaults.colors(
+                            focusedTextColor = textPrimary,
+                            unfocusedTextColor = textPrimary,
+                            focusedContainerColor = controlBg,
+                            unfocusedContainerColor = controlBg,
+                            focusedIndicatorColor = accent,
+                            unfocusedIndicatorColor = cardBorder,
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Spacer(modifier = Modifier.height(20.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        GlassActionButton(
+                            text = "取消",
+                            onClick = onDismiss
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        GlassActionButton(
+                            text = "确认添加",
+                            onClick = {
+                                val trimmed = email.trim()
+                                val isValid = trimmed.isNotEmpty() && trimmed.contains("@") && trimmed.contains(".")
+                                if (!isValid) {
+                                    emailError = true
+                                    return@GlassActionButton
+                                }
+                                onConfirm(trimmed)
+                                onDismiss()
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}

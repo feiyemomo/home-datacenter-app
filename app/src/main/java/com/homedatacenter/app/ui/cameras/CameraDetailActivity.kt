@@ -101,6 +101,7 @@ class CameraDetailActivity : AppCompatActivity() {
     private lateinit var _binding: ActivityCameraDetailBinding
     private val binding get() = _binding
     private lateinit var container: AppContainer
+    private lateinit var unifiedPlayer: UnifiedStreamPlayerView
 
     private var camera: Camera? = null
     private var isAdmin: Boolean = false
@@ -811,6 +812,9 @@ class CameraDetailActivity : AppCompatActivity() {
 
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
         super.onConfigurationChanged(newConfig)
+        if (::unifiedPlayer.isInitialized) {
+            unifiedPlayer.onConfigurationChanged(newConfig)
+        }
         if (fullscreenHelper?.isFullscreen != true && !isInPictureInPictureMode) {
             val portraitHeight = getPortraitPlayerHeightPx()
             applyPlayerContainerHeight(portraitHeight)
@@ -829,6 +833,9 @@ class CameraDetailActivity : AppCompatActivity() {
             return
         }
         streamRetryJob?.cancel()
+        if (::unifiedPlayer.isInitialized) {
+            unifiedPlayer.cancelFallbackWatchdog()
+        }
         webRtcClient?.stopPlayoutImmediately()
         webRtcClient?.setAudioEnabled(false)
         player?.pause()
@@ -949,6 +956,9 @@ class CameraDetailActivity : AppCompatActivity() {
         recordingsDialog = null
         alertsDialog = null
         cancelRevealWatchdog()
+        if (::unifiedPlayer.isInitialized) {
+            unifiedPlayer.release()
+        }
         try { webRtcClient?.removeVideoSink(videoFrameRateSink) } catch (_: Exception) {}
         try { webRtcClient?.release() } catch (_: Exception) {}
         webRtcClient = null
@@ -1323,6 +1333,20 @@ class CameraDetailActivity : AppCompatActivity() {
         // to it before calling prepare() in preparePlayback().
         binding.tvVideoError.setOnClickListener { startPlayback() }
 
+        unifiedPlayer = UnifiedStreamPlayerView(this).apply {
+            bindViews(
+                pinchZoom = binding.pinchZoomContainer,
+                exoPlayerView = binding.playerView,
+                renderer = binding.surfaceRenderer,
+                preview = binding.ivPreviewFrame,
+                progress = binding.progressVideo,
+                errorView = binding.tvVideoError,
+                zoomBadge = binding.tvZoomBadge,
+                strategyBadge = binding.tvStreamStrategy
+            )
+            setPlaybackMode(PlaybackMode.LIVE)
+        }
+
         // Fullscreen button on the player controller: tapping forces
         // landscape orientation and hides the toolbar + action row +
         // header card + PTZ + presets + settings sections so the
@@ -1369,7 +1393,7 @@ class CameraDetailActivity : AppCompatActivity() {
                 // explicit pixel height computed AFTER the orientation
                 // change settles (post {}), then re-apply the renderer's
                 // FIT scaling so the frame is fully visible.
-                binding.pinchZoomContainer.resetZoom(false)
+                unifiedPlayer.onFullscreenChanged(isFs)
                 binding.surfaceRenderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT)
                 binding.playerView.resizeMode =
                     com.google.android.exoplayer2.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
@@ -2508,12 +2532,24 @@ class CameraDetailActivity : AppCompatActivity() {
             // Start a 4.0s background silent fallback timer. If WebRTC doesn't connect within 4s,
             // prepare the MP4/HLS fallback in the background and promote it as soon as WebRTC fails.
             silentFallbackJob?.cancel()
+            if (::unifiedPlayer.isInitialized) {
+                unifiedPlayer.cancelFallbackWatchdog()
+            }
             if (!raceMode) {
-                silentFallbackJob = lifecycleScope.launch {
-                    delay(4_000L)
-                    if (webRtcInProgress && !isFinishing && !isDestroyed && fallbackPlayer == null) {
-                        android.util.Log.i(TAG, "WebRTC not connected after 4.0s: silently pre-preparing fallback player...")
-                        prepareFallbackPlayer(cam)
+                if (::unifiedPlayer.isInitialized) {
+                    unifiedPlayer.startFallbackWatchdog(4_000L) {
+                        if (webRtcInProgress && !isFinishing && !isDestroyed && fallbackPlayer == null) {
+                            android.util.Log.i(TAG, "WebRTC not connected after 4.0s: silently pre-preparing fallback player...")
+                            prepareFallbackPlayer(cam)
+                        }
+                    }
+                } else {
+                    silentFallbackJob = lifecycleScope.launch {
+                        delay(4_000L)
+                        if (webRtcInProgress && !isFinishing && !isDestroyed && fallbackPlayer == null) {
+                            android.util.Log.i(TAG, "WebRTC not connected after 4.0s: silently pre-preparing fallback player...")
+                            prepareFallbackPlayer(cam)
+                        }
                     }
                 }
             }
@@ -2533,6 +2569,9 @@ class CameraDetailActivity : AppCompatActivity() {
                         webRtcInProgress = false
                         silentFallbackJob?.cancel()
                         silentFallbackJob = null
+                        if (::unifiedPlayer.isInitialized) {
+                            unifiedPlayer.onWebRtcConnected()
+                        }
                         if (isFinishing || isDestroyed || isBackNavigating) {
                             client.stopPlayoutImmediately()
                             client.setAudioEnabled(false)
@@ -2618,6 +2657,9 @@ class CameraDetailActivity : AppCompatActivity() {
                         cancelRevealWatchdog()
                         silentFallbackJob?.cancel()
                         silentFallbackJob = null
+                        if (::unifiedPlayer.isInitialized) {
+                            unifiedPlayer.onWebRtcFailed()
+                        }
                         if (isFinishing || isDestroyed || isBackNavigating) {
                             fallbackPlayer?.release()
                             fallbackPlayer = null
@@ -2686,7 +2728,11 @@ class CameraDetailActivity : AppCompatActivity() {
         fallbackPlayer = null
         releaseExoPlayerOnly()
         player = fb
-        binding.playerView.player = fb
+        if (::unifiedPlayer.isInitialized) {
+            unifiedPlayer.attachPlayer(fb, autoPrepare = false)
+        } else {
+            binding.playerView.player = fb
+        }
 
         val mp4Url = resolveMp4Url(cam)
         val hlsUrl = resolveHlsUrl(cam)
@@ -2697,6 +2743,9 @@ class CameraDetailActivity : AppCompatActivity() {
             else -> mp4Url.isNotBlank()
         }
         updateStreamStrategy(if (useMp4) "MP4" else "HLS")
+        if (::unifiedPlayer.isInitialized) {
+            unifiedPlayer.onFallbackActive(if (useMp4) StreamTransport.MP4 else StreamTransport.HLS)
+        }
 
         fb.playWhenReady = true
         fb.volume = if (audioEnabled && !webRtcMuted) 1.0f else 0.0f

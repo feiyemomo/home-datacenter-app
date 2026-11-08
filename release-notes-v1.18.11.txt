@@ -1,0 +1,9 @@
+Version 1.18.11 (versionCode 231)
+=====================================
+- [Ops] 修复 1Panel 外部访问网络错误（ERR_HTTP_RESPONSE_CODE_FAILURE），改用 Web 网关统一反向代理通道 (/btpanel)，无需暴露 10000 端口，并支持局域网直连双通道切换
+- [Ops] 彻底消除状态栏双倍 Inset 产生的顶部巨大空白，大幅紧凑化 OpsHeader 与 Tab 选择器，释放 >90dp 屏幕可视面积
+- [Ops] 优化【安全与日志】页面结构，引入【🛡️ 入侵防护】、【🔔 告警配置】、【📜 服务日志】三态子导航切换，消除界面平铺堆叠杂乱问题
+- [Ops] Copilot 对话顶部与 AI 消息气泡显式标明执行推理模型 ID（agent-deep CVE 漏洞修复与架构推演模型，底层挂载 DeepSeek-R1）
+- [Ops] 待审提案卡片中【与 Copilot 讨论修改】明确标注由 agent-deep 专职漏洞推演模型驱动
+- [Ops] Copilot 对话输入框键盘弹起时设置 4.dp 紧密贴合软键盘上沿，收起时自适应沉浸式导航栏高度
+- [Backend/Web] Nginx 生产容器接入 1Panel (/btpanel, /api/v2/, @onepanel_proxy) 反向代理通道并已热重载生效

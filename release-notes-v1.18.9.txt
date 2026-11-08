@@ -1,0 +1,15 @@
+v1.18.9 (对比 v1.18.8 主要演进):
+
+【统一播放器与跨内核手势重构】
+- 手势拦截重构：彻底修复 1.0x 状态下手势被 ExoPlayer 控制层吃掉的 Bug，多指缩放无条件拦截并禁用父容器冲突拦截。
+- 视口与缩放保护：限定 1.0x~4.0x 物理阻尼与平移 Clamping 边界，双击中心平滑插值过渡（1.0x <-> 2.0x）。
+- 复合播放门面 UnifiedStreamPlayerView：集成 WebRTC (SafeSurfaceViewRenderer) 与 ExoPlayer (StyledPlayerView texture_view)，首帧 4 秒超时平滑降级，全屏切换与屏幕旋转平滑重置视角。
+
+【主动协作智能运维中心 (Ops Center)】
+- 原生 Jetpack Compose 打造运维中心 OpsCenterScreen，严格遵循 Liquid Glass 微晶流体设计规范。
+- 【系统大盘】：实时呈现 CPU/内存/磁盘水位、核心容器健康状态与受限一键安全重启、1Panel WAF 统计与 S3 异地备份状态。
+- 【待批提案】：与边缘守护进程联动呈现低峰期变更提案，支持凌晨自动执行窗口与人工审批流。
+- 【Copilot 会话】：原生流式智能交互，直连本地号池与网关，支持自然语言实时系统诊断与日志分析。
+
+【稳定性与门禁保障】
+- 138+ 项单元测试与集成测试全量通过，纯 Jetpack Compose 架构规范。

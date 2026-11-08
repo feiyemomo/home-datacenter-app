@@ -1,0 +1,8 @@
+Version 1.18.12 (versionCode 232)
+=====================================
+- [WAF & Network] 将 H3C Oasis 简优云乒乓轮换热备通道（端口 8088 与 8089）全面收敛并纳入 1Panel OpenResty WAF，实现统一 WAF 规则防护、防 CC 与 Web 攻击阻断，保留 60s 先生后死平滑接力，放行探针白名单。
+- [WAF & Firewall] 1Panel WAF 攻击日志双向联动：实时监听 1pwaf SQLite 攻击事件，同步入库系统审计总线，并将 DefenseManager 触发的高危 IP 自动同步至 1pwaf ipBlack.json 与宿主机 ipset 防火墙。
+- [Ops Copilot] 彻底优化 Copilot 语义意图识别与上下文注入：针对 CVE / 漏洞咨询输出结构化漏洞加固报告并关联真实安全提案；修正容器资源排行，优先从 1Panel Client 提取真实各容器 CPU% 与内存，按占用降序真实排列。
+- [Ops Copilot] 增加 New API 模型服务熔断器（连续 2 次超时/错误进入 1 分钟冷却），消除模型不可达时前端 4 秒挂起卡顿。
+- [Ops Dashboard] 系统大盘在激活时采用 4 秒自适应防雪崩轮询（轻量拉取容器与状态，并在响应后等待 4 秒），大幅提升状态响应时效。
+- [UI / IME] Copilot 对话软键盘弹起时隐藏快捷 Chips 栏并严密贴合软键盘上沿，防止遮挡输入框。

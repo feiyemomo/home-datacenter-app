@@ -29,7 +29,17 @@ class PinchToZoomFrameLayout @JvmOverloads constructor(
     private var translationXVal: Float = 0f
     private var translationYVal: Float = 0f
 
+    val currentTranslationX: Float
+        get() = translationXVal
+
+    val currentTranslationY: Float
+        get() = translationYVal
+
+    val isZoomed: Boolean
+        get() = currentScale > 1.05f
+
     private var targetView: View? = null
+    private var zoomAnimator: ValueAnimator? = null
 
     var onZoomChanged: ((scale: Float) -> Unit)? = null
     var onSingleTap: (() -> Unit)? = null
@@ -37,6 +47,12 @@ class PinchToZoomFrameLayout @JvmOverloads constructor(
     private val scaleGestureDetector = ScaleGestureDetector(
         context,
         object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
+                zoomAnimator?.cancel()
+                parent?.requestDisallowInterceptTouchEvent(true)
+                return true
+            }
+
             override fun onScale(detector: ScaleGestureDetector): Boolean {
                 val scaleFactor = detector.scaleFactor
                 val previousScale = currentScale
@@ -57,6 +73,11 @@ class PinchToZoomFrameLayout @JvmOverloads constructor(
                 }
                 return true
             }
+
+            override fun onScaleEnd(detector: ScaleGestureDetector) {
+                clampTranslations()
+                applyTransform()
+            }
         }
     )
 
@@ -75,6 +96,7 @@ class PinchToZoomFrameLayout @JvmOverloads constructor(
                 distanceY: Float
             ): Boolean {
                 if (currentScale > 1.05f) {
+                    zoomAnimator?.cancel()
                     translationXVal -= distanceX
                     translationYVal -= distanceY
                     clampTranslations()
@@ -85,6 +107,7 @@ class PinchToZoomFrameLayout @JvmOverloads constructor(
             }
 
             override fun onDoubleTap(e: MotionEvent): Boolean {
+                zoomAnimator?.cancel()
                 if (currentScale > 1.05f) {
                     // Reset to 1.0x
                     animateZoomTo(1.0f, 0f, 0f)
@@ -92,7 +115,7 @@ class PinchToZoomFrameLayout @JvmOverloads constructor(
                     // Zoom to 2.0x centered around double tap point
                     val tapFocusX = e.x - width / 2f
                     val tapFocusY = e.y - height / 2f
-                    val targetScale = 2.0f
+                    val targetScale = 2.0f.coerceIn(minScale, maxScale)
                     val targetTransX = -tapFocusX * (targetScale - 1f)
                     val targetTransY = -tapFocusY * (targetScale - 1f)
                     animateZoomTo(targetScale, targetTransX, targetTransY)
@@ -117,8 +140,16 @@ class PinchToZoomFrameLayout @JvmOverloads constructor(
     }
 
     override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
-        // Intercept touch events when zoomed in so parent scroll containers don't steal drags
-        if (currentScale > 1.05f) {
+        if (ev.actionMasked == MotionEvent.ACTION_DOWN) {
+            zoomAnimator?.cancel()
+        }
+
+        // Feed scaleGestureDetector so detector tracks pointer changes accurately
+        scaleGestureDetector.onTouchEvent(ev)
+
+        // Work Order 2.1: Intercept touch events unconditionally when multi-touch,
+        // pinch is in progress, or container is already zoomed, preventing parent scroll containers from stealing touch
+        if (ev.pointerCount >= 2 || scaleGestureDetector.isInProgress || currentScale > 1.05f) {
             parent?.requestDisallowInterceptTouchEvent(true)
             return true
         }
@@ -126,14 +157,25 @@ class PinchToZoomFrameLayout @JvmOverloads constructor(
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            zoomAnimator?.cancel()
+        }
+
         var handled = scaleGestureDetector.onTouchEvent(event)
         handled = gestureDetector.onTouchEvent(event) || handled
+
+        if (currentScale > 1.05f || event.pointerCount >= 2 || scaleGestureDetector.isInProgress) {
+            parent?.requestDisallowInterceptTouchEvent(true)
+        } else if (event.actionMasked == MotionEvent.ACTION_UP || event.actionMasked == MotionEvent.ACTION_CANCEL) {
+            parent?.requestDisallowInterceptTouchEvent(false)
+        }
+
         return handled || super.onTouchEvent(event)
     }
 
     private fun clampTranslations() {
-        val maxTransX = (width * (currentScale - 1f)) / 2f
-        val maxTransY = (height * (currentScale - 1f)) / 2f
+        val maxTransX = maxOf(0f, (width * (currentScale - 1f)) / 2f)
+        val maxTransY = maxOf(0f, (height * (currentScale - 1f)) / 2f)
 
         translationXVal = translationXVal.coerceIn(-maxTransX, maxTransX)
         translationYVal = translationYVal.coerceIn(-maxTransY, maxTransY)
@@ -149,6 +191,7 @@ class PinchToZoomFrameLayout @JvmOverloads constructor(
     }
 
     fun resetZoom(animate: Boolean = true) {
+        zoomAnimator?.cancel()
         if (animate && currentScale > 1.01f) {
             animateZoomTo(1.0f, 0f, 0f)
         } else {
@@ -161,16 +204,18 @@ class PinchToZoomFrameLayout @JvmOverloads constructor(
     }
 
     private fun animateZoomTo(targetScale: Float, targetTransX: Float, targetTransY: Float) {
+        zoomAnimator?.cancel()
+
         val startScale = currentScale
         val startTransX = translationXVal
         val startTransY = translationYVal
 
-        val maxTransX = (width * (targetScale - 1f)) / 2f
-        val maxTransY = (height * (targetScale - 1f)) / 2f
+        val maxTransX = maxOf(0f, (width * (targetScale - 1f)) / 2f)
+        val maxTransY = maxOf(0f, (height * (targetScale - 1f)) / 2f)
         val clampedTransX = targetTransX.coerceIn(-maxTransX, maxTransX)
         val clampedTransY = targetTransY.coerceIn(-maxTransY, maxTransY)
 
-        val animator = ValueAnimator.ofFloat(0f, 1f).apply {
+        zoomAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
             duration = 260
             interpolator = DecelerateInterpolator()
             addUpdateListener { va ->
@@ -182,6 +227,6 @@ class PinchToZoomFrameLayout @JvmOverloads constructor(
                 onZoomChanged?.invoke(currentScale)
             }
         }
-        animator.start()
+        zoomAnimator?.start()
     }
 }
