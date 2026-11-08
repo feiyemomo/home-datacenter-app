@@ -50,26 +50,23 @@ class UnifiedStreamPlayerView @JvmOverloads constructor(
     defStyleAttr: Int = 0
 ) : FrameLayout(context, attrs, defStyleAttr), PlayerCapabilities {
 
-    // Internal primary components
-    private var internalPinchZoom: PinchToZoomFrameLayout
-    private var internalContentContainer: FrameLayout
-    private var internalPlayerView: StyledPlayerView
-    private var internalSurfaceRenderer: SafeSurfaceViewRenderer
-    private var internalPreviewImageView: ImageView
-    private var internalProgressBar: ProgressBar
-    private var internalErrorTextView: TextView
-    private var internalZoomBadgeTextView: TextView
-    private var internalStrategyTextView: TextView
-
-    // Active component references (default to internal, or bound via bindViews)
-    var pinchToZoomLayout: PinchToZoomFrameLayout private set
-    var playerView: StyledPlayerView private set
-    var surfaceRenderer: SafeSurfaceViewRenderer private set
-    var previewImageView: ImageView? private set
-    var progressBar: ProgressBar? private set
-    var errorTextView: TextView? private set
-    var zoomBadgeTextView: TextView? private set
-    var strategyTextView: TextView? private set
+    // Active component references (bound via bindViews)
+    lateinit var pinchToZoomLayout: PinchToZoomFrameLayout
+        private set
+    lateinit var playerView: StyledPlayerView
+        private set
+    lateinit var surfaceRenderer: SafeSurfaceViewRenderer
+        private set
+    var previewImageView: ImageView? = null
+        private set
+    var progressBar: ProgressBar? = null
+        private set
+    var errorTextView: TextView? = null
+        private set
+    var zoomBadgeTextView: TextView? = null
+        private set
+    var strategyTextView: TextView? = null
+        private set
 
     // State machine properties
     var fallbackState: FallbackState = FallbackState.IDLE
@@ -87,114 +84,18 @@ class UnifiedStreamPlayerView @JvmOverloads constructor(
     override val isPlaying: Boolean
         get() = when (currentTransport) {
             StreamTransport.WEBRTC -> fallbackState == FallbackState.WEBRTC_CONNECTED
-            StreamTransport.MP4, StreamTransport.HLS -> playerView.player?.isPlaying == true
+            StreamTransport.MP4, StreamTransport.HLS -> if (::playerView.isInitialized) playerView.player?.isPlaying == true else false
             StreamTransport.NONE -> false
         }
 
     override val currentPositionMs: Long
-        get() = playerView.player?.currentPosition ?: 0L
+        get() = if (::playerView.isInitialized) playerView.player?.currentPosition ?: 0L else 0L
 
     override val durationMs: Long
-        get() = playerView.player?.duration ?: 0L
+        get() = if (::playerView.isInitialized) playerView.player?.duration ?: 0L else 0L
 
     var onFallbackTriggered: (() -> Unit)? = null
     var onStateChanged: ((FallbackState) -> Unit)? = null
-
-    init {
-        // Construct outermost PinchToZoomFrameLayout
-        internalPinchZoom = PinchToZoomFrameLayout(context).apply {
-            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
-        }
-
-        // Inner zoom content container (transformed by pinch-to-zoom)
-        internalContentContainer = FrameLayout(context).apply {
-            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
-        }
-
-        // ExoPlayer StyledPlayerView with fit mode
-        internalPlayerView = StyledPlayerView(context).apply {
-            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT).apply {
-                gravity = Gravity.CENTER
-            }
-            useController = false
-            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-        }
-
-        // WebRTC SafeSurfaceViewRenderer
-        internalSurfaceRenderer = SafeSurfaceViewRenderer(context).apply {
-            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT).apply {
-                gravity = Gravity.CENTER
-            }
-            visibility = View.GONE
-        }
-
-        // Preview frame
-        internalPreviewImageView = ImageView(context).apply {
-            layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT).apply {
-                gravity = Gravity.CENTER
-            }
-            scaleType = ImageView.ScaleType.CENTER_CROP
-            visibility = View.GONE
-        }
-
-        // Loading spinner
-        internalProgressBar = ProgressBar(context).apply {
-            layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
-                gravity = Gravity.CENTER
-            }
-            visibility = View.GONE
-        }
-
-        // Error message text view
-        internalErrorTextView = TextView(context).apply {
-            layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
-                gravity = Gravity.CENTER
-            }
-            visibility = View.GONE
-        }
-
-        // Zoom badge
-        internalZoomBadgeTextView = TextView(context).apply {
-            layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
-                gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-                setMargins(0, 16, 0, 0)
-            }
-            visibility = View.GONE
-        }
-
-        // Stream strategy badge
-        internalStrategyTextView = TextView(context).apply {
-            layoutParams = LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT).apply {
-                gravity = Gravity.TOP or Gravity.START
-                setMargins(16, 16, 0, 0)
-            }
-            visibility = View.GONE
-        }
-
-        // Assemble view hierarchy
-        internalContentContainer.addView(internalPlayerView)
-        internalContentContainer.addView(internalSurfaceRenderer)
-        internalContentContainer.addView(internalPreviewImageView)
-        internalPinchZoom.addView(internalContentContainer)
-
-        addView(internalPinchZoom)
-        addView(internalProgressBar)
-        addView(internalErrorTextView)
-        addView(internalZoomBadgeTextView)
-        addView(internalStrategyTextView)
-
-        // Point active references to internal views
-        pinchToZoomLayout = internalPinchZoom
-        playerView = internalPlayerView
-        surfaceRenderer = internalSurfaceRenderer
-        previewImageView = internalPreviewImageView
-        progressBar = internalProgressBar
-        errorTextView = internalErrorTextView
-        zoomBadgeTextView = internalZoomBadgeTextView
-        strategyTextView = internalStrategyTextView
-
-        setupZoomBadgeListener()
-    }
 
     /**
      * Bind existing layout components (e.g. from ActivityCameraDetailBinding)
@@ -241,7 +142,9 @@ class UnifiedStreamPlayerView @JvmOverloads constructor(
      * [playerView.player = player] MUST be executed BEFORE [player.prepare()].
      */
     fun attachPlayer(exoPlayer: ExoPlayer, autoPrepare: Boolean = true) {
-        playerView.player = exoPlayer
+        if (::playerView.isInitialized) {
+            playerView.player = exoPlayer
+        }
         if (autoPrepare) {
             exoPlayer.prepare()
         }
@@ -282,15 +185,28 @@ class UnifiedStreamPlayerView @JvmOverloads constructor(
 
     /**
      * Notify that WebRTC connected successfully, canceling the fallback watchdog.
+     * Note: Surface visibility is switched only after first frame is actually rendered.
      */
     fun onWebRtcConnected() {
         cancelFallbackWatchdog()
         fallbackState = FallbackState.WEBRTC_CONNECTED
         currentTransport = StreamTransport.WEBRTC
-        surfaceRenderer.visibility = View.VISIBLE
-        playerView.visibility = View.GONE
         errorTextView?.visibility = View.GONE
         onStateChanged?.invoke(fallbackState)
+    }
+
+    /**
+     * Switch video surface visibility only after first frame is actually rendered.
+     */
+    fun onWebRtcFirstFrameRendered() {
+        if (::surfaceRenderer.isInitialized) {
+            surfaceRenderer.visibility = View.VISIBLE
+        }
+        if (::playerView.isInitialized) {
+            playerView.visibility = View.GONE
+        }
+        progressBar?.visibility = View.GONE
+        previewImageView?.visibility = View.GONE
     }
 
     /**
@@ -310,8 +226,12 @@ class UnifiedStreamPlayerView @JvmOverloads constructor(
     fun onFallbackActive(transport: StreamTransport) {
         fallbackState = FallbackState.FALLBACK_PLAYING
         currentTransport = transport
-        surfaceRenderer.visibility = View.GONE
-        playerView.visibility = View.VISIBLE
+        if (::surfaceRenderer.isInitialized) {
+            surfaceRenderer.visibility = View.GONE
+        }
+        if (::playerView.isInitialized) {
+            playerView.visibility = View.VISIBLE
+        }
         errorTextView?.visibility = View.GONE
         onStateChanged?.invoke(fallbackState)
     }
@@ -351,31 +271,39 @@ class UnifiedStreamPlayerView @JvmOverloads constructor(
 
     // PlayerCapabilities delegators
     override fun play() {
-        playerView.player?.play()
+        if (::playerView.isInitialized) {
+            playerView.player?.play()
+        }
     }
 
     override fun pause() {
-        playerView.player?.pause()
+        if (::playerView.isInitialized) {
+            playerView.player?.pause()
+        }
     }
 
     override fun seekTo(positionMs: Long) {
-        if (supportsSeeking) {
+        if (supportsSeeking && ::playerView.isInitialized) {
             playerView.player?.seekTo(positionMs)
         }
     }
 
     override fun setPlaybackSpeed(speed: Float) {
-        if (supportsSpeedAdjustment) {
+        if (supportsSpeedAdjustment && ::playerView.isInitialized) {
             playerView.player?.setPlaybackSpeed(speed)
         }
     }
 
     override fun setAudioEnabled(enabled: Boolean) {
-        playerView.player?.volume = if (enabled) 1.0f else 0.0f
+        if (::playerView.isInitialized) {
+            playerView.player?.volume = if (enabled) 1.0f else 0.0f
+        }
     }
 
     override fun resetZoom(animate: Boolean) {
-        pinchToZoomLayout.resetZoom(animate)
+        if (::pinchToZoomLayout.isInitialized) {
+            pinchToZoomLayout.resetZoom(animate)
+        }
     }
 
     /**
@@ -384,6 +312,8 @@ class UnifiedStreamPlayerView @JvmOverloads constructor(
     fun release() {
         cancelFallbackWatchdog()
         fallbackState = FallbackState.IDLE
-        playerView.player = null
+        if (::playerView.isInitialized) {
+            playerView.player = null
+        }
     }
 }

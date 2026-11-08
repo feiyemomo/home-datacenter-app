@@ -269,16 +269,10 @@ class CameraDetailActivity : AppCompatActivity() {
         } else {
             height
         }
-        listOf(
-            binding.videoContainer,
-            binding.pinchZoomContainer,
-            binding.zoomContentContainer,
-        ).forEach { view ->
-            val lp = view.layoutParams
-            if (lp != null && lp.height != safeHeight) {
-                lp.height = safeHeight
-                view.layoutParams = lp
-            }
+        val lp = binding.videoContainer.layoutParams
+        if (lp != null && lp.height != safeHeight) {
+            lp.height = safeHeight
+            binding.videoContainer.layoutParams = lp
         }
         applyVideoSurfaceAspect(fullscreenHelper?.isFullscreen == true)
     }
@@ -983,6 +977,7 @@ class CameraDetailActivity : AppCompatActivity() {
         fallbackPlayer = null
         silentFallbackJob?.cancel()
         silentFallbackJob = null
+        cancelHardFallbackWatchdog()
         fb?.release()
         // Reset fallback ladder flags so reload retries WebRTC first.
         triedMp4 = false
@@ -1331,11 +1326,11 @@ class CameraDetailActivity : AppCompatActivity() {
         // issue on software decoders. The StyledPlayerView in the
         // layout already provides the surface; we attach the player
         // to it before calling prepare() in preparePlayback().
-        binding.tvVideoError.setOnClickListener { startPlayback() }
+        binding.tvVideoError.setOnClickListener { restartPlayback() }
 
         unifiedPlayer = UnifiedStreamPlayerView(this).apply {
             bindViews(
-                pinchZoom = binding.pinchZoomContainer,
+                pinchZoom = binding.videoContainer,
                 exoPlayerView = binding.playerView,
                 renderer = binding.surfaceRenderer,
                 preview = binding.ivPreviewFrame,
@@ -1502,7 +1497,7 @@ class CameraDetailActivity : AppCompatActivity() {
     }
 
     private fun setupPinchZoom() {
-        binding.pinchZoomContainer.onZoomChanged = { scale ->
+        binding.videoContainer.onZoomChanged = { scale ->
             if (scale > 1.05f) {
                 binding.tvZoomBadge.visibility = View.VISIBLE
                 binding.tvZoomBadge.text = String.format(java.util.Locale.US, "%.1fx 双击复位", scale)
@@ -1510,7 +1505,7 @@ class CameraDetailActivity : AppCompatActivity() {
                 binding.tvZoomBadge.visibility = View.GONE
             }
         }
-        binding.pinchZoomContainer.onSingleTap = {
+        binding.videoContainer.onSingleTap = {
             if (binding.surfaceRenderer.visibility == View.VISIBLE) {
                 toggleWebRtcControls()
             }
@@ -1929,7 +1924,19 @@ class CameraDetailActivity : AppCompatActivity() {
     private val webRtcRendererEvents = object : RendererCommon.RendererEvents {
         override fun onFirstFrameRendered() {
             webRtcFirstFrameRendered = true
+            cancelHardFallbackWatchdog()
             android.util.Log.i(TAG, "WebRTC renderer: first frame rendered")
+            binding.root.post {
+                if (liveOwner == OWNER_WEBRTC && !isFinishing && !isDestroyed) {
+                    binding.surfaceRenderer.visibility = View.VISIBLE
+                    binding.playerView.visibility = View.GONE
+                    binding.progressVideo.visibility = View.GONE
+                    if (::unifiedPlayer.isInitialized) {
+                        unifiedPlayer.onWebRtcFirstFrameRendered()
+                    }
+                    revealVideoWhenSteady()
+                }
+            }
         }
 
         override fun onFrameResolutionChanged(width: Int, height: Int, rotation: Int) {
@@ -2044,8 +2051,16 @@ class CameraDetailActivity : AppCompatActivity() {
         if (videoRevealed || isFinishing || isDestroyed) return
         videoRevealed = true
         cancelRevealWatchdog()
+        cancelHardFallbackWatchdog()
         webRtcClient?.removeVideoSink(videoFrameRateSink)
         binding.progressVideo.visibility = View.GONE
+        if (liveOwner == OWNER_WEBRTC) {
+            binding.surfaceRenderer.visibility = View.VISIBLE
+            binding.playerView.visibility = View.GONE
+            if (::unifiedPlayer.isInitialized) {
+                unifiedPlayer.onWebRtcFirstFrameRendered()
+            }
+        }
 
         val preview = binding.ivPreviewFrame
         if (preview.visibility != View.VISIBLE) return
@@ -2072,11 +2087,66 @@ class CameraDetailActivity : AppCompatActivity() {
         }
     }
 
+    private var hardFallbackWatchdogJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * 5-second hard fallback watchdog: ensures the player never hangs
+     * indefinitely on the loading spinner if WebRTC/ExoPlayer stalls.
+     */
+    private fun startHardFallbackWatchdog() {
+        cancelHardFallbackWatchdog()
+        hardFallbackWatchdogJob = lifecycleScope.launch {
+            kotlinx.coroutines.delay(5_000L)
+            if (isFinishing || isDestroyed) return@launch
+            val exoPlaying = (liveOwner == OWNER_EXO && player?.isPlaying == true)
+            val webrtcPlaying = (liveOwner == OWNER_WEBRTC && webRtcFirstFrameRendered)
+            if (!exoPlaying && !webrtcPlaying) {
+                android.util.Log.w(TAG, "Hard fallback watchdog (5s) triggered: stream stalled, forcing fallback")
+                val cam = camera
+                if (webRtcInProgress || liveOwner == OWNER_NONE) {
+                    webRtcInProgress = false
+                    try {
+                        webRtcClient?.stopPlayoutImmediately()
+                        webRtcClient?.release()
+                    } catch (_: Exception) {}
+                    if (cam != null && !promoteFallbackPlayer(cam)) {
+                        startMp4Playback(cam)
+                    } else if (cam == null) {
+                        handleStreamPlaybackFailure()
+                    }
+                } else if (binding.progressVideo.visibility == View.VISIBLE) {
+                    binding.progressVideo.visibility = View.GONE
+                    if (player?.isPlaying != true) {
+                        handleStreamPlaybackFailure()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun cancelHardFallbackWatchdog() {
+        hardFallbackWatchdogJob?.cancel()
+        hardFallbackWatchdogJob = null
+    }
+
+    private fun restartPlayback() {
+        if (isFinishing || isDestroyed) return
+        streamRetryJob?.cancel()
+        streamRetryJob = null
+        cancelHardFallbackWatchdog()
+        releasePlayer()
+        binding.tvVideoError.visibility = View.GONE
+        binding.progressVideo.visibility = View.VISIBLE
+        startPlayback()
+    }
+
     private fun startPlayback() {
         if (isFinishing || isDestroyed || isBackNavigating) return
         val cam = camera ?: return
         silentFallbackJob?.cancel()
         silentFallbackJob = null
+        cancelHardFallbackWatchdog()
+        startHardFallbackWatchdog()
         loadPreviewFrame()
         triedWebRtc = false
         triedMp4 = false
@@ -2090,9 +2160,7 @@ class CameraDetailActivity : AppCompatActivity() {
             if (c != null && c.isOnline) {
                 streamRetryJob?.cancel()
                 streamRetryCount = 0
-                binding.tvVideoError.visibility = View.GONE
-                binding.progressVideo.visibility = View.VISIBLE
-                setupVideo()
+                restartPlayback()
             }
         }
 
@@ -2225,9 +2293,8 @@ class CameraDetailActivity : AppCompatActivity() {
                 if (liveOwner == OWNER_WEBRTC || !raceActive) return
                 ticks++
                 if (ticks >= 10) {
-                    // ~8s without a single sustained frame: keep the
-                    // ExoPlayer picture, drop WebRTC quietly.
-                    android.util.Log.w(TAG, "Race: no WebRTC frames in 8s — keeping ExoPlayer")
+                    // ~8s without a single sustained frame: evaluate fallback
+                    android.util.Log.w(TAG, "Race: no WebRTC frames in 8s — evaluating fallback")
                     raceActive = false
                     webRtcClient?.removeVideoSink(videoFrameRateSink)
                     webRtcClient?.let { c ->
@@ -2235,6 +2302,16 @@ class CameraDetailActivity : AppCompatActivity() {
                         c.setAudioEnabled(false)
                         c.setVideoEnabled(false)
                         try { c.release() } catch (_: Exception) {}
+                    }
+                    if (liveOwner == OWNER_EXO && player?.isPlaying == true) {
+                        binding.progressVideo.visibility = View.GONE
+                        return
+                    }
+                    val cam = camera
+                    if (cam != null) {
+                        startMp4Playback(cam)
+                    } else {
+                        handleStreamPlaybackFailure()
                     }
                     return
                 }
@@ -2603,11 +2680,8 @@ class CameraDetailActivity : AppCompatActivity() {
                             return
                         }
 
-                        // WebRTC wins: take the screen over. The poster
-                        // stays on top until WebRTC's own first frame.
+                        // WebRTC connected: wait for first frame before switching surfaces.
                         liveOwner = OWNER_WEBRTC
-                        binding.playerView.visibility = View.GONE
-                        binding.surfaceRenderer.visibility = View.VISIBLE
                         binding.btnWebRtcFullscreen.visibility = View.VISIBLE
                         webRtcPaused = false
 
@@ -2849,6 +2923,7 @@ class CameraDetailActivity : AppCompatActivity() {
 
     /** ExoPlayer actually drew a frame — safe to drop the poster. */
     private fun onExoPlayerFirstFrame() {
+        cancelHardFallbackWatchdog()
         binding.progressVideo.visibility = View.GONE
         hidePreviewFrame()
     }
@@ -3233,7 +3308,7 @@ class CameraDetailActivity : AppCompatActivity() {
                 delay(delayMs)
                 if (!isFinishing && !isDestroyed) {
                     android.util.Log.i(TAG, "Retrying camera stream (attempt $streamRetryCount)...")
-                    setupVideo()
+                    restartPlayback()
                 }
             }
         } else {

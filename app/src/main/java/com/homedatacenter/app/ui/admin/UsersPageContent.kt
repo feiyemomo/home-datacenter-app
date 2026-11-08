@@ -163,13 +163,10 @@ fun UsersPageContent(
                         )
                     }
                 ) {
-                    val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-                    val navBarBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-
                     LazyColumn(
                         state = lazyListState,
                         modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(top = statusBarTop + 12.dp, bottom = navBarBottom + 150.dp),
+                        contentPadding = PaddingValues(top = 12.dp, bottom = 100.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
                         // Header Section

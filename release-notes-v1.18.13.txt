@@ -1,0 +1,7 @@
+Version 1.18.13 (versionCode 233)
+=====================================
+- [UI / Layout] 彻底消除主页 Tab、摄像头 Tab、用户管理 Tab 与多摄大盘顶部的多余 Insets 空白间距，统一由 Compose Insets 与系统状态栏精准贴合。
+- [UI / IME] 软键盘唤起联动重构：主界面通过全局布局监听在键盘弹起时平滑沉降底部导航栏，Copilot 对话输入框无缝紧贴软键盘上沿，收起时自动恢复导航栏。
+- [Camera / Player] 摄像头视频播放架构精简：剥离三重 FrameLayout 嵌套，优化 SurfaceView/TextureView 初始化时序，杜绝视频流加载时的菊花挂起问题。
+- [Ops Copilot] 真实性能指标与意图加固：打通 1Panel OpenAPI 真实容器性能统计并结合 Linux cgroups 实时计算，彻底修复容器资源消耗排行全为 0 的问题；优化身份识别意图引擎，精准辨识问候与自我介绍。
+- [Network / Tunnel] H3C Oasis 隧道与 Keepalive 保活机制加固：1Panel 防火墙端口全面固化放行，升级 HTTP 深度探针保活，确保公网穿透高可用。

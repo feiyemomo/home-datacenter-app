@@ -2040,7 +2040,6 @@ private fun CopilotChatTabContent(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .imePadding()
                 .padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = bottomPadding)
                 .clip(RoundedCornerShape(20.dp))
                 .background(tokens.cardBg)

@@ -3,8 +3,11 @@ package com.homedatacenter.app.ui.main
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
+import android.view.View
+import android.view.ViewTreeObserver
 import androidx.appcompat.app.AppCompatActivity
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -48,6 +51,7 @@ class MainActivity : AppCompatActivity() {
     var isAdminState by mutableStateOf(false)
     private val tabHistory = java.util.ArrayDeque<MainTab>()
     private var lastBackPressTime = 0L
+    private var keyboardLayoutListener: ViewTreeObserver.OnGlobalLayoutListener? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -95,6 +99,7 @@ class MainActivity : AppCompatActivity() {
                 )
             }
         }
+        setupKeyboardListener()
 
         setupFragments(savedInstanceState)
         container.baseUrlResolver.forceProbe()
@@ -146,7 +151,49 @@ class MainActivity : AppCompatActivity() {
             if (reachable) android.view.View.GONE else android.view.View.VISIBLE
     }
 
+    private fun setupKeyboardListener() {
+        val rootView = binding.root
+        var isKeyboardOpen = false
+        val layoutListener = ViewTreeObserver.OnGlobalLayoutListener {
+            val rect = Rect()
+            rootView.getWindowVisibleDisplayFrame(rect)
+            val screenHeight = rootView.rootView.height
+            val keypadHeight = screenHeight - rect.bottom
+            val keyboardNowOpen = keypadHeight > screenHeight * 0.15
+
+            if (keyboardNowOpen != isKeyboardOpen) {
+                isKeyboardOpen = keyboardNowOpen
+                if (isKeyboardOpen) {
+                    // Keyboard popped up: smoothly animate translation down and set GONE so it doesn't cover input box
+                    binding.composeBottomNav.animate()
+                        .translationY(binding.composeBottomNav.height.toFloat().coerceAtLeast(200f))
+                        .alpha(0f)
+                        .setDuration(180)
+                        .withEndAction {
+                            binding.composeBottomNav.visibility = View.GONE
+                        }
+                        .start()
+                } else {
+                    // Keyboard closed: restore VISIBLE and smoothly animate back up
+                    binding.composeBottomNav.visibility = View.VISIBLE
+                    binding.composeBottomNav.translationY = binding.composeBottomNav.height.toFloat().coerceAtLeast(200f)
+                    binding.composeBottomNav.alpha = 0f
+                    binding.composeBottomNav.animate()
+                        .translationY(0f)
+                        .alpha(1f)
+                        .setDuration(220)
+                        .start()
+                }
+            }
+        }
+        rootView.viewTreeObserver.addOnGlobalLayoutListener(layoutListener)
+        keyboardLayoutListener = layoutListener
+    }
+
     override fun onDestroy() {
+        keyboardLayoutListener?.let { listener ->
+            binding.root.viewTreeObserver.removeOnGlobalLayoutListener(listener)
+        }
         if (::container.isInitialized) {
             container.baseUrlResolver.removeReachabilityListener(reachabilityListener)
         }

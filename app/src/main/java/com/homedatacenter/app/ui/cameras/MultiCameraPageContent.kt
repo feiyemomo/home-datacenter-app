@@ -215,9 +215,7 @@ fun MultiCameraPageContent(
             preset = preset
         )
 
-        val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
         Column(modifier = Modifier.fillMaxSize()) {
-            Spacer(modifier = Modifier.height(statusBarTop))
             // Liquid Glass Header Toolbar
             Surface(
                 color = cardBg,
