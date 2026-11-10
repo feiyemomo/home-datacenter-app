@@ -149,6 +149,94 @@ data class AlertFilterConfig(
 )
 
 /**
+ * End-to-end AgentAuditRun record returned by GET /api/v1/ops/audit/runs.
+ */
+data class AgentAuditRunUi(
+    val runId: String,
+    val correlationId: String = "",
+    val triggerSource: String = "",
+    val actorType: String = "",
+    val actorId: String = "",
+    val action: String = "",
+    val target: String = "",
+    val component: String = "",
+    val decision: String = "",
+    val riskLevel: String = "LOW",
+    val status: String = "RUNNING",
+    val proposalId: String = "",
+    val operationId: String = "",
+    val summary: String = "",
+    val errorCode: String = "",
+    val isOffline: Boolean = false,
+    val synced: Boolean = true,
+    val eventCount: Int = 0,
+    val firstSeq: Long = 0,
+    val lastSeq: Long = 0,
+    val lastEntryHash: String = "",
+    val integrityStatus: String = "CHAIN_INTACT_LOCAL_ONLY",
+    val startedAtMs: Long = 0L,
+    val endedAtMs: Long = 0L,
+    val durationMs: Long = 0L
+)
+
+/**
+ * Individual immutable audit event step inside an AgentAuditRun timeline.
+ */
+data class AgentAuditEventUi(
+    val auditId: String,
+    val seq: Long,
+    val streamId: String = "core",
+    val runId: String = "",
+    val eventType: String = "",
+    val action: String = "",
+    val target: String = "",
+    val component: String = "",
+    val actorType: String = "",
+    val actorId: String = "",
+    val decision: String = "",
+    val riskLevel: String = "",
+    val result: String = "",
+    val errorCode: String = "",
+    val beforeState: String = "",
+    val afterState: String = "",
+    val evidence: String = "",
+    val parametersRedacted: String = "",
+    val previousHash: String = "",
+    val entryHash: String = "",
+    val hmacSignature: String = "",
+    val isOffline: Boolean = false,
+    val createdAtMs: Long = 0L,
+    val durationMs: Long = 0L
+)
+
+/**
+ * Audit chain tamper-evidence verification summary returned by POST /api/v1/ops/audit/verify.
+ */
+data class AuditVerifyResultUi(
+    val valid: Boolean = false,
+    val integrityStatus: String = "UNVERIFIABLE",
+    val streamId: String = "core",
+    val checkedEvents: Long = 0L,
+    val checkedCheckpoints: Long = 0L,
+    val headSeq: Long = 0L,
+    val tailSeq: Long = 0L,
+    val triggersIntact: Boolean = false,
+    val brokenAtSeq: Long = 0L,
+    val failureReason: String = "",
+    val limitationNote: String = "",
+    val verifiedAt: String = ""
+)
+
+/**
+ * Full timeline detail response returned by GET /api/v1/ops/audit/runs/{run_id}.
+ */
+data class AgentAuditRunDetailUi(
+    val run: AgentAuditRunUi,
+    val events: List<AgentAuditEventUi>,
+    val integrity: AuditVerifyResultUi? = null
+)
+
+/**
  * OpsViewModel: State management and business operations for OpsCenterScreen.
  *
  * Implements Work Order 5.3:
@@ -207,6 +295,25 @@ class OpsViewModel(
 
     private val _alertFilters = MutableStateFlow(AlertFilterConfig())
     val alertFilters: StateFlow<AlertFilterConfig> = _alertFilters.asStateFlow()
+
+    // --- Agent Audit Engine State (R5) ---
+    private val _auditRuns = MutableStateFlow<List<AgentAuditRunUi>>(emptyList())
+    val auditRuns: StateFlow<List<AgentAuditRunUi>> = _auditRuns.asStateFlow()
+
+    private val _selectedAuditDetail = MutableStateFlow<AgentAuditRunDetailUi?>(null)
+    val selectedAuditDetail: StateFlow<AgentAuditRunDetailUi?> = _selectedAuditDetail.asStateFlow()
+
+    private val _auditVerifyResult = MutableStateFlow<AuditVerifyResultUi?>(null)
+    val auditVerifyResult: StateFlow<AuditVerifyResultUi?> = _auditVerifyResult.asStateFlow()
+
+    private val _isLoadingAudit = MutableStateFlow(false)
+    val isLoadingAudit: StateFlow<Boolean> = _isLoadingAudit.asStateFlow()
+
+    private val _isVerifyingAudit = MutableStateFlow(false)
+    val isVerifyingAudit: StateFlow<Boolean> = _isVerifyingAudit.asStateFlow()
+
+    private val _auditError = MutableStateFlow<String?>(null)
+    val auditError: StateFlow<String?> = _auditError.asStateFlow()
 
     // Copilot discussion draft context (R7)
     private val _chatDraft = MutableStateFlow<String?>(null)
@@ -526,6 +633,7 @@ class OpsViewModel(
                     fetchSecurityEvents()
                     fetchSystemLogs()
                     fetchAlertFilters()
+                    fetchAuditRuns(limit = 30)
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -674,19 +782,29 @@ class OpsViewModel(
 
                     runCatching {
                         httpClient.newCall(request).execute().use { resp ->
+                            val respBody = resp.body?.string().orEmpty()
                             success = resp.isSuccessful
                             if (!success) {
-                                msg = "HTTP ${resp.code}"
+                                msg = extractHttpError(resp.code, respBody)
                             }
                         }
-                    }.onFailure {
-                        success = true
+                    }.onFailure { err ->
+                        success = false
+                        msg = err.message ?: "网络连接失败"
                     }
                 } else {
+                    // Standalone Compose preview / unit fixture mode without AppContainer or OkHttpClient
                     success = true
                 }
 
-                // Update container status locally
+                if (!success) {
+                    val errorMsg = msg ?: "重启请求被拒绝"
+                    showToast("重启容器 $name 失败: $errorMsg")
+                    onComplete?.invoke(false, errorMsg)
+                    return@launch
+                }
+
+                // Update container status locally only after backend confirms success
                 val current = _containers.value.toMutableList()
                 val idx = current.indexOfFirst { it.name == name }
                 if (idx >= 0) {
@@ -716,6 +834,7 @@ class OpsViewModel(
         viewModelScope.launch(ioDispatcher) {
             _approvingProposals.value = _approvingProposals.value + (proposalId to true)
             var success = false
+            var msg: String? = null
 
             try {
                 if (appContainer != null || httpClientOverride != null) {
@@ -741,16 +860,29 @@ class OpsViewModel(
 
                     runCatching {
                         httpClient.newCall(request).execute().use { resp ->
+                            val respBody = resp.body?.string().orEmpty()
                             success = resp.isSuccessful
+                            if (!success) {
+                                msg = extractHttpError(resp.code, respBody)
+                            }
                         }
-                    }.onFailure {
-                        success = true
+                    }.onFailure { err ->
+                        success = false
+                        msg = err.message ?: "网络连接失败"
                     }
                 } else {
+                    // Standalone Compose preview / unit fixture mode without AppContainer or OkHttpClient
                     success = true
                 }
 
-                // Update proposal status locally
+                if (!success) {
+                    val errorMsg = msg ?: "提案审批被拒绝"
+                    showToast("提案审批失败: $errorMsg")
+                    onComplete?.invoke(false, errorMsg)
+                    return@launch
+                }
+
+                // Update proposal status locally only after backend confirms success
                 val current = _pendingProposals.value.toMutableList()
                 val idx = current.indexOfFirst { it.id == proposalId }
                 if (idx >= 0) {
@@ -772,6 +904,18 @@ class OpsViewModel(
                 _approvingProposals.value = _approvingProposals.value - proposalId
             }
         }
+    }
+
+    private fun extractHttpError(statusCode: Int, rawBody: String): String {
+        val trimmed = rawBody.trim()
+        if (trimmed.isNotEmpty()) {
+            runCatching {
+                val obj = JSONObject(trimmed)
+                val err = obj.optString("error", "").ifBlank { obj.optString("message", "") }
+                if (err.isNotBlank()) return "HTTP $statusCode: $err"
+            }
+        }
+        return "HTTP $statusCode"
     }
 
     /**
@@ -1151,6 +1295,255 @@ class OpsViewModel(
                 Log.w(tag, "Update alert filters network error: ${e.message}")
             }
         }
+    }
+
+    // =========================================================================
+    // AgentAuditEngine Traceability & Tamper-Evidence Verification (R5)
+    // =========================================================================
+
+    fun fetchAuditRuns(status: String? = null, isOffline: Boolean? = null, limit: Int = 30) {
+        viewModelScope.launch(ioDispatcher) {
+            _isLoadingAudit.value = true
+            _auditError.value = null
+            try {
+                if (appContainer == null && httpClientOverride == null) {
+                    _auditError.value = "后端未连接，无法拉取审计轨迹"
+                    return@launch
+                }
+                val baseUrl = getBaseUrl().trimEnd('/')
+                val token = getToken()
+                val params = mutableListOf("page=1", "page_size=$limit")
+                if (!status.isNullOrBlank() && !status.equals("ALL", ignoreCase = true)) {
+                    params.add("status=${java.net.URLEncoder.encode(status.trim(), "UTF-8")}")
+                }
+                if (isOffline != null) {
+                    params.add("is_offline=$isOffline")
+                }
+                val url = "$baseUrl/api/v1/ops/audit/runs?${params.joinToString("&")}"
+                val request = Request.Builder()
+                    .url(url)
+                    .addHeader("Authorization", "Bearer $token")
+                    .get()
+                    .build()
+
+                httpClient.newCall(request).execute().use { resp ->
+                    val bodyStr = resp.body?.string().orEmpty()
+                    if (!resp.isSuccessful) {
+                        _auditError.value = extractHttpError(resp.code, bodyStr)
+                        return@launch
+                    }
+                    val root = JSONObject(bodyStr)
+                    val dataObj = root.optJSONObject("data") ?: root
+                    val items = dataObj.optJSONArray("items") ?: JSONArray()
+                    val parsed = mutableListOf<AgentAuditRunUi>()
+                    for (i in 0 until items.length()) {
+                        items.optJSONObject(i)?.let { parsed.add(parseAuditRun(it)) }
+                    }
+                    _auditRuns.value = parsed
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Log.w(tag, "Fetch audit runs error: ${e.message}")
+                _auditError.value = e.message ?: "加载审计历史失败"
+            } finally {
+                _isLoadingAudit.value = false
+            }
+        }
+    }
+
+    fun fetchAuditRunDetail(runId: String) {
+        if (runId.isBlank()) return
+        viewModelScope.launch(ioDispatcher) {
+            _isLoadingAudit.value = true
+            _auditError.value = null
+            try {
+                if (appContainer == null && httpClientOverride == null) {
+                    _auditError.value = "后端未连接，无法加载执行时间线"
+                    return@launch
+                }
+                val baseUrl = getBaseUrl().trimEnd('/')
+                val token = getToken()
+                val encodedId = java.net.URLEncoder.encode(runId.trim(), "UTF-8")
+                val url = "$baseUrl/api/v1/ops/audit/runs/$encodedId"
+                val request = Request.Builder()
+                    .url(url)
+                    .addHeader("Authorization", "Bearer $token")
+                    .get()
+                    .build()
+
+                httpClient.newCall(request).execute().use { resp ->
+                    val bodyStr = resp.body?.string().orEmpty()
+                    if (!resp.isSuccessful) {
+                        val errMsg = extractHttpError(resp.code, bodyStr)
+                        _auditError.value = errMsg
+                        showToast("加载审计时间线失败: $errMsg")
+                        return@launch
+                    }
+                    val root = JSONObject(bodyStr)
+                    val dataObj = root.optJSONObject("data") ?: root
+                    val runObj = dataObj.optJSONObject("run")
+                        ?: throw IllegalStateException("审计详情缺少 run 字段")
+                    val eventsArr = dataObj.optJSONArray("events") ?: JSONArray()
+                    val events = mutableListOf<AgentAuditEventUi>()
+                    for (i in 0 until eventsArr.length()) {
+                        eventsArr.optJSONObject(i)?.let { events.add(parseAuditEvent(it)) }
+                    }
+                    val integrity = dataObj.optJSONObject("integrity")?.let { parseVerifyResult(it) }
+                    _selectedAuditDetail.value = AgentAuditRunDetailUi(
+                        run = parseAuditRun(runObj),
+                        events = events,
+                        integrity = integrity
+                    )
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Log.w(tag, "Fetch audit detail error: ${e.message}")
+                val errMsg = e.message ?: "加载审计时间线失败"
+                _auditError.value = errMsg
+                showToast("加载审计时间线失败: $errMsg")
+            } finally {
+                _isLoadingAudit.value = false
+            }
+        }
+    }
+
+    fun clearSelectedAuditDetail() {
+        _selectedAuditDetail.value = null
+    }
+
+    fun verifyAuditChain(streamId: String = "core") {
+        viewModelScope.launch(ioDispatcher) {
+            _isVerifyingAudit.value = true
+            try {
+                if (appContainer == null && httpClientOverride == null) {
+                    showToast("后端未连接，无法校验审计链完整性")
+                    return@launch
+                }
+                val baseUrl = getBaseUrl().trimEnd('/')
+                val token = getToken()
+                val url = "$baseUrl/api/v1/ops/audit/verify"
+                val json = JSONObject().apply {
+                    put("stream_id", streamId)
+                    put("verify_checkpoints", true)
+                    put("verify_triggers", true)
+                }
+                val reqBody = json.toString().toRequestBody("application/json".toMediaType())
+                val request = Request.Builder()
+                    .url(url)
+                    .addHeader("Authorization", "Bearer $token")
+                    .post(reqBody)
+                    .build()
+
+                httpClient.newCall(request).execute().use { resp ->
+                    val bodyStr = resp.body?.string().orEmpty()
+                    if (!resp.isSuccessful) {
+                        val errMsg = extractHttpError(resp.code, bodyStr)
+                        _auditVerifyResult.value = AuditVerifyResultUi(
+                            valid = false,
+                            integrityStatus = "UNVERIFIABLE",
+                            failureReason = errMsg
+                        )
+                        showToast("审计链校验失败: $errMsg")
+                        return@launch
+                    }
+                    val root = JSONObject(bodyStr)
+                    val dataObj = root.optJSONObject("data") ?: root
+                    val res = parseVerifyResult(dataObj)
+                    _auditVerifyResult.value = res
+                    showToast(
+                        if (res.valid) "审计链完整性校验通过 (${res.integrityStatus})"
+                        else "审计链异常 (${res.integrityStatus}): ${res.failureReason}"
+                    )
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                val errMsg = e.message ?: "校验请求异常"
+                _auditVerifyResult.value = AuditVerifyResultUi(
+                    valid = false,
+                    integrityStatus = "UNVERIFIABLE",
+                    failureReason = errMsg
+                )
+                showToast("审计链校验异常: $errMsg")
+            } finally {
+                _isVerifyingAudit.value = false
+            }
+        }
+    }
+
+    private fun parseAuditRun(obj: JSONObject): AgentAuditRunUi {
+        return AgentAuditRunUi(
+            runId = obj.optString("run_id", ""),
+            correlationId = obj.optString("correlation_id", ""),
+            triggerSource = obj.optString("trigger_source", ""),
+            actorType = obj.optString("actor_type", ""),
+            actorId = obj.optString("actor_id", ""),
+            action = obj.optString("action", ""),
+            target = obj.optString("target", ""),
+            component = obj.optString("component", ""),
+            decision = obj.optString("decision", ""),
+            riskLevel = obj.optString("risk_level", "LOW"),
+            status = obj.optString("status", "RUNNING"),
+            proposalId = obj.optString("proposal_id", ""),
+            operationId = obj.optString("operation_id", ""),
+            summary = obj.optString("summary", ""),
+            errorCode = obj.optString("error_code", ""),
+            isOffline = obj.optBoolean("is_offline", false),
+            synced = obj.optBoolean("synced", true),
+            eventCount = obj.optInt("event_count", 0),
+            firstSeq = obj.optLong("first_seq", 0L),
+            lastSeq = obj.optLong("last_seq", 0L),
+            lastEntryHash = obj.optString("last_entry_hash", ""),
+            integrityStatus = obj.optString("integrity_status", "CHAIN_INTACT_LOCAL_ONLY"),
+            startedAtMs = obj.optLong("started_at_ms", 0L),
+            endedAtMs = obj.optLong("ended_at_ms", 0L),
+            durationMs = obj.optLong("duration_ms", 0L)
+        )
+    }
+
+    private fun parseAuditEvent(obj: JSONObject): AgentAuditEventUi {
+        return AgentAuditEventUi(
+            auditId = obj.optString("audit_id", ""),
+            seq = obj.optLong("seq", 0L),
+            streamId = obj.optString("stream_id", "core"),
+            runId = obj.optString("run_id", ""),
+            eventType = obj.optString("event_type", ""),
+            action = obj.optString("action", ""),
+            target = obj.optString("target", ""),
+            component = obj.optString("component", ""),
+            actorType = obj.optString("actor_type", ""),
+            actorId = obj.optString("actor_id", ""),
+            decision = obj.optString("decision", ""),
+            riskLevel = obj.optString("risk_level", ""),
+            result = obj.optString("result", ""),
+            errorCode = obj.optString("error_code", ""),
+            beforeState = obj.optString("before_state", ""),
+            afterState = obj.optString("after_state", ""),
+            evidence = obj.optString("evidence", ""),
+            parametersRedacted = obj.optString("parameters_redacted", ""),
+            previousHash = obj.optString("previous_hash", ""),
+            entryHash = obj.optString("entry_hash", ""),
+            hmacSignature = obj.optString("hmac_signature", ""),
+            isOffline = obj.optBoolean("is_offline", false),
+            createdAtMs = obj.optLong("created_at_ms", 0L),
+            durationMs = obj.optLong("duration_ms", 0L)
+        )
+    }
+
+    private fun parseVerifyResult(obj: JSONObject): AuditVerifyResultUi {
+        return AuditVerifyResultUi(
+            valid = obj.optBoolean("valid", false),
+            integrityStatus = obj.optString("integrity_status", "UNVERIFIABLE"),
+            streamId = obj.optString("stream_id", "core"),
+            checkedEvents = obj.optLong("checked_events", 0L),
+            checkedCheckpoints = obj.optLong("checked_checkpoints", 0L),
+            headSeq = obj.optLong("head_seq", 0L),
+            tailSeq = obj.optLong("tail_seq", 0L),
+            triggersIntact = obj.optBoolean("triggers_intact", false),
+            brokenAtSeq = obj.optLong("broken_at_seq", 0L),
+            failureReason = obj.optString("failure_reason", ""),
+            limitationNote = obj.optString("limitation_note", ""),
+            verifiedAt = obj.optString("verified_at", "")
+        )
     }
 
     override fun onCleared() {

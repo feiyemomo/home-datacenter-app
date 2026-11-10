@@ -154,6 +154,12 @@ fun OpsCenterScreen(
         val securityEvents by viewModel.securityEvents.collectAsState()
         val systemLogs by viewModel.systemLogs.collectAsState()
         val alertFilters by viewModel.alertFilters.collectAsState()
+        val auditRuns by viewModel.auditRuns.collectAsState()
+        val selectedAuditDetail by viewModel.selectedAuditDetail.collectAsState()
+        val auditVerifyResult by viewModel.auditVerifyResult.collectAsState()
+        val isLoadingAudit by viewModel.isLoadingAudit.collectAsState()
+        val isVerifyingAudit by viewModel.isVerifyingAudit.collectAsState()
+        val auditError by viewModel.auditError.collectAsState()
         val chatDraft by viewModel.chatDraft.collectAsState()
         val isRefreshing by viewModel.isRefreshing.collectAsState()
         val isChatLoading by viewModel.isChatLoading.collectAsState()
@@ -253,6 +259,11 @@ fun OpsCenterScreen(
                                 securityEvents = securityEvents,
                                 systemLogs = systemLogs,
                                 alertFilters = alertFilters,
+                                auditRuns = auditRuns,
+                                auditVerifyResult = auditVerifyResult,
+                                isLoadingAudit = isLoadingAudit,
+                                isVerifyingAudit = isVerifyingAudit,
+                                auditError = auditError,
                                 hazeState = hazeState,
                                 bottomPadding = tabContentBottomPadding,
                                 onManualBan = { ip, duration, reason ->
@@ -275,6 +286,15 @@ fun OpsCenterScreen(
                                 },
                                 onUpdateAlertFilters = { config ->
                                     viewModel.updateAlertFilters(config)
+                                },
+                                onRefreshAudit = { status ->
+                                    viewModel.fetchAuditRuns(status = status)
+                                },
+                                onVerifyAuditChain = {
+                                    viewModel.verifyAuditChain()
+                                },
+                                onSelectAuditRun = { runId ->
+                                    viewModel.fetchAuditRunDetail(runId)
                                 }
                             )
                         }
@@ -312,6 +332,13 @@ fun OpsCenterScreen(
                         }
                     }
                 }
+            }
+
+            selectedAuditDetail?.let { detail ->
+                AgentAuditTimelineBottomSheet(
+                    detail = detail,
+                    onDismiss = { viewModel.clearSelectedAuditDetail() }
+                )
             }
         }
     }
@@ -1070,9 +1097,10 @@ private fun LiveStatusLed(
 // ==========================================================================================
 
 enum class SecuritySubTab(val title: String) {
-    DEFENSE("🛡️ 入侵防护"),
-    ALERT_CONFIG("🔔 告警配置"),
-    SYSTEM_LOGS("📜 服务日志")
+    DEFENSE("🛡️ 防护"),
+    ALERT_CONFIG("🔔 告警"),
+    SYSTEM_LOGS("📜 日志"),
+    AUDIT_HISTORY("🔐 审计")
 }
 
 @Composable
@@ -1083,6 +1111,11 @@ private fun SecurityAndLogsTabContent(
     securityEvents: List<SecurityEventItem>,
     systemLogs: List<SystemLog>,
     alertFilters: AlertFilterConfig,
+    auditRuns: List<AgentAuditRunUi>,
+    auditVerifyResult: AuditVerifyResultUi?,
+    isLoadingAudit: Boolean,
+    isVerifyingAudit: Boolean,
+    auditError: String?,
     hazeState: HazeState,
     bottomPadding: Dp = 96.dp,
     onManualBan: (String, Int, String) -> Unit,
@@ -1091,13 +1124,22 @@ private fun SecurityAndLogsTabContent(
     onRemoveWhitelist: (String) -> Unit,
     onAddAlertRecipient: (String) -> Unit,
     onDeleteAlertRecipient: (String) -> Unit,
-    onUpdateAlertFilters: (AlertFilterConfig) -> Unit
+    onUpdateAlertFilters: (AlertFilterConfig) -> Unit,
+    onRefreshAudit: (String?) -> Unit,
+    onVerifyAuditChain: () -> Unit,
+    onSelectAuditRun: (String) -> Unit
 ) {
     val tokens = GlassTheme.tokens
     var activeSubTab by remember { mutableStateOf(SecuritySubTab.DEFENSE) }
     var showManualBanDialog by remember { mutableStateOf(false) }
     var showAddWhitelistDialog by remember { mutableStateOf(false) }
     var showAddRecipientDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(activeSubTab) {
+        if (activeSubTab == SecuritySubTab.AUDIT_HISTORY && auditRuns.isEmpty()) {
+            onRefreshAudit(null)
+        }
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -1192,6 +1234,26 @@ private fun SecurityAndLogsTabContent(
             item(key = "service_logs_section") {
                 ServiceLogsSection(
                     logs = systemLogs,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                    hazeState = hazeState
+                )
+            }
+        }
+
+        // SubTab 4: AgentAuditEngine Tamper-Evident Traceability
+        if (activeSubTab == SecuritySubTab.AUDIT_HISTORY) {
+            item(key = "agent_audit_history_section") {
+                AgentAuditHistorySection(
+                    runs = auditRuns,
+                    verifyResult = auditVerifyResult,
+                    isLoading = isLoadingAudit,
+                    isVerifying = isVerifyingAudit,
+                    auditError = auditError,
+                    onRefresh = onRefreshAudit,
+                    onVerifyChain = onVerifyAuditChain,
+                    onSelectRun = onSelectAuditRun,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp),
