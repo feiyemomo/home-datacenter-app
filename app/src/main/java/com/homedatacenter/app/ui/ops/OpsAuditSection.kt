@@ -280,6 +280,9 @@ private fun AuditRunCardItem(
 ) {
     val tokens = GlassTheme.tokens
     val statusType = mapAuditStatusTagType(run.status)
+    val actionTitle = formatAuditActionTitle(run.component, run.action)
+    val statusLabel = formatAuditStatusLabel(run.status)
+    val triggerLabel = formatAuditTriggerLabel(run.triggerSource, run.actorId)
 
     LiquidGlassCard(
         modifier = Modifier
@@ -291,40 +294,63 @@ private fun AuditRunCardItem(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+            verticalArrangement = Arrangement.spacedBy(7.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    modifier = Modifier.weight(1f),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "${run.component.ifBlank { "system" }} · ${run.action}",
+                        text = actionTitle,
                         style = TextStyle(
-                            fontSize = 13.5.sp,
+                            fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
                             color = tokens.textColor
                         ),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                    Text(
+                        text = "${run.component.ifBlank { "system" }} · ${run.action}",
+                        style = TextStyle(
+                            fontSize = 10.5.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = tokens.textSecondaryColor.copy(alpha = 0.85f)
+                        ),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
                     if (run.isOffline) {
                         GlassTag(text = "离线应急", type = GlassTagType.Warning)
                     }
+                    GlassTag(text = statusLabel, type = statusType)
                 }
-                Spacer(modifier = Modifier.width(6.dp))
-                GlassTag(text = run.status, type = statusType)
             }
 
-            if (run.target.isNotBlank() || run.summary.isNotBlank()) {
+            val detailLine = when {
+                run.status.uppercase() == "FAILED" && run.errorCode.isNotBlank() ->
+                    "失败原因: ${run.errorCode}"
+                run.summary.isNotBlank() -> run.summary
+                run.target.isNotBlank() -> "作用目标: ${run.target}"
+                else -> ""
+            }
+            if (detailLine.isNotBlank()) {
+                val isFailed = run.status.uppercase() == "FAILED" && run.errorCode.isNotBlank()
                 Text(
-                    text = run.summary.ifBlank { "目标: ${run.target}" },
-                    style = TextStyle(fontSize = 12.sp, color = tokens.textColor.copy(alpha = 0.9f)),
+                    text = detailLine,
+                    style = TextStyle(
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp,
+                        color = if (isFailed) Color(0xFFFCA5A5) else tokens.textColor.copy(alpha = 0.88f)
+                    ),
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -336,22 +362,61 @@ private fun AuditRunCardItem(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "触发: ${run.triggerSource.ifBlank { run.actorId }} · ${run.eventCount} 步",
+                    text = "$triggerLabel · ${run.eventCount} 步",
                     style = TextStyle(fontSize = 11.sp, color = tokens.textSecondaryColor),
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
                 )
+                Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "${formatAuditTimestamp(run.startedAtMs)} · seq ${run.firstSeq}..${run.lastSeq}",
+                    text = "${formatAuditTimestamp(run.startedAtMs)} · #${run.lastSeq}",
                     style = TextStyle(
                         fontSize = 10.5.sp,
                         fontFamily = FontFamily.Monospace,
                         color = tokens.textSecondaryColor
-                    )
+                    ),
+                    maxLines = 1
                 )
             }
         }
     }
+}
+
+private fun formatAuditActionTitle(component: String, action: String): String {
+    return when (action) {
+        "waf.ipblack.sync" -> "WAF IP 黑名单同步"
+        "onepanel.session.fetch" -> "1Panel 运维会话签发"
+        "docker.restart" -> "容器重启 ($component)"
+        "docker.start" -> "容器启动 ($component)"
+        "docker.stop" -> "容器停止 ($component)"
+        "proposal.execute" -> "变更提案执行 ($component)"
+        "proposal.archive" -> "变更提案归档"
+        "security.ban" -> "安全哨兵 IP 封禁"
+        "security.unban" -> "安全哨兵 IP 解封"
+        else -> if (component.isNotBlank()) "$component · $action" else action
+    }
+}
+
+private fun formatAuditStatusLabel(status: String): String {
+    return when (status.uppercase()) {
+        "COMPLETED", "SUCCESS" -> "已成功"
+        "FAILED", "ERROR" -> "失败"
+        "RUNNING", "STARTED" -> "执行中"
+        "BLOCKED", "DENIED" -> "已拦截"
+        else -> status
+    }
+}
+
+private fun formatAuditTriggerLabel(triggerSource: String, actorId: String): String {
+    val src = when (triggerSource.lowercase()) {
+        "waf_collector" -> "WAF 采集器"
+        "api_manual" -> "手动触发"
+        "scheduler", "cron" -> "定时调度"
+        "copilot", "ops_agent" -> "Copilot 代理"
+        else -> triggerSource
+    }
+    return if (src.isNotBlank()) "来源: $src" else "执行者: ${actorId.ifBlank { "system" }}"
 }
 
 /**

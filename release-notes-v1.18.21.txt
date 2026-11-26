@@ -1,0 +1,5 @@
+Home Datacenter v1.18.21 (Build 241) 发布说明：
+1. 播放器二次缩放跟手性重构（参考 PhotoView / ZoomLayout 架构）：
+   - 禁用 ScaleGestureDetector.isQuickScaleEnabled 防止双击拖动误冲突；
+   - 废弃多指下易错乱的 GestureDetector.onScroll，改用主动指针 ID（activePointerId）跟踪单指平移与抬指无缝切换，彻底解决放大后再缩放/拖动不跟手与跳变问题。
+2. WAF 黑名单同步超时修复：后端 executeDockerSocketExec 改用 Detach=true 异步触发 nginx -s reload，消除 15s 阻塞超时（waf.ipblack.sync failed）。

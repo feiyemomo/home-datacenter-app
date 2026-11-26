@@ -110,6 +110,7 @@ fun CamerasPageContent(
     onSnapshotClick: (Alert) -> Unit,
     onJumpCamera: (Alert) -> Unit,
     onRefreshClick: () -> Unit,
+    previewEpoch: Long = 0L,
     modifier: Modifier = Modifier,
 ) {
     val preset by ThemeManager.themePresetFlow.collectAsState()
@@ -329,6 +330,7 @@ fun CamerasPageContent(
                                                 token = token,
                                                 hazeState = hazeState,
                                                 performanceMode = performanceMode,
+                                                previewEpoch = previewEpoch,
                                                 onClick = { onCameraClick(cam) },
                                             )
                                         }
@@ -347,6 +349,7 @@ fun CamerasPageContent(
                                     token = token,
                                     hazeState = hazeState,
                                     performanceMode = performanceMode,
+                                    previewEpoch = previewEpoch,
                                     onClick = { onCameraClick(camera) },
                                 )
                             }

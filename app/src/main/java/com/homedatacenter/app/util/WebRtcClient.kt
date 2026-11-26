@@ -529,9 +529,10 @@ class WebRtcClient(
 
         val audioProcessingFactory = try {
             ExternalAudioProcessingFactory().apply {
-                // In WebRTC C++ APM, bypass flags default to true! We MUST explicitly disable bypass!
+                // CapturePost (Mic talkback) uses custom amplification; RenderPre (Speaker playback)
+                // MUST bypass to prevent audio pipeline stalls and discontinuous sound!
                 setBypassFlagForCapturePost(false)
-                setBypassFlagForRenderPre(false)
+                setBypassFlagForRenderPre(true)
 
                 // 1. Microphone capture amplifier (Talkback to camera speaker)
                 setCapturePostProcessing(object : ExternalAudioProcessingFactory.AudioProcessing {
@@ -1277,9 +1278,9 @@ class WebRtcClient(
         android.util.Log.i(TAG, "postOffer: url=$url, offerLen=${sdpOffer.length}")
 
         val signalingClient = okHttpClient.newBuilder()
-            .callTimeout(9_000, TimeUnit.MILLISECONDS)
-            .connectTimeout(4_000, TimeUnit.MILLISECONDS)
-            .readTimeout(8_000, TimeUnit.MILLISECONDS)
+            .callTimeout(16_000, TimeUnit.MILLISECONDS)
+            .connectTimeout(5_000, TimeUnit.MILLISECONDS)
+            .readTimeout(15_000, TimeUnit.MILLISECONDS)
             .build()
 
         // v1.13.20: Try up to 2 times. If camera was in a cold-start state waiting for keyframe

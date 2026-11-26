@@ -1,4 +1,4 @@
-# v1.8.44: support -Flavor (debug|release) and -Password/-DryRun. The APK
+﻿# v1.8.44: support -Flavor (debug|release) and -Password/-DryRun. The APK
 # filename and remote naming follow the flavor so the backend's
 # release_handler.go can parse the version from either prefix.
 param(
@@ -15,13 +15,63 @@ param(
     # Specify an explicit new version (e.g. "1.10.6")
     [string]$NewVersion,
     # Force rebuild the APK before pushing
-    [switch]$Rebuild
+    [switch]$Rebuild,
+    # Force acquiring an H3C Oasis Cloud relay tunnel even if LAN is reachable.
+    [switch]$ForceH3C,
+    # Keep the H3C relay tunnel alive after script completes (do not auto-delete).
+    [switch]$KeepTunnel
 )
 
-$NAS_USER = "fnos-momo"
+$NAS_USER = "momo"
 $NAS_HOST = "100.90.67.71"
 $NAS_PORT = 22
 $REMOTE_RELEASES = "/vol1/docker/home-datacenter/data/releases"
+
+# ---- H3C Relay & Endpoint Management ----
+$ProjectsDir = Split-Path -Parent $PSScriptRoot
+$RelayScript = Join-Path $ProjectsDir "home-datacenter\tools\h3c_relay.py"
+if (-not (Test-Path $RelayScript)) {
+    $RelayScript = "d:\Projects\home-datacenter\tools\h3c_relay.py"
+}
+$RelayTunnelId = $null
+$RelayCreatedNew = $false
+
+function Cleanup-RelayTunnel {
+    if ($script:RelayCreatedNew -and $script:RelayTunnelId -and (-not $KeepTunnel)) {
+        Write-Host "==> Cleaning up temporary H3C relay tunnel: $($script:RelayTunnelId)..." -ForegroundColor Cyan
+        & python $RelayScript release $script:RelayTunnelId 2>$null | Out-Null
+        $script:RelayTunnelId = $null
+        $script:RelayCreatedNew = $false
+    }
+}
+
+trap { Cleanup-RelayTunnel; break }
+Register-EngineEvent PowerShell.Exiting -Action { Cleanup-RelayTunnel } | Out-Null
+
+function Resolve-NasEndpoint {
+    if (Test-Path $RelayScript) {
+        try {
+            $relayArgs = @("$RelayScript", "acquire", "--json")
+            if ($ForceH3C) { $relayArgs += "--force-h3c" }
+            $jsonOut = & python @relayArgs 2>$null
+            if ($LASTEXITCODE -eq 0 -and $jsonOut) {
+                $ep = $jsonOut | ConvertFrom-Json
+                if ($ep -and $ep.host -and $ep.port) {
+                    $script:NAS_HOST = $ep.host
+                    $script:NAS_PORT = [int]$ep.port
+                    $script:NAS_USER = if ($ep.user) { $ep.user } else { $script:NAS_USER }
+                    $script:RelayTunnelId = $ep.tunnel_id
+                    $script:RelayCreatedNew = [bool]$ep.created_new
+                    Write-Host "==> Connected via Tier [$(($ep.tier).ToUpper())]: $($script:NAS_USER)@$($script:NAS_HOST):$($script:NAS_PORT)" -ForegroundColor Green
+                    return
+                }
+            }
+        } catch {
+            Write-Warning "Failed to query H3C relay resolver: $_"
+        }
+    }
+    Write-Host "==> Using default NAS endpoint: $script:NAS_USER@$script:NAS_HOST`:$script:NAS_PORT" -ForegroundColor Yellow
+}
 
 if (-not $Password) {
     Remove-Item env:SSH_ASKPASS -ErrorAction SilentlyContinue
@@ -50,23 +100,23 @@ function Remove-Askpass {
 
 function Invoke-NasSSH {
     param([Parameter(Mandatory)][string]$RemoteCmd)
-    $opts = @("-p", "$NAS_PORT", "-o", "StrictHostKeyChecking=no",
-              "-o", "UserKnownHostsFile=NUL", "-o", "ConnectTimeout=10")
+    $opts = @("-p", "$script:NAS_PORT", "-o", "StrictHostKeyChecking=accept-new",
+              "-o", "BatchMode=yes", "-o", "ConnectTimeout=10")
     if ($Password) {
         $opts += @("-o", "PreferredAuthentications=password",
                    "-o", "PubkeyAuthentication=no",
                    "-o", "NumberOfPasswordPrompts=1")
     }
     $prev = $ErrorActionPreference; $ErrorActionPreference = "Continue"
-    try { & ssh @opts "$NAS_USER@$NAS_HOST" $RemoteCmd 2>&1 | Out-Host; return $LASTEXITCODE }
+    try { & ssh @opts "$script:NAS_USER@$script:NAS_HOST" $RemoteCmd 2>&1 | Out-Host; return $LASTEXITCODE }
     finally { $ErrorActionPreference = $prev }
 }
 
 function Invoke-NasSCP {
     param([Parameter(Mandatory)][string]$Local,
           [Parameter(Mandatory)][string]$Remote)
-    $opts = @("-P", "$NAS_PORT", "-o", "StrictHostKeyChecking=no",
-              "-o", "UserKnownHostsFile=NUL", "-o", "ConnectTimeout=10")
+    $opts = @("-P", "$script:NAS_PORT", "-C", "-o", "StrictHostKeyChecking=accept-new",
+              "-o", "BatchMode=yes", "-o", "ConnectTimeout=10")
     if ($Password) {
         $opts += @("-o", "PreferredAuthentications=password",
                    "-o", "PubkeyAuthentication=no",
@@ -158,12 +208,19 @@ if ($DryRun) {
     exit 0
 }
 
+# Resolve fastest NAS endpoint (LAN -> H3C Relay -> Tailscale)
+Resolve-NasEndpoint
+
+$remoteApkPath = "$script:NAS_USER@$script:NAS_HOST`:$REMOTE_RELEASES/app-$Flavor-v$version.apk"
+$remoteNotesPath = "$script:NAS_USER@$script:NAS_HOST`:$REMOTE_RELEASES/release-notes-v$version.txt"
+
 # Ensure the remote releases directory exists (mkdir -p is idempotent).
 $ap = if ($Password) { New-Askpass -Pass $Password } else { $null }
 $code = Invoke-NasSSH -RemoteCmd "mkdir -p $REMOTE_RELEASES"
 if ($ap) { Remove-Askpass -File $ap }
 if ($code -ne 0) {
     Write-Host "ERROR: cannot mkdir on NAS via SSH. Check host/user/password/network."
+    Cleanup-RelayTunnel
     exit 1
 }
 
@@ -173,6 +230,7 @@ $code = Invoke-NasSCP -Local $apkPath -Remote $remoteApkPath
 if ($ap) { Remove-Askpass -File $ap }
 if ($code -ne 0) {
     Write-Host "APK push failed with exit code $code"
+    Cleanup-RelayTunnel
     exit $code
 }
 Write-Host "APK push successful."
@@ -206,4 +264,5 @@ $ap = if ($Password) { New-Askpass -Pass $Password } else { $null }
 Invoke-NasSSH -RemoteCmd "ls -la $REMOTE_RELEASES ; echo '---' ; curl -s http://localhost:8080/health"
 if ($ap) { Remove-Askpass -File $ap }
 
+Cleanup-RelayTunnel
 exit 0

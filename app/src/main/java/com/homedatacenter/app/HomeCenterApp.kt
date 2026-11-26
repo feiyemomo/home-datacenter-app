@@ -7,12 +7,21 @@ import com.homedatacenter.app.util.PrefsManager
 import com.homedatacenter.app.util.NetworkMonitor
 import com.homedatacenter.app.util.ThemeManager
 
-class HomeCenterApp : Application() {
+class HomeCenterApp : Application(), coil.ImageLoaderFactory {
 
     lateinit var container: AppContainer
         private set
 
     private var networkMonitor: NetworkChangeMonitor? = null
+
+    override fun newImageLoader(): coil.ImageLoader {
+        return coil.ImageLoader.Builder(this)
+            .components {
+                add(coil.decode.SvgDecoder.Factory())
+            }
+            .crossfade(true)
+            .build()
+    }
 
     override fun onCreate() {
         super.onCreate()

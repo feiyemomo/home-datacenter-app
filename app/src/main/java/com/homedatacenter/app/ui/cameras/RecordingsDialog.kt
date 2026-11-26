@@ -190,7 +190,7 @@ class RecordingsDialog(
     // v1.6.2: the other mode (auto-open day picker) was removed —
     // the per-day list is now the default entry, so no deferred
     // action is needed when initialTimestamp == 0.
-    private var pendingInitialTimestamp: Long = 0L
+    private var pendingInitialTimestamp: Long = if (initialTimestamp > 100_000_000_000L) initialTimestamp / 1000L else initialTimestamp
     // v1.6.0: motion ranges in day-relative ms (0..dayTotalMs). Cached
     // from [loadAlertRangesForDay] so the SeekBar snap logic in
     // [onStopTrackingTouch] can find the nearest range edge without
@@ -216,7 +216,7 @@ class RecordingsDialog(
     private val daySeekUpdateRunnable = object : Runnable {
         override fun run() {
             val p = player ?: return
-            if (pendingAlertSeekPos > 0L) {
+            if (pendingAlertSeekPos > 0L || pendingAlertSeekWindow > 0) {
                 // Alert seek is in flight — do not overwrite target progress with 0 while buffering
                 daySeekHandler.postDelayed(this, 300)
                 return
@@ -271,6 +271,11 @@ class RecordingsDialog(
         setupRecyclerView()
         loadRecordings()
         binding.toolbar.setNavigationOnClickListener {
+            if (!onBackPressedCustom()) {
+                dismiss()
+            }
+        }
+        binding.btnBack.setOnClickListener {
             if (!onBackPressedCustom()) {
                 dismiss()
             }
@@ -330,6 +335,9 @@ class RecordingsDialog(
         // a green "N 段" status chip. Tapping a row launches
         // playDayAsPlaylist for that date — no separate date picker
         // dialog needed.
+        val isDagu = camera.vendor.contains("dagu", ignoreCase = true) ||
+            camera.vendor.contains("daguiot", ignoreCase = true) ||
+            camera.name.contains("大谷")
         dayAdapter = DayRecordingAdapter(
             onPlayDay = { dayRec ->
                 if (dayRec.isCloud) {
@@ -337,7 +345,8 @@ class RecordingsDialog(
                 } else {
                     playDayAsPlaylist(dayRec.dayStartCalendar)
                 }
-            }
+            },
+            isDagu = isDagu
         )
         binding.recyclerView.layoutManager = LinearLayoutManager(context)
         binding.recyclerView.adapter = dayAdapter
@@ -359,9 +368,18 @@ class RecordingsDialog(
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val authHeader = if (!token.isNullOrEmpty()) "Bearer $token" else ""
+                val effectiveAfter = afterUnix ?: if (pendingInitialTimestamp > 0L) {
+                    val nowSec = System.currentTimeMillis() / 1000L
+                    if (pendingInitialTimestamp < nowSec - 6 * 86400L) pendingInitialTimestamp - 86400L else null
+                } else null
+                val effectiveBefore = beforeUnix ?: if (pendingInitialTimestamp > 0L) {
+                    val nowSec = System.currentTimeMillis() / 1000L
+                    if (pendingInitialTimestamp > nowSec) pendingInitialTimestamp + 86400L else null
+                } else null
+
                 android.util.Log.d("RecordingsDialog",
-                    "Fetching recordings for camera ${camera.id} (name='${camera.name}')")
-                val resp = container.getApi().listRecordings(authHeader, camera.id, after = afterUnix, before = beforeUnix)
+                    "Fetching recordings for camera ${camera.id} (name='${camera.name}', after=$effectiveAfter, before=$effectiveBefore)")
+                val resp = container.getApi().listRecordings(authHeader, camera.id, after = effectiveAfter, before = effectiveBefore)
                 android.util.Log.d("RecordingsDialog",
                     "API response: code=${resp.code}, message='${resp.message}', data=${resp.data}")
 
@@ -460,9 +478,17 @@ class RecordingsDialog(
             timeZone = TimeZone.getTimeZone("UTC")
         }
         val tz = TimeZone.getTimeZone("Asia/Shanghai")
+        val displayTimeFmt = SimpleDateFormat("HH:mm", Locale.CHINA).apply {
+            timeZone = tz
+        }
         val dayMap = mutableMapOf<String, MutableList<Recording>>()
+        val nowMs = System.currentTimeMillis()
         for (rec in recordings) {
-            val instant = try { parseFmt.parse(rec.startAt)?.time ?: continue } catch (_: Exception) { continue }
+            var instant = try { parseFmt.parse(rec.startAt)?.time ?: continue } catch (_: Exception) { continue }
+            // Defensive normalization: if timestamp is in the future by > 1h, it carries +8h offset
+            if (instant > nowMs + 3600_000L) {
+                instant -= 8 * 3600 * 1000L
+            }
             val cal = Calendar.getInstance(tz).apply { timeInMillis = instant }
             // Truncate to LOCAL 00:00 — used both as the map key and
             // (later) as the dayFilterStart for playDayAsPlaylist.
@@ -477,6 +503,8 @@ class RecordingsDialog(
             dayMap.getOrPut(key) { mutableListOf() }.add(rec)
         }
         return dayMap.entries.map { (key, recs) ->
+            recs.sortBy { it.id }
+            val timeSummary = computeDayTimeRangesSummary(recs, parseFmt, displayTimeFmt)
             DayRecording(
                 dayStartCalendar = Calendar.getInstance(tz).apply {
                     // Re-parse the key into a Calendar — easier than
@@ -490,8 +518,57 @@ class RecordingsDialog(
                 totalDurationSeconds = recs.sumOf { it.durationSeconds },
                 totalSizeBytes = recs.sumOf { it.sizeBytes },
                 isCloud = recs.any { it.isCloud },
+                timeRangesSummary = timeSummary
             )
         }.sortedByDescending { it.dayStartCalendar.timeInMillis }
+    }
+
+    private fun computeDayTimeRangesSummary(
+        recs: List<Recording>,
+        parseFmt: SimpleDateFormat,
+        timeFmt: SimpleDateFormat
+    ): String {
+        if (recs.isEmpty()) return ""
+        val intervals = mutableListOf<Pair<Long, Long>>()
+        var curS = -1L
+        var curE = -1L
+        val nowMs = System.currentTimeMillis()
+        for (r in recs) {
+            var s = try { parseFmt.parse(r.startAt)?.time ?: -1L } catch (_: Exception) { -1L }
+            if (s <= 0L) continue
+            if (s > nowMs + 3600_000L) {
+                s -= 8 * 3600 * 1000L
+            }
+            var e = try { parseFmt.parse(r.endAt)?.time ?: (s + r.durationSeconds * 1000L) } catch (_: Exception) { s + r.durationSeconds * 1000L }
+            if (e > nowMs + 3600_000L) {
+                e -= 8 * 3600 * 1000L
+            }
+            if (e < s) e = s + r.durationSeconds * 1000L
+            if (curS < 0L) {
+                curS = s
+                curE = e
+            } else {
+                if (s - curE <= 180_000L) {
+                    curE = maxOf(curE, e)
+                } else {
+                    intervals.add(curS to curE)
+                    curS = s
+                    curE = e
+                }
+            }
+        }
+        if (curS > 0L) {
+            intervals.add(curS to curE)
+        }
+        if (intervals.isEmpty()) return ""
+        val strs = intervals.map { (s, e) ->
+            "${timeFmt.format(Date(s))}~${timeFmt.format(Date(e))}"
+        }
+        return if (strs.size <= 2) {
+            "时段: " + strs.joinToString(", ")
+        } else {
+            "时段: " + strs.take(2).joinToString(", ") + " 等${strs.size}个时段"
+        }
     }
 
     /**
@@ -532,8 +609,10 @@ class RecordingsDialog(
      */
     private fun openDayForTimestamp(unixSeconds: Long) {
         if (unixSeconds <= 0L) return
-        val cal = Calendar.getInstance().apply {
-            timeInMillis = unixSeconds * 1000L
+        val normalizedSec = if (unixSeconds > 100_000_000_000L) unixSeconds / 1000L else unixSeconds
+        val seekToMs = normalizedSec * 1000L
+        val cal = Calendar.getInstance(TimeZone.getTimeZone("Asia/Shanghai")).apply {
+            timeInMillis = seekToMs
             set(Calendar.HOUR_OF_DAY, 0)
             set(Calendar.MINUTE, 0)
             set(Calendar.SECOND, 0)
@@ -542,7 +621,7 @@ class RecordingsDialog(
         // playDayAsPlaylist builds the playlist and posts a seek-to
         // once ExoPlayer reports STATE_READY — see the one-shot
         // listener we register inside it.
-        playDayAsPlaylist(cal, seekToMs = unixSeconds * 1000L)
+        playDayAsPlaylist(cal, seekToMs = seekToMs)
     }
 
     /**
@@ -589,9 +668,9 @@ class RecordingsDialog(
      *   "查看录像" jump.
      */
     /**
-     * v1.13.13: For cloud-archived recordings (>7 days, stored on Lanzou cloud),
-     * avoid full-day 24h timeline scrubbing. Instead, let the user select a specific
-     * point in time (HH:mm) or browse by hour, and directly push/play that single clip.
+     * v1.18.15: Visual cloud recording selector (for Dagu 4G camera & cloud archive).
+     * Replaces the old blind time-picker with CloudRecordingsPeriodDialog showing
+     * a 24-hour visual distribution timeline and continuous recording period cards.
      */
     private fun showCloudRecordingsDialog(dayRec: DayRecording) {
         val cal = dayRec.dayStartCalendar
@@ -603,103 +682,51 @@ class RecordingsDialog(
         }
         val dayFilterStartMillis = cal.timeInMillis
         val dayFilterEndMillis = dayFilterStartMillis + 24L * 60 * 60 * 1000
+        val nowMs = System.currentTimeMillis()
 
         val dayRecordings = allRecordings.filter { rec ->
             try {
-                val t = parseFmt.parse(rec.startAt)?.time ?: return@filter false
+                var t = parseFmt.parse(rec.startAt)?.time ?: return@filter false
+                if (t > nowMs + 3600_000L) {
+                    t -= 8 * 3600 * 1000L
+                }
                 t in dayFilterStartMillis until dayFilterEndMillis
             } catch (_: Exception) { false }
         }.sortedBy { it.id }
 
+        val isDagu = camera.vendor.contains("dagu", ignoreCase = true) ||
+            camera.vendor.contains("daguiot", ignoreCase = true) ||
+            camera.name.contains("大谷")
+        val brand = if (isDagu) "大谷云" else "云端"
+
         if (dayRecordings.isEmpty()) {
-            Toast.makeText(context, "${dateStr} 暂无可用蓝奏云录像", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "${dateStr} 暂无可用${brand}录像", Toast.LENGTH_SHORT).show()
             return
         }
 
-        val displayFmt = SimpleDateFormat("HH:mm", Locale.CHINA).apply {
-            timeZone = TimeZone.getTimeZone("Asia/Shanghai")
-        }
-
-        val options = arrayOf("选定具体时间点播 (时:分)", "按小时浏览片段列表 (${dayRecordings.size}段)")
-        android.app.AlertDialog.Builder(context)
-            .setTitle("蓝奏云归档录像 · $dateStr")
-            .setItems(options) { _, which ->
-                when (which) {
-                    0 -> {
-                        val nowCal = Calendar.getInstance(TimeZone.getTimeZone("Asia/Shanghai"))
-                        android.app.TimePickerDialog(context, { _, hourOfDay, minute ->
-                            val targetCal = (cal.clone() as Calendar).apply {
-                                set(Calendar.HOUR_OF_DAY, hourOfDay)
-                                set(Calendar.MINUTE, minute)
-                                set(Calendar.SECOND, 0)
-                                set(Calendar.MILLISECOND, 0)
-                            }
-                            val targetMs = targetCal.timeInMillis
-                            val closest = dayRecordings.minByOrNull { rec ->
-                                val t = try { parseFmt.parse(rec.startAt)?.time ?: Long.MAX_VALUE } catch (_: Exception) { Long.MAX_VALUE }
-                                Math.abs(t - targetMs)
-                            }
-                            if (closest != null) {
-                                val actualTime = try {
-                                    parseFmt.parse(closest.startAt)?.let { displayFmt.format(it) } ?: ""
-                                } catch (_: Exception) { "" }
-                                Toast.makeText(context, "正在查询并推送 $actualTime 录像...", Toast.LENGTH_SHORT).show()
-                                playSingleRecording(closest)
-                            } else {
-                                Toast.makeText(context, "未找到该时间段录像", Toast.LENGTH_SHORT).show()
-                            }
-                        }, nowCal.get(Calendar.HOUR_OF_DAY), nowCal.get(Calendar.MINUTE), true).show()
-                    }
-                    1 -> {
-                        val hourMap = mutableMapOf<Int, MutableList<Recording>>()
-                        for (rec in dayRecordings) {
-                            val t = try { parseFmt.parse(rec.startAt)?.time ?: continue } catch (_: Exception) { continue }
-                            val c = Calendar.getInstance(TimeZone.getTimeZone("Asia/Shanghai")).apply { timeInMillis = t }
-                            val h = c.get(Calendar.HOUR_OF_DAY)
-                            hourMap.getOrPut(h) { mutableListOf() }.add(rec)
-                        }
-                        val hours = hourMap.keys.sorted()
-                        val hourLabels = hours.map { h ->
-                            String.format(Locale.US, "%02d:00 - %02d:00 (%d 段)", h, (h + 1) % 24, hourMap[h]?.size ?: 0)
-                        }.toTypedArray()
-
-                        android.app.AlertDialog.Builder(context)
-                            .setTitle("选择小时 ($dateStr)")
-                            .setItems(hourLabels) { _, hIdx ->
-                                val selectedHour = hours[hIdx]
-                                val clips = hourMap[selectedHour] ?: return@setItems
-                                val clipFmt = SimpleDateFormat("HH:mm:ss", Locale.CHINA).apply {
-                                    timeZone = TimeZone.getTimeZone("Asia/Shanghai")
-                                }
-                                val clipLabels = clips.map { rec ->
-                                    val timeText = try {
-                                        parseFmt.parse(rec.startAt)?.let { clipFmt.format(it) } ?: rec.startAt
-                                    } catch (_: Exception) { rec.startAt }
-                                    "$timeText (${rec.durationSeconds}s · ${(rec.sizeBytes / 1024 / 1024.0).let { String.format(Locale.US, "%.1fMB", it) }})"
-                                }.toTypedArray()
-
-                                android.app.AlertDialog.Builder(context)
-                                    .setTitle(String.format(Locale.US, "%s %02d:00 录像片段", dateStr, selectedHour))
-                                    .setItems(clipLabels) { _, cIdx ->
-                                        val clip = clips[cIdx]
-                                        playSingleRecording(clip)
-                                    }
-                                    .setNegativeButton("取消", null)
-                                    .show()
-                            }
-                            .setNegativeButton("取消", null)
-                            .show()
-                    }
-                }
+        var periodDialog: CloudRecordingsPeriodDialog? = null
+        periodDialog = CloudRecordingsPeriodDialog(
+            context = context,
+            camera = camera,
+            dateCalendar = cal,
+            recordings = dayRecordings,
+            onPlayClips = { clips, startIndex ->
+                periodDialog?.dismiss()
+                playCloudRecordings(clips, startIndex)
             }
-            .setNegativeButton("取消", null)
-            .show()
+        )
+        periodDialog.show()
     }
 
     /**
-     * v1.13.13: Plays a single 60s recording clip directly (used for cloud archives).
+     * v1.18.15: Plays a continuous sequence of cloud recording clips as an ExoPlayer playlist.
+     * Automatically advances across contiguous 60s segments with live toolbar timestamp updates.
      */
-    private fun playSingleRecording(rec: Recording) {
+    private fun playCloudRecordings(clips: List<Recording>, startIndex: Int = 0) {
+        if (clips.isEmpty()) return
+        val safeIndex = startIndex.coerceIn(0, clips.size - 1)
+        val initialRec = clips[safeIndex]
+
         player?.release()
         daySeekHandler.removeCallbacks(daySeekUpdateRunnable)
         useStreamSource = false // use /file for stable cloud clip playback
@@ -710,15 +737,30 @@ class RecordingsDialog(
         val displayFmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.CHINA).apply {
             timeZone = TimeZone.getTimeZone("Asia/Shanghai")
         }
+        val nowMs = System.currentTimeMillis()
         val timeStr = try {
-            parseFmt.parse(rec.startAt)?.let { displayFmt.format(it) } ?: rec.startAt
-        } catch (_: Exception) { rec.startAt }
+            parseFmt.parse(initialRec.startAt)?.let { parsed ->
+                val t = if (parsed.time > nowMs + 3600_000L) parsed.time - 8 * 3600 * 1000L else parsed.time
+                displayFmt.format(Date(t))
+            } ?: initialRec.startAt
+        } catch (_: Exception) { initialRec.startAt }
 
-        currentDayRecordings = listOf(rec)
-        binding.toolbar.title = "蓝奏云点播 · $timeStr"
+        currentDayRecordings = clips
+        val isDagu = camera.vendor.contains("dagu", ignoreCase = true) ||
+            camera.vendor.contains("daguiot", ignoreCase = true) ||
+            camera.name.contains("大谷")
+        val brand = if (isDagu) "大谷云点播" else "云端点播"
+
+        binding.toolbar.title = "$brand · $timeStr"
         binding.videoContainer.visibility = View.VISIBLE
         binding.recyclerView.visibility = View.GONE
         binding.btnDownloadClip.visibility = View.VISIBLE
+        binding.btnBack.visibility = View.VISIBLE
+        binding.btnBack.setOnClickListener {
+            if (!onBackPressedCustom()) {
+                dismiss()
+            }
+        }
 
         binding.dayScrubBarContainer.visibility = View.GONE
         binding.motionChipScroller.visibility = View.GONE
@@ -729,7 +771,7 @@ class RecordingsDialog(
             .setBufferDurationsMs(2500, 15000, 250, 500)
             .build()
 
-        player = ExoPlayer.Builder(context, renderersFactory)
+        val newPlayer = ExoPlayer.Builder(context, renderersFactory)
             .setLoadControl(loadControl)
             .setSeekParameters(com.google.android.exoplayer2.SeekParameters.CLOSEST_SYNC)
             .build().apply {
@@ -740,8 +782,6 @@ class RecordingsDialog(
                         .build(),
                     true
                 )
-                // Recordings carry their own audio state (silent if recorded with
-                // pickup off); don't mute clips that were recorded with sound.
                 volume = 1.0f
                 val dataSourceFactory = DefaultHttpDataSource.Factory().apply {
                     setUserAgent(NetworkFactory.USER_AGENT)
@@ -754,35 +794,57 @@ class RecordingsDialog(
                         ))
                     }
                 }
-                val mediaItem = MediaItem.Builder()
-                    .setUri(buildRecordingUrl(rec.id))
-                    .setMediaMetadata(
-                        MediaMetadata.Builder()
-                            .setTitle("蓝奏云 $timeStr")
-                            .build()
-                    )
-                    .build()
-                val mediaSource = ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(mediaItem)
-                setMediaSource(mediaSource)
+                val mediaSourceFactory = ProgressiveMediaSource.Factory(dataSourceFactory)
+                val items = clips.map { r ->
+                    val clipTime = try {
+                        parseFmt.parse(r.startAt)?.let { parsed ->
+                            val t = if (parsed.time > nowMs + 3600_000L) parsed.time - 8 * 3600 * 1000L else parsed.time
+                            displayFmt.format(Date(t))
+                        } ?: r.startAt
+                    } catch (_: Exception) { r.startAt }
+                    MediaItem.Builder()
+                        .setUri(buildRecordingUrl(r.id))
+                        .setMediaMetadata(
+                            MediaMetadata.Builder()
+                                .setTitle("$brand $clipTime")
+                                .build()
+                        )
+                        .build()
+                }
+                val mediaSources = items.map { mediaSourceFactory.createMediaSource(it) }
+                setMediaSources(mediaSources, /* startWindowIndex = */ safeIndex, /* startPositionMs = */ 0L)
                 playWhenReady = true
                 addListener(object : Player.Listener {
+                    override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                        val curIdx = currentMediaItemIndex
+                        val curRec = clips.getOrNull(curIdx)
+                        if (curRec != null) {
+                            val curTime = try {
+                                parseFmt.parse(curRec.startAt)?.let { parsed ->
+                                    val t = if (parsed.time > nowMs + 3600_000L) parsed.time - 8 * 3600 * 1000L else parsed.time
+                                    displayFmt.format(Date(t))
+                                } ?: curRec.startAt
+                            } catch (_: Exception) { curRec.startAt }
+                            binding.toolbar.title = "$brand · $curTime"
+                        }
+                    }
                     override fun onPlaybackStateChanged(state: Int) {
                         binding.progressPlayer.visibility = if (state == Player.STATE_BUFFERING) View.VISIBLE else View.GONE
                     }
                     override fun onPlayerError(error: PlaybackException) {
-                        android.util.Log.e("RecordingsDialog", "Cloud single recording error: ${error.message}")
+                        android.util.Log.e("RecordingsDialog", "Cloud recording playlist error: ${error.message}")
                         Toast.makeText(context, "播放异常: ${error.message}", Toast.LENGTH_SHORT).show()
                     }
                 })
             }
-        binding.playerView.player = player
-        player?.prepare()
+        player = newPlayer
+        // ExoPlayer Surface Order rule: attach player to view before prepare()
+        binding.playerView.player = newPlayer
+        newPlayer.prepare()
+    }
 
-        binding.btnBack.setOnClickListener {
-            if (!onBackPressedCustom()) {
-                dismiss()
-            }
-        }
+    private fun playSingleRecording(rec: Recording) {
+        playCloudRecordings(listOf(rec), 0)
     }
 
     private fun playDayAsPlaylist(dayFilterStart: Calendar, seekToMs: Long = 0L) {
@@ -795,12 +857,40 @@ class RecordingsDialog(
         val parseFmt = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
             timeZone = TimeZone.getTimeZone("UTC")
         }
-        val dayRecordings = allRecordings.filter { rec ->
+        var dayRecordings = allRecordings.filter { rec ->
             try {
                 val t = parseFmt.parse(rec.startAt)?.time ?: return@filter false
                 t in dayFilterStartMillis until dayFilterEndMillis
             } catch (_: Exception) { false }
         }.sortedBy { it.id }
+
+        // Fallback for timezone edge cases or alert seek across midnight boundaries
+        if (dayRecordings.isEmpty() && seekToMs > 0L && allRecordings.isNotEmpty()) {
+            val closest = allRecordings.minByOrNull { rec ->
+                val t = try { parseFmt.parse(rec.startAt)?.time ?: Long.MAX_VALUE } catch (_: Exception) { Long.MAX_VALUE }
+                abs(t - seekToMs)
+            }
+            if (closest != null) {
+                val t = try { parseFmt.parse(closest.startAt)?.time ?: 0L } catch (_: Exception) { 0L }
+                if (abs(t - seekToMs) < 24L * 3600 * 1000) {
+                    val fallbackCal = Calendar.getInstance(TimeZone.getTimeZone("Asia/Shanghai")).apply {
+                        timeInMillis = t
+                        set(Calendar.HOUR_OF_DAY, 0)
+                        set(Calendar.MINUTE, 0)
+                        set(Calendar.SECOND, 0)
+                        set(Calendar.MILLISECOND, 0)
+                    }
+                    val fbStart = fallbackCal.timeInMillis
+                    val fbEnd = fbStart + 24L * 60 * 60 * 1000
+                    dayRecordings = allRecordings.filter { rec ->
+                        try {
+                            val rTime = parseFmt.parse(rec.startAt)?.time ?: return@filter false
+                            rTime in fbStart until fbEnd
+                        } catch (_: Exception) { false }
+                    }.sortedBy { it.id }
+                }
+            }
+        }
 
         if (dayRecordings.isEmpty()) {
             Toast.makeText(context, "该日期无录像", Toast.LENGTH_SHORT).show()
@@ -866,6 +956,7 @@ class RecordingsDialog(
         binding.recyclerView.visibility = View.GONE
         this.currentDayRecordings = dayRecordings
         binding.btnDownloadClip.visibility = View.VISIBLE
+        binding.btnBack.visibility = View.VISIBLE
 
         player?.release()
         // v1.5.11: stop any pending scrub updates from a previous
@@ -951,6 +1042,8 @@ class RecordingsDialog(
                 val idx = if (raw >= 0) raw else (-raw - 2).coerceAtLeast(0)
                 startWindow = idx.coerceIn(0, clipStartOffsets.size - 1).coerceAtMost(items.size - 1)
                 startPos = (progress - clipStartOffsets[startWindow]).coerceIn(0L, dayClipDurationMs)
+                pendingAlertSeekPos = startPos
+                pendingAlertSeekWindow = startWindow
                 android.util.Log.d("RecordingsDialog",
                     "Alert-seek direct: seekToMs=$seekToMs adjusted=$adjustedSeekMs -> window=$startWindow pos=$startPos")
             }
@@ -972,8 +1065,13 @@ class RecordingsDialog(
                     binding.progressPlayer.visibility = if (state == Player.STATE_BUFFERING) View.VISIBLE else View.GONE
                     if (state == Player.STATE_READY) {
                         recordingRetryCount = 0
-                        pendingAlertSeekPos = 0L
-                        pendingAlertSeekWindow = 0
+                        if (pendingAlertSeekPos > 0L || pendingAlertSeekWindow > 0) {
+                            val targetW = pendingAlertSeekWindow
+                            val targetP = pendingAlertSeekPos
+                            pendingAlertSeekPos = 0L
+                            pendingAlertSeekWindow = 0
+                            seekTo(targetW, targetP)
+                        }
                     }
                 }
                 override fun onPlayerError(error: PlaybackException) {
@@ -1147,6 +1245,9 @@ class RecordingsDialog(
                 // MATCH_PARENT) is still clipped to 200dp tall.
                 secondaryPlayerView = binding.playerHostFrame,
                 fullscreenButton = binding.btnFullscreen,
+                onFullscreenChanged = {
+                    binding.zoomContainer.resetZoom(false)
+                },
                 // v1.6.4: views that follow the ExoPlayer controller
                 // visibility while in fullscreen — the user asked:
                 // "全屏时，点击播放器收起进度条等的插件，再次点击
@@ -1208,6 +1309,15 @@ class RecordingsDialog(
             popup.show()
         }
         // v1.13.7: wire pinch-to-zoom badge for recording playback.
+        binding.zoomContainer.clipChildren = true
+        binding.zoomContainer.clipToOutline = true
+        binding.playerView.clipChildren = true
+        binding.playerView.clipToOutline = true
+        (binding.playerView.findViewById<ViewGroup>(com.google.android.exoplayer2.ui.R.id.exo_content_frame))?.clipChildren = false
+
+        binding.tvZoomBadge.setOnClickListener {
+            binding.zoomContainer.resetZoom(true)
+        }
         binding.zoomContainer.onZoomChanged = { scale ->
             if (scale > 1.01f) {
                 binding.tvZoomBadge.visibility = View.VISIBLE
@@ -1821,6 +1931,7 @@ class RecordingsDialog(
             binding.videoContainer.visibility = View.GONE
             binding.recyclerView.visibility = View.VISIBLE
             binding.btnDownloadClip.visibility = View.GONE
+            binding.btnBack.visibility = View.GONE
             binding.toolbar.title = "${camera.name} - 录像"
             return true
         }
@@ -1960,6 +2071,7 @@ class RecordingsDialog(
         val totalDurationSeconds: Int,
         val totalSizeBytes: Long,
         val isCloud: Boolean = false,
+        val timeRangesSummary: String = "",
     )
 
     /**
@@ -1981,6 +2093,7 @@ class RecordingsDialog(
      */
     class DayRecordingAdapter(
         private val onPlayDay: (DayRecording) -> Unit,
+        private val isDagu: Boolean = false,
     ) : ListAdapter<DayRecording, DayRecordingAdapter.DayViewHolder>(DiffCallback()) {
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): DayViewHolder {
@@ -2008,7 +2121,11 @@ class RecordingsDialog(
                     val preset by ThemeManager.themePresetFlow.collectAsState()
                     ProvideGlassTheme(preset = preset) {
                         dayState.value?.let { day ->
-                            DayRecordingCard(day = day, onClick = { onPlayDay(day) })
+                            DayRecordingCard(
+                                day = day,
+                                isDagu = isDagu,
+                                onClick = { onPlayDay(day) }
+                            )
                         }
                     }
                 }
@@ -2034,6 +2151,7 @@ class RecordingsDialog(
 @Composable
 fun DayRecordingCard(
     day: RecordingsDialog.DayRecording,
+    isDagu: Boolean = false,
     onClick: () -> Unit
 ) {
     val tokens = GlassTheme.tokens
@@ -2075,7 +2193,7 @@ fun DayRecordingCard(
             Box(
                 modifier = Modifier
                     .width(3.dp)
-                    .height(42.dp)
+                    .height(48.dp)
                     .background(accent, RoundedCornerShape(2.dp))
             )
             Spacer(modifier = Modifier.width(10.dp))
@@ -2107,7 +2225,7 @@ fun DayRecordingCard(
                         modifier = Modifier.padding(bottom = 2.dp)
                     ) {
                         Text(
-                            text = "蓝奏云",
+                            text = if (isDagu) "大谷云" else "云端",
                             color = tokens.accentColor,
                             fontSize = 9.sp,
                             fontWeight = FontWeight.Bold,
@@ -2131,7 +2249,7 @@ fun DayRecordingCard(
 
             Spacer(modifier = Modifier.width(12.dp))
 
-            // Middle: Weekday & Stats
+            // Middle: Weekday & Stats & Time Ranges
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = String.format(Locale.CHINA, "%tA", cal),
@@ -2139,13 +2257,24 @@ fun DayRecordingCard(
                     fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold
                 )
+                val cloudDesc = if (isDagu) "大谷云录像" else "云端归档"
                 Text(
-                    text = if (day.isCloud) "${day.recordingCount} 段 · $durStr (蓝奏云归档)"
+                    text = if (day.isCloud) "${day.recordingCount} 段 · $durStr ($cloudDesc)"
                            else "${day.recordingCount} 段 · $durStr",
                     color = textSecondary,
                     fontSize = 12.sp,
                     modifier = Modifier.padding(top = 2.dp)
                 )
+                if (day.timeRangesSummary.isNotEmpty()) {
+                    Text(
+                        text = day.timeRangesSummary,
+                        color = tokens.accentColor,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(top = 2.dp),
+                        maxLines = 1
+                    )
+                }
             }
 
             // Right Status Chip

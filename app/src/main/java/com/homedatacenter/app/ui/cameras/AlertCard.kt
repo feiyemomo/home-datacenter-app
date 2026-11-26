@@ -194,25 +194,6 @@ fun AlertCard(
                         isError = false
                     )
                 }
-
-                if (alert.hasClip) {
-                    Surface(
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .size(28.dp),
-                        shape = CircleShape,
-                        color = Color(0x99000000),
-                        shadowElevation = 3.dp
-                    ) {
-                        Image(
-                            painter = painterResource(R.drawable.ic_play_circle),
-                            contentDescription = "Play recording",
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(4.dp),
-                        )
-                    }
-                }
             }
 
             Spacer(modifier = Modifier.size(10.dp))

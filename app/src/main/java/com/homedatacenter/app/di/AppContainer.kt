@@ -16,6 +16,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -24,6 +27,18 @@ import okhttp3.RequestBody.Companion.toRequestBody
 class AppContainer(private val context: Context) {
 
     val prefsManager: PrefsManager by lazy { PrefsManager(context) }
+
+    /**
+     * Preview frame epoch timestamp flow.
+     * Updated when returning from long background suspension to silently trigger
+     * fresh frame re-fetches without clearing existing bitmaps or flickering UI.
+     */
+    private val _previewEpoch = MutableStateFlow(System.currentTimeMillis())
+    val previewEpoch: StateFlow<Long> = _previewEpoch.asStateFlow()
+
+    fun bumpPreviewEpoch() {
+        _previewEpoch.value = System.currentTimeMillis()
+    }
 
 
     /**

@@ -62,6 +62,7 @@ fun CameraCard(
     modifier: Modifier = Modifier,
     hazeState: HazeState? = null,
     performanceMode: HazePerformanceMode = HazePerformanceMode.Adaptive,
+    previewEpoch: Long = 0L,
 ) {
     val tokens = GlassTheme.tokens
     val cardHeight = dimensionResource(R.dimen.camera_card_height)
@@ -73,9 +74,12 @@ fun CameraCard(
     val thumbWidthPx = remember(thumbWidth, density) { with(density) { thumbWidth.roundToPx() } }
     val thumbHeightPx = remember(thumbHeight, density) { with(density) { thumbHeight.roundToPx() } }
 
-    val snapshotUrl = remember(camera.id, baseUrl) {
+    val snapshotUrl = remember(camera.id, baseUrl, previewEpoch) {
         if (baseUrl.isNullOrBlank()) ""
-        else "${baseUrl.trimEnd('/')}/api/v1/cameras/${camera.id}/frame?quality=30&width=480"
+        else {
+            val base = "${baseUrl.trimEnd('/')}/api/v1/cameras/${camera.id}/frame?quality=30&width=480"
+            if (previewEpoch > 0) "$base&_t=$previewEpoch" else base
+        }
     }
 
     val imageRequest = remember(snapshotUrl, token, thumbWidthPx, thumbHeightPx) {
@@ -87,10 +91,8 @@ fun CameraCard(
                 }
             }
             .size(width = thumbWidthPx, height = thumbHeightPx)
-            .crossfade(150)
-            .placeholder(R.drawable.bg_thumbnail_placeholder)
+            .crossfade(300)
             .error(R.drawable.bg_thumbnail_placeholder)
-            .memoryCacheKey("camera_thumb_${camera.id}")
             .diskCachePolicy(CachePolicy.ENABLED)
             .memoryCachePolicy(CachePolicy.ENABLED)
             .build()

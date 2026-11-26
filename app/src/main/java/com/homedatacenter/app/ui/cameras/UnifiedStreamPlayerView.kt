@@ -120,10 +120,18 @@ class UnifiedStreamPlayerView @JvmOverloads constructor(
         zoomBadgeTextView = zoomBadge
         strategyTextView = strategyBadge
 
+        // Configure hardware and container clipping
+        exoPlayerView.clipChildren = true
+        exoPlayerView.clipToOutline = true
+        (exoPlayerView.findViewById<ViewGroup>(com.google.android.exoplayer2.ui.R.id.exo_content_frame))?.clipChildren = false
+
         setupZoomBadgeListener()
     }
 
     private fun setupZoomBadgeListener() {
+        zoomBadgeTextView?.setOnClickListener {
+            resetZoom(animate = true)
+        }
         pinchToZoomLayout.onZoomChanged = { scale ->
             val badge = zoomBadgeTextView
             if (badge != null) {
@@ -207,6 +215,9 @@ class UnifiedStreamPlayerView @JvmOverloads constructor(
         }
         progressBar?.visibility = View.GONE
         previewImageView?.visibility = View.GONE
+        if (::pinchToZoomLayout.isInitialized) {
+            pinchToZoomLayout.applyTransform()
+        }
     }
 
     /**
@@ -233,6 +244,9 @@ class UnifiedStreamPlayerView @JvmOverloads constructor(
             playerView.visibility = View.VISIBLE
         }
         errorTextView?.visibility = View.GONE
+        if (::pinchToZoomLayout.isInitialized) {
+            pinchToZoomLayout.applyTransform()
+        }
         onStateChanged?.invoke(fallbackState)
     }
 

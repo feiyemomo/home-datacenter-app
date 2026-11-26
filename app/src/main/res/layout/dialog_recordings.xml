@@ -181,13 +181,13 @@
                 android:layout_height="match_parent"
                 android:orientation="vertical">
 
-                <!-- Top: player host frame. Fixed 200dp in non-fullscreen;
+                <!-- Top: player host frame. Standard 16:9 220dp in non-fullscreen;
                      MATCH_PARENT in fullscreen (PlayerFullscreenHelper's
                      secondaryPlayerView expands this). -->
                 <FrameLayout
                     android:id="@+id/playerHostFrame"
                     android:layout_width="match_parent"
-                    android:layout_height="200dp"
+                    android:layout_height="220dp"
                     android:background="@android:color/black">
 
                     <!-- v1.13.7: wrap playerView in PinchToZoomFrameLayout
@@ -196,17 +196,25 @@
                     <com.homedatacenter.app.ui.cameras.PinchToZoomFrameLayout
                         android:id="@+id/zoomContainer"
                         android:layout_width="match_parent"
-                        android:layout_height="match_parent">
+                        android:layout_height="match_parent"
+                        android:clipChildren="true"
+                        android:clipToPadding="true">
 
                         <com.google.android.exoplayer2.ui.StyledPlayerView
                             android:id="@+id/playerView"
                             android:layout_width="match_parent"
                             android:layout_height="match_parent"
+                            android:clipChildren="true"
+                            android:clipToPadding="true"
                             app:surface_type="texture_view"
                             app:use_controller="true"
                             app:show_buffering="when_playing"
                             app:resize_mode="fit"
-                            app:show_timeout="3000" />
+                            app:show_timeout="3000"
+                            app:played_color="@color/primary"
+                            app:scrubber_color="@color/primary"
+                            app:buffered_color="#400284C7"
+                            app:unplayed_color="#40FFFFFF" />
 
                     </com.homedatacenter.app.ui.cameras.PinchToZoomFrameLayout>
 
@@ -218,11 +226,12 @@
                         android:layout_gravity="top|end"
                         android:layout_marginTop="8dp"
                         android:layout_marginEnd="8dp"
-                        android:background="#80000000"
-                        android:paddingHorizontal="8dp"
+                        android:background="@drawable/bg_glass_badge"
+                        android:paddingHorizontal="10dp"
                         android:paddingVertical="4dp"
                         android:textColor="@android:color/white"
                         android:textSize="11sp"
+                        android:textStyle="bold"
                         android:visibility="gone" />
 
                     <ProgressBar
@@ -273,17 +282,18 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_gravity="top|end"
-                        android:layout_margin="6dp"
+                        android:layout_margin="8dp"
                         android:text="1x"
                         android:textColor="@android:color/white"
-                        android:background="#80000000"
+                        android:background="@drawable/bg_glass_badge"
                         android:minWidth="0dp"
                         android:minHeight="0dp"
                         android:paddingStart="10dp"
                         android:paddingEnd="10dp"
                         android:paddingTop="4dp"
                         android:paddingBottom="4dp"
-                        android:textSize="13sp"
+                        android:textSize="12sp"
+                        android:textStyle="bold"
                         android:visibility="gone" />
 
                     <!-- v1.6.5 rev7: double-tap seek animation overlays.
@@ -332,35 +342,20 @@
                         android:visibility="gone"
                         tools:ignore="HardcodedText" />
 
-                    <!-- Fullscreen button at bottom|end (player's
-                         bottom-right corner). v1.6.4 rev3: moved from
-                         top|end (stacked under btnPlaybackSpeed) to
-                         bottom|end per user request "全屏按钮放到播放器
-                         右下角". The bottom-right placement is the
-                         conventional video player fullscreen button
-                         location (matches YouTube, Bilibili, etc.) so
-                         the user's muscle memory carries over.
-                         v1.6.4 rev4: moved closer to corner (margin 6dp
-                         -> 2dp) and enlarged (iconSize 24dp -> 36dp,
-                         padding 8dp -> 12dp) per user request "全屏图标
-                         在靠近右下一些，并放大一点".
-                         v1.6.4 rev5: margin 2dp -> 0dp to touch the
-                         corner exactly per user "全屏按钮再靠右下".
-                         Background removed for cleaner look — the icon
-                         on black video surface is already high contrast. -->
+                    <!-- Fullscreen button at bottom|end (player's bottom-right corner) -->
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/btnFullscreen"
                         style="@style/Widget.Material3.Button.IconButton"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_gravity="bottom|end"
-                        android:layout_marginEnd="0dp"
-                        android:layout_marginBottom="0dp"
+                        android:layout_marginEnd="4dp"
+                        android:layout_marginBottom="4dp"
                         android:background="@android:color/transparent"
                         android:minWidth="0dp"
                         android:minHeight="0dp"
-                        android:padding="14dp"
-                        app:iconSize="40dp"
+                        android:padding="8dp"
+                        app:iconSize="26dp"
                         android:visibility="gone"
                         app:icon="@drawable/ic_fullscreen"
                         app:iconTint="@android:color/white" />
@@ -372,8 +367,8 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_gravity="bottom|end"
-                        android:layout_marginEnd="68dp"
-                        android:layout_marginBottom="12dp"
+                        android:layout_marginEnd="54dp"
+                        android:layout_marginBottom="6dp"
                         android:text="720P"
                         android:textColor="@android:color/white"
                         android:textSize="12sp"

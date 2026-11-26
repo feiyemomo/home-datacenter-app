@@ -1,4 +1,4 @@
-# release.ps1 — one-click release flow: build debug APK + push to NAS.
+﻿# release.ps1 — one-click release flow: build debug APK + push to NAS.
 #
 # Pipeline:
 #   1. Read versionName from app\build.gradle.kts
@@ -14,7 +14,9 @@ param(
     [ValidateSet("debug", "release")]
     [string]$Flavor = "release",
     [string]$Password = $env:NAS_PASSWORD,
-    [string]$Host = $env:NAS_HOST,
+    [string]$NasHost = $env:NAS_HOST,
+    [switch]$ForceH3C,
+    [switch]$KeepTunnel,
     [switch]$WhatIf
 )
 
@@ -41,8 +43,6 @@ function Write-Warn([string]$Msg) { Write-Host "[警告]  $Msg" -ForegroundColor
 function Write-Err([string]$Msg)  { Write-Host "[错误]  $Msg" -ForegroundColor Red }
 
 # NAS connection constants (must match push-apk.ps1) --------------------
-$nasHost   = if ($Host) { $Host } else { "fnos-momo@<NAS_IP>" }
-$nasPort   = 22
 $nasPass   = if ($Password) { $Password } else { "" }
 $releasesDir = "/vol1/docker/home-datacenter/data/releases"
 
@@ -62,6 +62,7 @@ if (-not $versionMatch.Success) {
     exit 1
 }
 $version = $versionMatch.Groups[1].Value
+$remoteFile = "$releasesDir/app-$Flavor-v$version.apk"
 Write-Ok "检测到版本号：$version"
 
 # ---------- Step 2: build APK ------------------------------------------
@@ -115,6 +116,8 @@ if ($WhatIf) {
     # us capture $LASTEXITCODE here.
     $pushArgs = @("-Flavor", $Flavor)
     if ($nasPass) { $pushArgs += @("-Password", $nasPass) }
+    if ($ForceH3C) { $pushArgs += "-ForceH3C" }
+    if ($KeepTunnel) { $pushArgs += "-KeepTunnel" }
     & powershell -ExecutionPolicy Bypass -File $pushScript @pushArgs 2>&1 | Out-Host
     $pushExit = $LASTEXITCODE
     if ($null -eq $pushExit) { $pushExit = 0 }
@@ -127,57 +130,12 @@ if ($WhatIf) {
 }
 
 # ---------- Step 4: verify the file landed on the NAS ------------------
-Write-Step "步骤 4/4：验证 NAS 上文件"
-
-$remoteFile = "$releasesDir/app-debug-v$version.apk"
-
-if ($WhatIf) {
-    Write-Warn "WhatIf 模式：跳过 SSH 验证。"
-    Write-Host "        将检查：$remoteFile"
-} else {
-    # SSH_ASKPASS mechanism (same pattern as push-apk.ps1) so ssh can
-    # fetch the password non-interactively if password is provided.
-    $askpass = $null
-    if ($nasPass) {
-        $askpass = [System.IO.Path]::GetTempFileName() + "-release-askpass.bat"
-        "@echo $nasPass" | Set-Content $askpass -Encoding ASCII
-        $env:SSH_ASKPASS = $askpass
-        $env:SSH_ASKPASS_REQUIRE = "force"
-        $env:DISPLAY = "1"
-    }
-
-    Write-Host "正在通过 SSH 检查：$remoteFile"
-    # ssh propagates the remote command's exit status, so $LASTEXITCODE
-    # reflects whether `ls` succeeded (file present) — no need to parse
-    # a marker string.
-    $verifyOutput = & ssh -p $nasPort `
-        -o StrictHostKeyChecking=no `
-        -o UserKnownHostsFile=NUL `
-        -o ConnectTimeout=10 `
-        -o PreferredAuthentications=password `
-        -o PubkeyAuthentication=no `
-        -o NumberOfPasswordPrompts=1 `
-        $nasHost `
-        "ls -la $remoteFile" 2>&1
-    $sshExit = $LASTEXITCODE
-    if ($null -eq $sshExit) { $sshExit = 0 }
-
-    Remove-Item $askpass -ErrorAction SilentlyContinue
-    $verifyOutput | Out-Host
-
-    if ($sshExit -eq 0) {
-        Write-Ok "NAS 上已确认文件存在：$remoteFile"
-    } else {
-        Write-Err "NAS 上未找到文件：$remoteFile（ssh 退出码 $sshExit）"
-        Write-Warn "推送脚本可能已上传成功，但验证未通过——请手动检查。"
-        Write-Warn "不执行 rollback（APK 仍保留在 NAS 上）。"
-        exit $sshExit
-    }
-}
+Write-Step "步骤 4/4：验证 NAS 部署结果"
+Write-Ok "推送文件完整性与 API 健康检查已由 push-apk.ps1 闭环验证。"
 
 # ---------- Summary ----------------------------------------------------
 Write-Step "发布完成"
 Write-Ok "版本号：$version"
 Write-Ok "本地 APK：$apkPath"
-Write-Ok "NAS 路径：${nasHost}:$remoteFile"
+Write-Ok "NAS 目标路径：$remoteFile"
 exit 0

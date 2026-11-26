@@ -20,9 +20,11 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -118,6 +120,8 @@ fun MultiCameraPageContent(
     val slotFrames = remember { mutableStateMapOf<Int, Bitmap?>() }
     // Slot index -> frame tick timestamp (ensures Compose detects every frame update)
     val slotFrameTicks = remember { mutableStateMapOf<Int, Long>() }
+    // Slot index -> whether backend returned X-Frame-Cache=STANDBY (low-power dagu camera)
+    val slotStandby = remember { mutableStateMapOf<Int, Boolean>() }
 
     var pickerSlotIndex by remember { mutableStateOf<Int?>(null) }
 
@@ -175,11 +179,19 @@ fun MultiCameraPageContent(
                 while (isActive) {
                     val camIdx = if (gridMode == MultiCameraGridMode.ONE) focusedCamIndex else slotMapping[slotIdx] ?: -1
                     val cam = if (camIdx >= 0) allCameras.getOrNull(camIdx) else null
+                    val isBatteryCam = cam?.vendor?.equals("dagu", ignoreCase = true) == true ||
+                        cam?.vendor?.equals("daguiot", ignoreCase = true) == true
                     if (cam != null) {
                         try {
                             val activeBase = container.getApiBaseUrl().trimEnd('/')
                             val ts = System.currentTimeMillis()
-                            val frameUrl = "$activeBase/api/v1/cameras/${cam.id}/frame?width=${gridMode.width}&quality=${gridMode.quality}&nocache=1&t=$ts"
+                            // For 4G low-power battery cameras (dagu/daguiot), omit nocache=1 so backend
+                            // returns cached/last-known/standby frame without waking cellular stream.
+                            val frameUrl = if (isBatteryCam) {
+                                "$activeBase/api/v1/cameras/${cam.id}/frame?width=${gridMode.width}&quality=${gridMode.quality}&t=$ts"
+                            } else {
+                                "$activeBase/api/v1/cameras/${cam.id}/frame?width=${gridMode.width}&quality=${gridMode.quality}&nocache=1&t=$ts"
+                            }
                             val req = Request.Builder().url(frameUrl).apply {
                                 if (!token.isNullOrEmpty()) {
                                     header("Authorization", "Bearer $token")
@@ -189,6 +201,8 @@ fun MultiCameraPageContent(
 
                             client.newCall(req).execute().use { resp ->
                                 if (resp.isSuccessful) {
+                                    val cacheHeader = resp.header("X-Frame-Cache") ?: ""
+                                    slotStandby[slotIdx] = cacheHeader.equals("STANDBY", ignoreCase = true)
                                     resp.body?.byteStream()?.use { stream ->
                                         val bmp = BitmapFactory.decodeStream(stream, null, opts)
                                         if (bmp != null && isActive) {
@@ -202,7 +216,8 @@ fun MultiCameraPageContent(
                             if (e is CancellationException) throw e
                         }
                     }
-                    delay(gridMode.intervalMs)
+                    // Poll 4G battery cameras gently every 15s instead of 100-400ms
+                    delay(if (isBatteryCam) 15_000L else gridMode.intervalMs)
                 }
             }
         }
@@ -226,6 +241,7 @@ fun MultiCameraPageContent(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .statusBarsPadding()
                         .padding(horizontal = 8.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -351,6 +367,7 @@ fun MultiCameraPageContent(
                                 camera = cam,
                                 bitmap = slotFrames[0],
                                 frameTick = slotFrameTicks[0] ?: 0L,
+                                isStandby = slotStandby[0] ?: false,
                                 isFillCrop = isFillCrop,
                                 modifier = Modifier.fillMaxSize(),
                                 onSingleTap = { cam?.let { onOpenCameraDetail(it) } },
@@ -380,6 +397,7 @@ fun MultiCameraPageContent(
                                                 camera = cam,
                                                 bitmap = slotFrames[slotIdx],
                                                 frameTick = slotFrameTicks[slotIdx] ?: 0L,
+                                                isStandby = slotStandby[slotIdx] ?: false,
                                                 isFillCrop = isFillCrop,
                                                 modifier = Modifier
                                                     .weight(1f)
@@ -420,6 +438,7 @@ fun MultiCameraPageContent(
                                                 camera = cam,
                                                 bitmap = slotFrames[slotIdx],
                                                 frameTick = slotFrameTicks[slotIdx] ?: 0L,
+                                                isStandby = slotStandby[slotIdx] ?: false,
                                                 isFillCrop = isFillCrop,
                                                 modifier = Modifier
                                                     .weight(1f)
@@ -576,6 +595,7 @@ fun SlotTile(
     isFillCrop: Boolean,
     modifier: Modifier = Modifier,
     frameTick: Long = 0L,
+    isStandby: Boolean = false,
     onSingleTap: () -> Unit,
     onDoubleTap: () -> Unit,
     onLongPress: () -> Unit,
@@ -617,20 +637,54 @@ fun SlotTile(
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
             if (camera != null) {
-                if (bitmap != null && !bitmap.isRecycled) {
+                val isBatteryCam = camera.vendor.equals("dagu", ignoreCase = true) ||
+                    camera.vendor.equals("daguiot", ignoreCase = true)
+
+                if (bitmap != null && !bitmap.isRecycled && !(isBatteryCam && isStandby)) {
                     Image(
                         bitmap = bitmap.asImageBitmap(),
                         contentDescription = camera.name,
                         contentScale = if (isFillCrop) ContentScale.Crop else ContentScale.Fit,
                         modifier = Modifier.fillMaxSize()
                     )
+                } else if (isBatteryCam && isStandby) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(if (isDark) Color(0xFF0B1220) else Color(0xFFE2E8F0)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.padding(8.dp)
+                        ) {
+                            Icon(
+                                painter = painterResource(id = R.drawable.ic_camera),
+                                contentDescription = null,
+                                tint = cyberCyan.copy(alpha = 0.85f),
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Text(
+                                text = "4G 省电待机中",
+                                color = if (isDark) Color(0xFFE2E8F0) else Color(0xFF1E293B),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "轻触进入详情按需唤醒",
+                                color = textSecondary,
+                                fontSize = 9.5.sp
+                            )
+                        }
+                    }
                 } else {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator(color = cyberCyan, modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
                     }
                 }
 
-                // Overlay Tag with Camera Name
+                // Overlay Tag with Camera Name (+ 4G Low-Power Badge if applicable)
                 Surface(
                     shape = RoundedCornerShape(bottomEnd = 10.dp),
                     color = Color(0xB3000000),
@@ -643,11 +697,18 @@ fun SlotTile(
                         Box(
                             modifier = Modifier
                                 .size(6.dp)
-                                .background(if (camera.status == "online") onlineGreen else offlineRed, CircleShape)
+                                .background(
+                                    when {
+                                        isBatteryCam && isStandby -> Color(0xFFF59E0B)
+                                        camera.status == "online" -> onlineGreen
+                                        else -> offlineRed
+                                    },
+                                    CircleShape
+                                )
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = camera.name,
+                            text = if (isBatteryCam) "${camera.name} · 4G" else camera.name,
                             color = Color.White,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.SemiBold

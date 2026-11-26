@@ -130,6 +130,7 @@ class CameraDetailActivity : AppCompatActivity() {
     // releaseExoPlayerOnly.
     private var fallbackPlayer: ExoPlayer? = null
     private var silentFallbackJob: kotlinx.coroutines.Job? = null
+    private var releasedByBackground: Boolean = false
     private var previewFrameJob: kotlinx.coroutines.Job? = null
     private var triedWebRtc = false
     private var triedMp4 = false
@@ -547,7 +548,9 @@ class CameraDetailActivity : AppCompatActivity() {
         // Immediately pause live playback and show the recordings dialog to prevent background audio leaks.
         // v1.18.0: Prevent replay on activity recreation by checking savedInstanceState and removing extra immediately.
         val initialTs = if (savedInstanceState == null) {
-            intent.getLongExtra(EXTRA_INITIAL_TIMESTAMP, 0L)
+            val longVal = intent.getLongExtra(EXTRA_INITIAL_TIMESTAMP, 0L)
+            val raw = if (longVal > 0L) longVal else intent.getDoubleExtra(EXTRA_INITIAL_TIMESTAMP, 0.0).toLong()
+            if (raw > 100_000_000_000L) raw / 1000L else raw
         } else {
             0L
         }
@@ -658,6 +661,7 @@ class CameraDetailActivity : AppCompatActivity() {
         }
         if (isInPictureInPictureMode) {
             wasInPipMode = true
+            binding.videoContainer.resetZoom(false)
             (findViewById<android.widget.FrameLayout>(android.R.id.content)?.getChildAt(0))?.visibility = View.GONE
             window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
             window.decorView.background = null
@@ -826,6 +830,7 @@ class CameraDetailActivity : AppCompatActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && isInPictureInPictureMode && !isFinishing) {
             return
         }
+        releasedByBackground = true
         streamRetryJob?.cancel()
         if (::unifiedPlayer.isInitialized) {
             unifiedPlayer.cancelFallbackWatchdog()
@@ -837,11 +842,15 @@ class CameraDetailActivity : AppCompatActivity() {
         player?.playWhenReady = false
         fallbackPlayer?.stop()
         releaseExoPlayerOnly()
+
+        // (3) 页面切后台自动断流: 非画中画状态下立即销毁 WebRTC 连接与解码器，
+        // 确保服务端检测到 0 消费者并向 4G 电池摄像头下发休眠断流指令，严禁后台挂起偷跑电量
+        try { webRtcClient?.removeVideoSink(videoFrameRateSink) } catch (_: Exception) {}
+        try { webRtcClient?.release() } catch (_: Exception) {}
+        webRtcClient = null
+        releaseSurfaceRenderer()
+
         if (wasInPipMode || isFinishing || isBackNavigating) {
-            try { webRtcClient?.removeVideoSink(videoFrameRateSink) } catch (_: Exception) {}
-            try { webRtcClient?.release() } catch (_: Exception) {}
-            webRtcClient = null
-            releaseSurfaceRenderer()
             if (!isFinishing) {
                 finish()
             }
@@ -855,6 +864,7 @@ class CameraDetailActivity : AppCompatActivity() {
         }
         // No longer in foreground and invisible on screen: stop playback and release WebRTC to prevent audio leaks
         val shouldFinish = wasInPipMode || isFinishing || isBackNavigating
+        releasedByBackground = true
         streamRetryJob?.cancel()
         webRtcClient?.stopPlayoutImmediately()
         webRtcClient?.setAudioEnabled(false)
@@ -887,6 +897,13 @@ class CameraDetailActivity : AppCompatActivity() {
         if (recordingsDialog?.isShowing == true || alertsDialog?.isShowing == true) {
             return
         }
+        if (releasedByBackground) {
+            releasedByBackground = false
+            // 4G 太阳能省电改造：用户切后台或锁屏回来后，严禁自动恢复取流唤醒设备
+            // 显示重连提示，把唤醒决定权交给用户明确的主动点击
+            showReconnectPrompt()
+            return
+        }
         binding.composeTopBar.alpha = 1f
         binding.composeControls.alpha = 1f
         val client = webRtcClient
@@ -913,6 +930,15 @@ class CameraDetailActivity : AppCompatActivity() {
                 p.playWhenReady = true
             }
         }
+    }
+
+    private fun showReconnectPrompt() {
+        releasePlayer()
+        binding.tvVideoError.text = "直播已断开，点击重连"
+        binding.tvVideoError.visibility = View.VISIBLE
+        binding.progressVideo.visibility = View.GONE
+        binding.ivPreviewFrame.visibility = View.VISIBLE
+        updateStreamStrategy("待点播")
     }
 
     // v1.14.3: called from probe threads; marshal to UI.
@@ -1328,6 +1354,12 @@ class CameraDetailActivity : AppCompatActivity() {
         // to it before calling prepare() in preparePlayback().
         binding.tvVideoError.setOnClickListener { restartPlayback() }
 
+        binding.videoContainer.clipChildren = true
+        binding.videoContainer.clipToOutline = true
+        binding.playerView.clipChildren = true
+        binding.playerView.clipToOutline = true
+        (binding.playerView.findViewById<ViewGroup>(com.google.android.exoplayer2.ui.R.id.exo_content_frame))?.clipChildren = false
+
         unifiedPlayer = UnifiedStreamPlayerView(this).apply {
             bindViews(
                 pinchZoom = binding.videoContainer,
@@ -1497,6 +1529,9 @@ class CameraDetailActivity : AppCompatActivity() {
     }
 
     private fun setupPinchZoom() {
+        binding.tvZoomBadge.setOnClickListener {
+            binding.videoContainer.resetZoom(true)
+        }
         binding.videoContainer.onZoomChanged = { scale ->
             if (scale > 1.05f) {
                 binding.tvZoomBadge.visibility = View.VISIBLE
@@ -1759,15 +1794,12 @@ class CameraDetailActivity : AppCompatActivity() {
         } else {
             binding.tvStreamStrategy.text = strategy
             binding.tvStreamStrategy.visibility = View.VISIBLE
-            // v1.6.24: HLS is only selected when WebRTC can't reach
-            // the backend (Tunnel path with no P2P fallback) and MP4
-            // also failed or was skipped. In that case latency is
-            // 1.5s+ vs WebRTC's sub-second — surface a small notice
-            // so the user knows the high latency is expected, not a
-            // bug. Hidden for WebRTC / MP4 (those transports have
-            // sub-second latency).
-            binding.tvHlsNotice.visibility =
-                if (strategy == "HLS") View.VISIBLE else View.GONE
+            if (strategy == "HLS") {
+                binding.tvHlsNotice.text = "当前走远程兼容转发通道 (HLS)，画面延迟约 1.5s+"
+                binding.tvHlsNotice.visibility = View.VISIBLE
+            } else if (strategy != "4G 唤醒中") {
+                binding.tvHlsNotice.visibility = View.GONE
+            }
         }
     }
 
@@ -1931,6 +1963,7 @@ class CameraDetailActivity : AppCompatActivity() {
                     binding.surfaceRenderer.visibility = View.VISIBLE
                     binding.playerView.visibility = View.GONE
                     binding.progressVideo.visibility = View.GONE
+                    binding.videoContainer.applyTransform()
                     if (::unifiedPlayer.isInitialized) {
                         unifiedPlayer.onWebRtcFirstFrameRendered()
                     }
@@ -2090,13 +2123,13 @@ class CameraDetailActivity : AppCompatActivity() {
     private var hardFallbackWatchdogJob: kotlinx.coroutines.Job? = null
 
     /**
-     * 5-second hard fallback watchdog: ensures the player never hangs
-     * indefinitely on the loading spinner if WebRTC/ExoPlayer stalls.
+     * 9-second hard fallback watchdog: ensures the player never hangs
+     * indefinitely on the loading spinner if WebRTC/ExoPlayer stalls on cold starts.
      */
     private fun startHardFallbackWatchdog() {
         cancelHardFallbackWatchdog()
         hardFallbackWatchdogJob = lifecycleScope.launch {
-            kotlinx.coroutines.delay(5_000L)
+            kotlinx.coroutines.delay(9_000L)
             if (isFinishing || isDestroyed) return@launch
             val exoPlaying = (liveOwner == OWNER_EXO && player?.isPlaying == true)
             val webrtcPlaying = (liveOwner == OWNER_WEBRTC && webRtcFirstFrameRendered)
@@ -2183,7 +2216,15 @@ class CameraDetailActivity : AppCompatActivity() {
         // selected. The badge is updated to the actual transport
         // (WebRTC / MP4 / HLS) once startWebRtcStream / startMp4Playback
         // picks one. Hidden only when the player errors out.
-        updateStreamStrategy("加载中")
+        val isBatteryCam = cam.vendor.equals("dagu", ignoreCase = true) ||
+            cam.vendor.equals("daguiot", ignoreCase = true)
+        if (isBatteryCam) {
+            updateStreamStrategy("4G 唤醒中")
+            binding.tvHlsNotice.text = "正在唤醒 4G 低功耗摄像头，首次出流约需 3~6 秒..."
+            binding.tvHlsNotice.visibility = View.VISIBLE
+        } else {
+            updateStreamStrategy("加载中")
+        }
 
         // v1.6.24: always attempt WebRTC first when the camera is
         // online and the WebRTC client initialized successfully —
@@ -2247,7 +2288,15 @@ class CameraDetailActivity : AppCompatActivity() {
         binding.webRtcControls.visibility = View.GONE
         binding.btnWebRtcFullscreen.visibility = View.GONE
         binding.tvVideoError.visibility = View.GONE
-        updateStreamStrategy("加载中")
+        val isBatteryCam = cam.vendor.equals("dagu", ignoreCase = true) ||
+            cam.vendor.equals("daguiot", ignoreCase = true)
+        if (isBatteryCam) {
+            updateStreamStrategy("4G 唤醒中")
+            binding.tvHlsNotice.text = "正在唤醒 4G 低功耗摄像头，首次出流约需 3~6 秒..."
+            binding.tvHlsNotice.visibility = View.VISIBLE
+        } else {
+            updateStreamStrategy("加载中")
+        }
         // Racer #1: silent ExoPlayer. Its surface stays visible so it can
         // paint (and report) a first frame; audio is muted until it wins.
         prepareFallbackPlayer(cam, race = true)
@@ -2292,9 +2341,9 @@ class CameraDetailActivity : AppCompatActivity() {
                 if (isFinishing || isDestroyed) return
                 if (liveOwner == OWNER_WEBRTC || !raceActive) return
                 ticks++
-                if (ticks >= 10) {
-                    // ~8s without a single sustained frame: evaluate fallback
-                    android.util.Log.w(TAG, "Race: no WebRTC frames in 8s — evaluating fallback")
+                if (ticks >= 18) {
+                    // ~14s without a single sustained frame: evaluate fallback
+                    android.util.Log.w(TAG, "Race: no WebRTC frames in 14s — evaluating fallback")
                     raceActive = false
                     webRtcClient?.removeVideoSink(videoFrameRateSink)
                     webRtcClient?.let { c ->
@@ -2820,6 +2869,7 @@ class CameraDetailActivity : AppCompatActivity() {
         if (::unifiedPlayer.isInitialized) {
             unifiedPlayer.onFallbackActive(if (useMp4) StreamTransport.MP4 else StreamTransport.HLS)
         }
+        binding.videoContainer.applyTransform()
 
         fb.playWhenReady = true
         fb.volume = if (audioEnabled && !webRtcMuted) 1.0f else 0.0f
@@ -2913,9 +2963,8 @@ class CameraDetailActivity : AppCompatActivity() {
     private fun liveSpeedControl(): DefaultLivePlaybackSpeedControl =
         DefaultLivePlaybackSpeedControl.Builder()
             .setFallbackMinPlaybackSpeed(1.0f)
-            .setFallbackMaxPlaybackSpeed(1.15f)
-            // Stay at 1.0x while within 2s of the target offset, then
-            // ramp up to the 1.15x cap as the error grows.
+            .setFallbackMaxPlaybackSpeed(1.0f)
+            // Fix audio discontinuity: keep constant 1.0x playback speed without pitch stretching or jitter drops
             .setMaxLiveOffsetErrorMsForUnitSpeed(2_000L)
             .setTargetLiveOffsetIncrementOnRebufferMs(0L)
             .setMinUpdateIntervalMs(1_000L)
@@ -2925,6 +2974,7 @@ class CameraDetailActivity : AppCompatActivity() {
     private fun onExoPlayerFirstFrame() {
         cancelHardFallbackWatchdog()
         binding.progressVideo.visibility = View.GONE
+        binding.videoContainer.applyTransform()
         hidePreviewFrame()
     }
 
@@ -3296,6 +3346,29 @@ class CameraDetailActivity : AppCompatActivity() {
     private fun handleStreamPlaybackFailure() {
         releasePlayer()
         val cam = camera
+
+        // (4) 夜间禁流 (22:00-06:00): 严禁参与后台自动轮询与无限重连，仅允许手动点击主动点播
+        val currentHour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+        val isNightTime = currentHour >= 22 || currentHour < 6
+        if (isNightTime) {
+            binding.tvVideoError.text = "夜间省电模式 (22:00-06:00)\n点击屏幕手动点播唤醒"
+            binding.tvVideoError.visibility = View.VISIBLE
+            binding.progressVideo.visibility = View.GONE
+            updateStreamStrategy("夜间省电")
+            return
+        }
+
+        val isBatteryCam = cam?.vendor?.equals("dagu", ignoreCase = true) == true ||
+                cam?.vendor?.equals("daguiot", ignoreCase = true) == true
+        if (isBatteryCam) {
+            // 4G 太阳能/电池摄像头省电策略：断流或 10 分钟切断后严禁自动重试唤醒设备
+            binding.tvVideoError.text = "直播已断开，点击重连"
+            binding.tvVideoError.visibility = View.VISIBLE
+            binding.progressVideo.visibility = View.GONE
+            updateStreamStrategy("已断开")
+            return
+        }
+
         if (cam != null && cam.isOnline && streamRetryCount < maxStreamRetries) {
             streamRetryCount++
             val delayMs = streamRetryCount * 2000L

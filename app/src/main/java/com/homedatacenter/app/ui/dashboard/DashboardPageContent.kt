@@ -133,6 +133,7 @@ fun DashboardPageContent(
     onViewAllLogs: () -> Unit,
     onAlertClick: (Alert) -> Unit,
     onCleanCache: () -> Unit,
+    previewEpoch: Long = 0L,
     modifier: Modifier = Modifier,
 ) {
     val preset by ThemeManager.themePresetFlow.collectAsState()
@@ -267,6 +268,7 @@ fun DashboardPageContent(
                                 onMultiCameraClick = onMultiCameraClick,
                                 hazeState = hazeState,
                                 performanceMode = performanceMode,
+                                previewEpoch = previewEpoch,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(horizontal = 16.dp)
@@ -934,6 +936,7 @@ fun CameraFeedCard(
     modifier: Modifier = Modifier,
     hazeState: HazeState? = null,
     performanceMode: HazePerformanceMode = HazePerformanceMode.Adaptive,
+    previewEpoch: Long = 0L,
 ) {
     val tokens = GlassTheme.tokens
     val preset by ThemeManager.themePresetFlow.collectAsState()
@@ -1054,9 +1057,10 @@ fun CameraFeedCard(
                         val thumbWidthPx = remember(density) { with(density) { 360.dp.roundToPx() } }
                         val thumbHeightPx = remember(density) { with(density) { 175.dp.roundToPx() } }
 
-                        val previewUrl = remember(currentCamera.id, baseUrl) {
+                        val previewUrl = remember(currentCamera.id, baseUrl, previewEpoch) {
                             if (!baseUrl.isNullOrBlank()) {
-                                "${baseUrl.trimEnd('/')}/api/v1/cameras/${currentCamera.id}/frame?quality=35&width=640"
+                                val base = "${baseUrl.trimEnd('/')}/api/v1/cameras/${currentCamera.id}/frame?quality=35&width=640"
+                                if (previewEpoch > 0L) "$base&_t=$previewEpoch" else base
                             } else null
                         }
 
@@ -1071,7 +1075,8 @@ fun CameraFeedCard(
                                         }
                                     }
                                     .size(thumbWidthPx, thumbHeightPx)
-                                    .crossfade(200)
+                                    .crossfade(300)
+                                    .diskCachePolicy(CachePolicy.ENABLED)
                                     .memoryCachePolicy(CachePolicy.ENABLED)
                                     .build()
                             }
@@ -1122,7 +1127,13 @@ fun CameraFeedCard(
                                                     fontWeight = FontWeight.Bold
                                                 )
                                                 Text(
-                                                    text = if (currentCamera.isOnline) "轻触进入实时直播" else "摄像头离线",
+                                                    text = if (currentCamera.vendor.equals("dagu", ignoreCase = true) || currentCamera.vendor.equals("daguiot", ignoreCase = true)) {
+                                                        "4G待机省电中 · 轻触播放唤醒"
+                                                    } else if (currentCamera.isOnline) {
+                                                        "轻触进入实时直播"
+                                                    } else {
+                                                        "摄像头离线"
+                                                    },
                                                     color = Color.White.copy(alpha = 0.6f),
                                                     fontSize = 11.sp
                                                 )

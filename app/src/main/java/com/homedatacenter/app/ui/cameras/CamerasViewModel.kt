@@ -97,11 +97,11 @@ class CamerasViewModel(
         refreshCameras(token)
     }
 
-    /** Network refresh (swipe-to-refresh, register-camera callback). */
-    fun refreshCameras(token: String?) {
+    /** Network refresh (swipe-to-refresh, register-camera callback, or silent sync). */
+    fun refreshCameras(token: String?, silent: Boolean = false) {
         if (token.isNullOrEmpty()) return
         viewModelScope.launch {
-            _refreshing.value = true
+            if (!silent) _refreshing.value = true
             try {
                 // If offline, skip the network call and just show cache.
                 if (!NetworkMonitor.getInstance(getApplication()).isOnlineNow()) {
@@ -122,13 +122,13 @@ class CamerasViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                android.util.Log.e("CamerasDebug", "Failed to refresh cameras: ${e.message}", e)
+                if (!silent) android.util.Log.e("CamerasDebug", "Failed to refresh cameras: ${e.message}", e)
                 // Network failure: if no cameras loaded yet, emit empty list so UI doesn't hang
                 if (_cameras.value == null) {
                     _cameras.value = emptyList()
                 }
             } finally {
-                _refreshing.value = false
+                if (!silent) _refreshing.value = false
             }
         }
     }

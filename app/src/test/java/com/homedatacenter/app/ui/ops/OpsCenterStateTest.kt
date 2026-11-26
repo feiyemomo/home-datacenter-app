@@ -214,14 +214,14 @@ class OpsCenterStateTest {
             baseUrlProvider = { "http://192.168.31.234:8088/" },
             ioDispatcher = testDispatcher
         )
-        assertEquals("http://192.168.31.234:8088/btpanel", viewModelLan.resolve1PanelUrl())
+        assertEquals("http://192.168.31.234:8088/btpanel/#/home", viewModelLan.resolve1PanelUrl())
 
         val viewModelRemote = OpsViewModel(
             mockApp,
             baseUrlProvider = { "https://api.feiyemomo.top/" },
             ioDispatcher = testDispatcher
         )
-        assertEquals("https://api.feiyemomo.top/btpanel", viewModelRemote.resolve1PanelUrl())
+        assertEquals("https://api.feiyemomo.top/btpanel/#/home", viewModelRemote.resolve1PanelUrl())
     }
 
     @Test
@@ -493,5 +493,67 @@ class OpsCenterStateTest {
         assertFalse(viewModel.alertFilters.value.containerCrash)
         assertEquals("WARNING", viewModel.alertFilters.value.minSeverity)
         assertEquals("告警推送过滤配置已保存", viewModel.toastMessage.value)
+    }
+
+    @Test
+    fun testWafSecuritySummaryUnwrappingAndFieldCompatibility() {
+        val rawJson = """
+            {
+                "code": 0,
+                "message": "success",
+                "data": {
+                    "today_waf_blocked_count": 88,
+                    "today_blocked_count": 88,
+                    "total_rules": 48,
+                    "last_blocked_ip": "10.0.0.99",
+                    "last_blocked_time": "2026-11-22 17:00:00",
+                    "s3_backup": {
+                        "status": "HEALTHY",
+                        "last_sync_at": "2026-11-22 16:30",
+                        "remote_bytes": 107374182400
+                    }
+                }
+            }
+        """.trimIndent()
+
+        val root = org.json.JSONObject(rawJson)
+        val dataObj = root.optJSONObject("data") ?: root
+
+        val blockedCount = dataObj.optInt("today_blocked_count", dataObj.optInt("today_waf_blocked_count", 0))
+        val totalRules = dataObj.optInt("total_rules", 48)
+        val lastIp = dataObj.optString("last_blocked_ip", "")
+        val lastTime = dataObj.optString("last_blocked_time", "")
+        val s3Obj = dataObj.optJSONObject("s3_backup")
+        val s3Status = s3Obj?.optString("status") ?: dataObj.optString("s3_backup_status", "HEALTHY")
+        val s3LastTime = s3Obj?.optString("last_sync_at") ?: dataObj.optString("s3_backup_last_time", "")
+        val s3Size = s3Obj?.optLong("remote_bytes", 0L) ?: dataObj.optLong("s3_backup_size_bytes", 0L)
+
+        val parsed = WafSecuritySummary(
+            todayBlockedCount = blockedCount,
+            totalRules = totalRules,
+            lastBlockedIp = lastIp,
+            lastBlockedTime = lastTime,
+            s3BackupLastTime = s3LastTime,
+            s3BackupStatus = s3Status,
+            s3BackupSizeBytes = s3Size
+        )
+
+        assertEquals(88, parsed.todayBlockedCount)
+        assertEquals(48, parsed.totalRules)
+        assertEquals("10.0.0.99", parsed.lastBlockedIp)
+        assertEquals("HEALTHY", parsed.s3BackupStatus)
+        assertTrue(parsed.isS3Healthy)
+        assertEquals(107374182400L, parsed.s3BackupSizeBytes)
+    }
+
+    @Test
+    fun testAppContainerPreviewEpochBump() {
+        val initialEpoch = System.currentTimeMillis()
+        var currentEpoch = initialEpoch
+        val bump = { currentEpoch = System.currentTimeMillis() + 100L }
+
+        assertEquals(initialEpoch, currentEpoch)
+        bump()
+        assertTrue(currentEpoch > initialEpoch)
     }
 }

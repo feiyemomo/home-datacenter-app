@@ -87,6 +87,7 @@ class CamerasFragment : Fragment() {
                 val alertsHasMoreState = viewModel.alertsHasMore.collectAsStateWithLifecycle(initialValue = false)
                 val refreshingState = viewModel.refreshing.collectAsStateWithLifecycle(initialValue = false)
                 val filterState = viewModel.filterState.collectAsStateWithLifecycle()
+                val previewEpochState = (mainActivity?.container?.previewEpoch ?: kotlinx.coroutines.flow.MutableStateFlow(0L)).collectAsStateWithLifecycle()
 
                 var activeFilterConfig by remember { mutableStateOf<FilterDialogConfig?>(null) }
 
@@ -96,6 +97,7 @@ class CamerasFragment : Fragment() {
                     alertsLoading = alertsLoadingState.value,
                     alertsHasMore = alertsHasMoreState.value,
                     isRefreshing = refreshingState.value,
+                    previewEpoch = previewEpochState.value,
                     onRefresh = {
                         loadCamerasFromNetwork()
                         loadAllAlerts()
@@ -261,6 +263,12 @@ class CamerasFragment : Fragment() {
         }
     }
 
+    fun silentRefresh() {
+        val mainActivity = activity as? MainActivity ?: return
+        viewModel.refreshCameras(mainActivity.container.prefsManager.token, silent = true)
+        loadAllAlerts()
+    }
+
     private fun loadCamerasFromCache() {
         val mainActivity = activity as? MainActivity ?: return
         viewModel.loadCameras(mainActivity.container.prefsManager.token)
@@ -306,7 +314,7 @@ class CamerasFragment : Fragment() {
                 )
                 val intent = Intent(requireContext(), CameraDetailActivity::class.java).apply {
                     putExtra(CameraDetailActivity.EXTRA_CAMERA_JSON, cameraJson)
-                    putExtra(CameraDetailActivity.EXTRA_INITIAL_TIMESTAMP, startTs)
+                    putExtra(CameraDetailActivity.EXTRA_INITIAL_TIMESTAMP, startTs.toLong())
                 }
                 startActivity(intent)
             } catch (e: CancellationException) {

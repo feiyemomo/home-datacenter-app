@@ -89,6 +89,7 @@ class DashboardFragment : Fragment() {
                 val backendPathIsFast by viewModel.backendPathIsFast.collectAsState()
                 val isRefreshing by viewModel.isRefreshing.collectAsState()
                 val cameras by _camerasFlow.collectAsState()
+                val previewEpoch by (mainActivity?.container?.previewEpoch ?: kotlinx.coroutines.flow.MutableStateFlow(0L)).collectAsState()
 
                 DashboardPageContent(
                     systemStatus = systemStatus,
@@ -100,6 +101,7 @@ class DashboardFragment : Fragment() {
                     backendPathText = backendPathText,
                     backendPathIsFast = backendPathIsFast,
                     isRefreshing = isRefreshing,
+                    previewEpoch = previewEpoch,
                     isAdmin = isAdmin,
                     baseUrl = baseUrl,
                     token = token,
@@ -231,6 +233,10 @@ class DashboardFragment : Fragment() {
         } else if (hidden) {
             stopStatusPolling()
         }
+    }
+
+    fun silentRefresh() {
+        refreshAll(isUserTriggered = false)
     }
 
     private fun refreshAll(isUserTriggered: Boolean = false) {

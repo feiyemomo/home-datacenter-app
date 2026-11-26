@@ -51,6 +51,7 @@ class MainActivity : AppCompatActivity() {
     var isAdminState by mutableStateOf(false)
     private val tabHistory = java.util.ArrayDeque<MainTab>()
     private var lastBackPressTime = 0L
+    private var lastPauseTimestamp = 0L
     private var keyboardLayoutListener: ViewTreeObserver.OnGlobalLayoutListener? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -276,12 +277,34 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onPause() {
+        super.onPause()
+        lastPauseTimestamp = System.currentTimeMillis()
+    }
+
     override fun onResume() {
         super.onResume()
+        val now = System.currentTimeMillis()
+        if (lastPauseTimestamp > 0L && (now - lastPauseTimestamp) > 45_000L) {
+            android.util.Log.i("MainActivity", "App resumed after long background suspension (${now - lastPauseTimestamp}ms), triggering silent sync")
+            container.bumpPreviewEpoch()
+            triggerSilentSync()
+        }
+        lastPauseTimestamp = 0L
         container.tryAutoRefreshToken()
         container.baseUrlResolver.forceProbe()
         refreshRole()
         ensureWebSocketConnected()
+    }
+
+    private fun triggerSilentSync() {
+        supportFragmentManager.fragments.forEach { fragment ->
+            when (fragment) {
+                is DashboardFragment -> fragment.silentRefresh()
+                is CamerasFragment -> fragment.silentRefresh()
+                is OpsFragment -> fragment.silentRefresh()
+            }
+        }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {

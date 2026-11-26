@@ -14,8 +14,8 @@ android {
         applicationId = "com.homedatacenter.app"
         minSdk = 29
         targetSdk = 36
-        versionCode = 233
-        versionName = "1.18.13"
+        versionCode = 241
+        versionName = "1.18.21"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -145,6 +145,7 @@ dependencies {
     implementation(libs.haze)
     implementation(libs.haze.blur)
     implementation(libs.coil.compose)
+    implementation(libs.coil.svg)
     debugImplementation(libs.androidx.compose.ui.tooling)
 
     implementation(libs.retrofit.core)

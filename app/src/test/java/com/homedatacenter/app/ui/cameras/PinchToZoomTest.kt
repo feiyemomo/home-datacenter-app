@@ -173,4 +173,143 @@ class PinchToZoomTest {
         assertEquals(0f, resetTap.targetTransX, 0.001f)
         assertEquals(0f, resetTap.targetTransY, 0.001f)
     }
+
+    enum class TestViewKind { WEBRTC_SURFACE, EXOPLAYER_CONTAINER, EXOPLAYER_TEXTURE, PREVIEW_IMAGE, CONTROL_OVERLAY }
+    data class MockView(val kind: TestViewKind, val isVisible: Boolean, val id: String)
+
+    /**
+     * Verify dynamic target surface resolution logic between WebRTC (SurfaceViewRenderer)
+     * and ExoPlayer (videoSurfaceView vs container).
+     */
+    @Test
+    fun testTargetSurfaceResolutionLogic() {
+        fun resolveActiveTarget(children: List<MockView>, custom: MockView? = null): TestViewKind? {
+            if (custom != null) {
+                return if (custom.kind == TestViewKind.EXOPLAYER_CONTAINER) TestViewKind.EXOPLAYER_TEXTURE else custom.kind
+            }
+            // 1. Check for visible WebRTC SurfaceViewRenderer
+            val webrtc = children.firstOrNull { it.kind == TestViewKind.WEBRTC_SURFACE && it.isVisible }
+            if (webrtc != null) return TestViewKind.WEBRTC_SURFACE
+
+            // 2. Check for visible ExoPlayer
+            val exo = children.firstOrNull { it.kind == TestViewKind.EXOPLAYER_CONTAINER && it.isVisible }
+            if (exo != null) return TestViewKind.EXOPLAYER_TEXTURE
+
+            // 3. Check for visible preview
+            val preview = children.firstOrNull { it.kind == TestViewKind.PREVIEW_IMAGE && it.isVisible }
+            if (preview != null) return TestViewKind.PREVIEW_IMAGE
+
+            return children.firstOrNull { it.kind != TestViewKind.CONTROL_OVERLAY }?.kind
+        }
+
+        // Scenario A: WebRTC is streaming (WebRTC visible, ExoPlayer hidden)
+        val webrtcChildren = listOf(
+            MockView(TestViewKind.EXOPLAYER_CONTAINER, isVisible = false, "playerView"),
+            MockView(TestViewKind.WEBRTC_SURFACE, isVisible = true, "surfaceRenderer"),
+            MockView(TestViewKind.PREVIEW_IMAGE, isVisible = false, "ivPreviewFrame"),
+            MockView(TestViewKind.CONTROL_OVERLAY, isVisible = true, "tvZoomBadge")
+        )
+        assertEquals(
+            "When WebRTC is visible, target must resolve to WEBRTC_SURFACE directly",
+            TestViewKind.WEBRTC_SURFACE,
+            resolveActiveTarget(webrtcChildren)
+        )
+
+        // Scenario B: Fallback to MP4 / HLS (WebRTC hidden, ExoPlayer visible)
+        val exoChildren = listOf(
+            MockView(TestViewKind.EXOPLAYER_CONTAINER, isVisible = true, "playerView"),
+            MockView(TestViewKind.WEBRTC_SURFACE, isVisible = false, "surfaceRenderer"),
+            MockView(TestViewKind.PREVIEW_IMAGE, isVisible = false, "ivPreviewFrame"),
+            MockView(TestViewKind.CONTROL_OVERLAY, isVisible = false, "tvZoomBadge")
+        )
+        assertEquals(
+            "When ExoPlayer is visible, target must resolve to EXOPLAYER_TEXTURE (video surface only), keeping controls intact",
+            TestViewKind.EXOPLAYER_TEXTURE,
+            resolveActiveTarget(exoChildren)
+        )
+
+        // Scenario C: Custom target override
+        val customOverride = MockView(TestViewKind.EXOPLAYER_CONTAINER, isVisible = true, "customPlayer")
+        assertEquals(
+            "Custom target StyledPlayerView must unwrap to its internal video surface texture",
+            TestViewKind.EXOPLAYER_TEXTURE,
+            resolveActiveTarget(exoChildren, custom = customOverride)
+        )
+    }
+
+    /**
+     * Verify transform reset contract when switching active targets.
+     */
+    @Test
+    fun testTransformTransferAndResetOnKernelSwitch() {
+        data class TransformState(var scaleX: Float = 1f, var scaleY: Float = 1f, var tx: Float = 0f, var ty: Float = 0f)
+
+        val webrtcTransform = TransformState()
+        val exoTransform = TransformState()
+
+        var currentScale = 2.5f
+        var currentTx = 120f
+        var currentTy = 80f
+
+        // Initial: WebRTC is zoomed in
+        webrtcTransform.scaleX = currentScale
+        webrtcTransform.scaleY = currentScale
+        webrtcTransform.tx = currentTx
+        webrtcTransform.ty = currentTy
+
+        // Kernel switch: WebRTC -> MP4 fallback
+        // Contract: old target resets to 1.0f, new target inherits current zoom/pan
+        fun switchKernel(oldTarget: TransformState, newTarget: TransformState, scale: Float, tx: Float, ty: Float) {
+            oldTarget.scaleX = 1f
+            oldTarget.scaleY = 1f
+            oldTarget.tx = 0f
+            oldTarget.ty = 0f
+
+            newTarget.scaleX = scale
+            newTarget.scaleY = scale
+            newTarget.tx = tx
+            newTarget.ty = ty
+        }
+
+        switchKernel(webrtcTransform, exoTransform, currentScale, currentTx, currentTy)
+
+        // Old target must be fully clean
+        assertEquals(1f, webrtcTransform.scaleX, 0.0001f)
+        assertEquals(1f, webrtcTransform.scaleY, 0.0001f)
+        assertEquals(0f, webrtcTransform.tx, 0.0001f)
+        assertEquals(0f, webrtcTransform.ty, 0.0001f)
+
+        // New target must seamlessly inherit active zoom coordinates
+        assertEquals(2.5f, exoTransform.scaleX, 0.0001f)
+        assertEquals(2.5f, exoTransform.scaleY, 0.0001f)
+        assertEquals(120f, exoTransform.tx, 0.0001f)
+        assertEquals(80f, exoTransform.ty, 0.0001f)
+    }
+
+    /**
+     * Verify zoom badge text representation and threshold.
+     */
+    @Test
+    fun testZoomBadgeDisplayThreshold() {
+        fun formatZoomBadge(scale: Float): Pair<Boolean, String> {
+            val isVisible = scale > 1.05f
+            val text = if (isVisible) String.format(java.util.Locale.US, "%.1fx 双击复位", scale) else ""
+            return Pair(isVisible, text)
+        }
+
+        val (visible1x, text1x) = formatZoomBadge(1.0f)
+        assertFalse(visible1x)
+        assertEquals("", text1x)
+
+        val (visible1_04x, _) = formatZoomBadge(1.04f)
+        assertFalse(visible1_04x)
+
+        val (visible2x, text2x) = formatZoomBadge(2.0f)
+        assertTrue(visible2x)
+        assertEquals("2.0x 双击复位", text2x)
+
+        val (visible3_5x, text3_5x) = formatZoomBadge(3.5f)
+        assertTrue(visible3_5x)
+        assertEquals("3.5x 双击复位", text3_5x)
+    }
 }

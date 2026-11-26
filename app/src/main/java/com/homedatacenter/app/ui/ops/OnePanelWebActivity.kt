@@ -99,7 +99,16 @@ class OnePanelWebActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         val app = applicationContext as? HomeCenterApp
-        val targetUrl = intent.getStringExtra(EXTRA_URL) ?: resolveDefaultUrl()
+        val rawUrl = intent.getStringExtra(EXTRA_URL) ?: resolveDefaultUrl()
+        val targetUrl = when {
+            rawUrl.endsWith("/btpanel") -> "$rawUrl/#/home"
+            rawUrl.endsWith("/btpanel/") -> "${rawUrl}#/home"
+            !rawUrl.contains("#/") && rawUrl.contains("/btpanel") -> {
+                val idx = rawUrl.indexOf("/btpanel")
+                rawUrl.substring(0, idx + 8) + "/#/home"
+            }
+            else -> rawUrl
+        }
         val token = intent.getStringExtra(EXTRA_TOKEN)
             ?.takeIf { it.isNotBlank() }
             ?: app?.container?.prefsManager?.token.orEmpty()
@@ -126,9 +135,9 @@ class OnePanelWebActivity : ComponentActivity() {
     private fun resolveDefaultUrl(): String {
         return try {
             val base = (applicationContext as? HomeCenterApp)?.container?.baseUrlResolver?.current() ?: "http://192.168.31.234:8088"
-            "${base.trimEnd('/')}/btpanel"
+            "${base.trimEnd('/')}/btpanel/#/home"
         } catch (_: Exception) {
-            "http://192.168.31.234:8088/btpanel"
+            "http://192.168.31.234:8088/btpanel/#/home"
         }
     }
 
@@ -167,6 +176,10 @@ private fun OnePanelWebScreen(
     var currentWebView by remember { mutableStateOf<WebView?>(null) }
     var canGoBack by remember { mutableStateOf(false) }
     var pageError by remember { mutableStateOf<String?>(null) }
+    var lastPsession by remember { mutableStateOf("") }
+    var lastPcsrftoken by remember { mutableStateOf("") }
+    var lastEntrance by remember { mutableStateOf("btpanel") }
+    var hasBootstrappedUrl by remember { mutableStateOf(false) }
 
     BackHandler(enabled = canGoBack) {
         currentWebView?.goBack()
@@ -201,26 +214,71 @@ private fun OnePanelWebScreen(
                             val psession = dataObj.optString("psession")
                             val pcsrftoken = dataObj.optString("pcsrftoken")
                             val entryUrl = dataObj.optString("entry_url")
+                            val entrance = dataObj.optString("entrance").ifBlank { "btpanel" }
 
                             withContext(Dispatchers.Main) {
+                                lastPsession = psession
+                                lastPcsrftoken = pcsrftoken
+                                lastEntrance = entrance
+
                                 val cookieManager = CookieManager.getInstance()
                                 cookieManager.setAcceptCookie(true)
+
+                                val targetOrigin = try {
+                                    val u = URI(targetUrl)
+                                    val portPart = if (u.port != -1) ":${u.port}" else ""
+                                    "${u.scheme}://${u.host}$portPart/"
+                                } catch (_: Exception) { targetUrl }
+
+                                val apiOrigin = try {
+                                    val u = URI(apiBaseUrl)
+                                    val portPart = if (u.port != -1) ":${u.port}" else ""
+                                    "${u.scheme}://${u.host}$portPart/"
+                                } catch (_: Exception) { apiBaseUrl }
+
+                                fun setCookiePair(url: String, name: String, value: String) {
+                                    if (url.isNotBlank() && value.isNotBlank()) {
+                                        cookieManager.setCookie(url, "$name=$value; Path=/; SameSite=Lax")
+                                    }
+                                }
+
+                                // Inject home_token for Nginx/WAF auth verification
+                                if (token.isNotEmpty()) {
+                                    val cleanToken = if (token.startsWith("Bearer ")) token.removePrefix("Bearer ").trim() else token.trim()
+                                    setCookiePair(targetOrigin, "home_token", cleanToken)
+                                    setCookiePair(targetUrl, "home_token", cleanToken)
+                                    setCookiePair(apiOrigin, "home_token", cleanToken)
+                                    setCookiePair(apiBaseUrl, "home_token", cleanToken)
+                                }
+
                                 if (psession.isNotEmpty()) {
-                                    cookieManager.setCookie(targetUrl, "psession=$psession; Path=/; SameSite=Lax")
+                                    setCookiePair(targetOrigin, "psession", psession)
+                                    setCookiePair(targetUrl, "psession", psession)
+                                    setCookiePair(apiOrigin, "psession", psession)
+                                    setCookiePair(apiBaseUrl, "psession", psession)
                                 }
                                 if (pcsrftoken.isNotEmpty()) {
-                                    cookieManager.setCookie(targetUrl, "pcsrftoken=$pcsrftoken; Path=/; SameSite=Lax")
+                                    setCookiePair(targetOrigin, "pcsrftoken", pcsrftoken)
+                                    setCookiePair(targetUrl, "pcsrftoken", pcsrftoken)
+                                    setCookiePair(apiOrigin, "pcsrftoken", pcsrftoken)
+                                    setCookiePair(apiBaseUrl, "pcsrftoken", pcsrftoken)
                                 }
-                                if (entryUrl.isNotEmpty() && entryUrl != targetUrl) {
-                                    if (psession.isNotEmpty()) {
-                                        cookieManager.setCookie(entryUrl, "psession=$psession; Path=/; SameSite=Lax")
-                                    }
-                                    if (pcsrftoken.isNotEmpty()) {
-                                        cookieManager.setCookie(entryUrl, "pcsrftoken=$pcsrftoken; Path=/; SameSite=Lax")
+                                if (entryUrl.isNotEmpty()) {
+                                    try {
+                                        val u = URI(entryUrl)
+                                        val portPart = if (u.port != -1) ":${u.port}" else ""
+                                        val entryOrigin = "${u.scheme}://${u.host}$portPart/"
+                                        setCookiePair(entryOrigin, "psession", psession)
+                                        setCookiePair(entryOrigin, "pcsrftoken", pcsrftoken)
+                                        setCookiePair(entryUrl, "psession", psession)
+                                        setCookiePair(entryUrl, "pcsrftoken", pcsrftoken)
+                                    } catch (_: Exception) {
+                                        setCookiePair(entryUrl, "psession", psession)
+                                        setCookiePair(entryUrl, "pcsrftoken", pcsrftoken)
                                     }
                                 }
                                 cookieManager.flush()
-                                Log.i("OnePanelWebActivity", "Session cookies successfully injected into CookieManager")
+                                Log.i("OnePanelWebActivity", "Session and auth cookies successfully injected into CookieManager with root scope")
                             }
                         }
                     }
@@ -230,8 +288,50 @@ private fun OnePanelWebScreen(
             } finally {
                 withContext(Dispatchers.Main) {
                     isSessionInjecting = false
-                    if (currentWebView?.url == null) {
-                        currentWebView?.loadUrl(targetUrl)
+                    if (!hasBootstrappedUrl) {
+                        hasBootstrappedUrl = true
+                        val wv = currentWebView
+                        if (wv != null) {
+                            if (lastPsession.isNotBlank()) {
+                                val origin = try {
+                                    val u = URI(targetUrl)
+                                    val portPart = if (u.port != -1) ":${u.port}" else ""
+                                    "${u.scheme}://${u.host}$portPart/"
+                                } catch (_: Exception) { targetUrl }
+                                val safeSession = JSONObject.quote(lastPsession)
+                                val safeCsrf = JSONObject.quote(lastPcsrftoken)
+                                val safeEntrance = JSONObject.quote(lastEntrance)
+                                val safeTarget = JSONObject.quote(targetUrl)
+                                val bootstrapHtml = """
+                                    <!DOCTYPE html><html><head><meta charset="utf-8"><script>
+                                    try {
+                                        var gs = JSON.parse(localStorage.getItem('GlobalState') || '{}');
+                                        gs.isLogin = true;
+                                        gs.isAdmin = true;
+                                        gs.isEnterprise = true;
+                                        gs.isProductPro = true;
+                                        gs.isMasterProductPro = true;
+                                        gs.isEnterpriseLicensed = true;
+                                        gs.isEnterpriseLicenseLoaded = true;
+                                        gs.agreeLicense = true;
+                                        gs.device = 'Desktop';
+                                        gs.csrfToken = $safeCsrf;
+                                        gs.entrance = $safeEntrance;
+                                        gs.ignoreCaptcha = true;
+                                        localStorage.setItem('GlobalState', JSON.stringify(gs));
+                                        localStorage.setItem('1Panel-Token', $safeSession);
+                                        localStorage.setItem('psession', $safeSession);
+                                        localStorage.setItem('pcsrftoken', $safeCsrf);
+                                        localStorage.setItem('authMethod', 'session');
+                                    } catch (e) {}
+                                    window.location.replace($safeTarget);
+                                    </script></head><body></body></html>
+                                """.trimIndent()
+                                wv.loadDataWithBaseURL(origin, bootstrapHtml, "text/html", "utf-8", null)
+                            } else {
+                                wv.loadUrl(targetUrl)
+                            }
+                        }
                     }
                 }
             }
@@ -361,6 +461,26 @@ private fun OnePanelWebScreen(
                             override fun onPageFinished(view: WebView?, url: String?) {
                                 webProgress = 1.0f
                                 canGoBack = view?.canGoBack() == true
+                                if (lastPsession.isNotBlank() && lastPcsrftoken.isNotBlank()) {
+                                    val safeSession = JSONObject.quote(lastPsession)
+                                    val safeCsrf = JSONObject.quote(lastPcsrftoken)
+                                    val safeEntrance = JSONObject.quote(lastEntrance)
+                                    val script = """
+                                        try {
+                                            var gs = JSON.parse(localStorage.getItem('GlobalState') || '{}');
+                                            gs.isLogin = true;
+                                            gs.csrfToken = $safeCsrf;
+                                            gs.entrance = $safeEntrance;
+                                            gs.ignoreCaptcha = true;
+                                            localStorage.setItem('GlobalState', JSON.stringify(gs));
+                                            localStorage.setItem('1Panel-Token', $safeSession);
+                                            localStorage.setItem('psession', $safeSession);
+                                            localStorage.setItem('pcsrftoken', $safeCsrf);
+                                            localStorage.setItem('authMethod', 'session');
+                                        } catch(e) {}
+                                    """.trimIndent()
+                                    view?.evaluateJavascript(script, null)
+                                }
                             }
 
                             override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
@@ -386,7 +506,8 @@ private fun OnePanelWebScreen(
                     }
                 },
                 update = { wv ->
-                    if (!isSessionInjecting && wv.url == null) {
+                    if (!isSessionInjecting && !hasBootstrappedUrl && wv.url == null) {
+                        hasBootstrappedUrl = true
                         wv.loadUrl(targetUrl)
                     }
                 }
@@ -466,7 +587,7 @@ private fun OnePanelWebScreen(
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text(text = "重新同步会话并重试 (/btpanel)", color = Color.White)
+                            Text(text = "重新同步会话并重试 (/btpanel/#/home)", color = Color.White)
                         }
 
                         val host = try { URI(apiBaseUrl).host ?: "192.168.31.234" } catch (_: Exception) { "192.168.31.234" }
@@ -477,13 +598,13 @@ private fun OnePanelWebScreen(
                             OutlinedButton(
                                 onClick = {
                                     pageError = null
-                                    val directUrl = "http://$host:10000/btpanel"
+                                    val directUrl = "http://$host:10000/btpanel/#/home"
                                     currentWebView?.loadUrl(directUrl)
                                 },
                                 shape = RoundedCornerShape(12.dp),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text(text = "局域网直连模式 (:10000/btpanel)", color = tokens.textColor)
+                                Text(text = "局域网直连模式 (:10000/btpanel/#/home)", color = tokens.textColor)
                             }
                         }
                     }

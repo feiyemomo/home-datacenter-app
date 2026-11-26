@@ -165,6 +165,8 @@ fun OpsCenterScreen(
         val isChatLoading by viewModel.isChatLoading.collectAsState()
         val restartingMap by viewModel.restartingContainers.collectAsState()
         val approvingMap by viewModel.approvingProposals.collectAsState()
+        val proposalFilter by viewModel.proposalFilter.collectAsState()
+        val isArchivingMap by viewModel.isArchivingProposal.collectAsState()
 
         val view = LocalView.current
         var isKeyboardOpen by remember { mutableStateOf(false) }
@@ -302,13 +304,24 @@ fun OpsCenterScreen(
                             PendingProposalsTabContent(
                                 proposals = proposals,
                                 approvingMap = approvingMap,
+                                isArchivingMap = isArchivingMap,
+                                activeFilter = proposalFilter,
                                 hazeState = hazeState,
                                 bottomPadding = tabContentBottomPadding,
+                                onSetFilter = { filter ->
+                                    viewModel.setProposalFilter(filter)
+                                },
                                 onApproveNow = { id ->
                                     viewModel.approveProposal(id, scheduleAt = null)
                                 },
                                 onScheduleNight = { id ->
                                     viewModel.approveProposal(id, scheduleAt = "03:00")
+                                },
+                                onArchiveProposal = { id ->
+                                    viewModel.archiveProposal(id)
+                                },
+                                onBatchArchive = {
+                                    viewModel.batchArchiveProposals()
                                 },
                                 onDiscussWithCopilot = { proposal ->
                                     val prompt = "关于待审提案「${proposal.title}」（目标: ${proposal.targetComponent}, 风险: ${proposal.riskLevel}）：\n描述: ${proposal.description}\n回滚方案: ${proposal.rollbackPlan}\n请协助评估或调整此方案..."
@@ -1654,35 +1667,113 @@ private fun AlertFilterSwitchRow(
 private fun PendingProposalsTabContent(
     proposals: List<PendingProposal>,
     approvingMap: Map<String, Boolean>,
+    isArchivingMap: Map<String, Boolean>,
+    activeFilter: ProposalFilter,
     hazeState: HazeState,
     bottomPadding: Dp = 96.dp,
+    onSetFilter: (ProposalFilter) -> Unit,
     onApproveNow: (String) -> Unit,
     onScheduleNight: (String) -> Unit,
+    onArchiveProposal: (String) -> Unit,
+    onBatchArchive: () -> Unit,
     onDiscussWithCopilot: (PendingProposal) -> Unit
 ) {
     val tokens = GlassTheme.tokens
     var confirmApproveTarget by remember { mutableStateOf<PendingProposal?>(null) }
+    var confirmArchiveTarget by remember { mutableStateOf<PendingProposal?>(null) }
+
+    val pendingCount = proposals.count { it.isAwaitingApproval }
+    val scheduledCount = proposals.count { it.isScheduled }
+    val archivedCount = proposals.count { it.isArchived || it.isTerminal }
+    val terminalUnarchivedCount = proposals.count { it.isTerminal && !it.isArchived }
+
+    val filteredProposals = remember(proposals, activeFilter) {
+        when (activeFilter) {
+            ProposalFilter.PENDING -> proposals.filter { it.isAwaitingApproval }
+            ProposalFilter.SCHEDULED -> proposals.filter { it.isScheduled }
+            ProposalFilter.ARCHIVED -> proposals.filter { it.isArchived || it.isTerminal }
+            ProposalFilter.ALL -> proposals
+        }
+    }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        Column {
-            Text(
-                text = "待审提案",
-                style = TextStyle(fontSize = 17.sp, fontWeight = FontWeight.Bold, color = tokens.textColor)
-            )
-            Spacer(modifier = Modifier.height(2.dp))
-            Text(
-                text = "由主动协作 Agent 在沙箱推演的高危配置、基础镜像与数据库升级方案",
-                style = TextStyle(fontSize = 12.sp, color = tokens.textSecondaryColor)
-            )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text(
+                    text = "系统变更提案",
+                    style = TextStyle(fontSize = 17.sp, fontWeight = FontWeight.Bold, color = tokens.textColor)
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "沙箱推演与自动化 GitOps 变更审计归档中心",
+                    style = TextStyle(fontSize = 12.sp, color = tokens.textSecondaryColor)
+                )
+            }
+
+            if (terminalUnarchivedCount > 0) {
+                LiquidButton(
+                    onClick = onBatchArchive,
+                    hazeState = hazeState,
+                    cornerRadius = 8.dp
+                ) {
+                    Text(
+                        text = "批量归档 ($terminalUnarchivedCount)",
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        style = TextStyle(fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, color = tokens.accentColor)
+                    )
+                }
+            }
         }
 
-        if (proposals.isEmpty()) {
+        // Segmented filter buttons: 待审批 / 已排期 / 已归档 / 全部
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            ProposalFilter.entries.forEach { filter ->
+                val count = when (filter) {
+                    ProposalFilter.PENDING -> pendingCount
+                    ProposalFilter.SCHEDULED -> scheduledCount
+                    ProposalFilter.ARCHIVED -> archivedCount
+                    ProposalFilter.ALL -> proposals.size
+                }
+                val isSelected = activeFilter == filter
+                LiquidButton(
+                    onClick = { onSetFilter(filter) },
+                    modifier = Modifier.weight(1f),
+                    hazeState = hazeState,
+                    cornerRadius = 10.dp
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "${filter.title} ($count)",
+                            style = TextStyle(
+                                fontSize = 11.5.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (isSelected) tokens.accentColor else tokens.textSecondaryColor
+                            )
+                        )
+                    }
+                }
+            }
+        }
+
+        if (filteredProposals.isEmpty()) {
             LiquidGlassCard(
                 modifier = Modifier.fillMaxWidth(),
                 hazeState = hazeState
@@ -1694,26 +1785,34 @@ private fun PendingProposalsTabContent(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
-                        text = "暂无待审批提案",
+                        text = when (activeFilter) {
+                            ProposalFilter.PENDING -> "当前无待审批提案"
+                            ProposalFilter.SCHEDULED -> "暂无排期待执行的提案"
+                            ProposalFilter.ARCHIVED -> "暂无归档历史记录"
+                            ProposalFilter.ALL -> "暂无任何系统提案"
+                        },
                         style = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.Medium, color = tokens.textColor)
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "所有核心服务与镜像均处于基线状态，运行平稳",
+                        text = "核心服务与镜像均处于健康基线状态",
                         style = TextStyle(fontSize = 12.sp, color = tokens.textSecondaryColor)
                     )
                 }
             }
         } else {
-            proposals.forEach { proposal ->
+            filteredProposals.forEach { proposal ->
                 val isBusy = approvingMap[proposal.id] == true
+                val isArchiving = isArchivingMap[proposal.id] == true
 
                 ProposalCard(
                     proposal = proposal,
                     isBusy = isBusy,
+                    isArchiving = isArchiving,
                     hazeState = hazeState,
                     onRequestApproveNow = { confirmApproveTarget = proposal },
                     onRequestScheduleNight = { onScheduleNight(proposal.id) },
+                    onRequestArchive = { confirmArchiveTarget = proposal },
                     onDiscussWithCopilot = { onDiscussWithCopilot(proposal) }
                 )
             }
@@ -1757,6 +1856,42 @@ private fun PendingProposalsTabContent(
             containerColor = tokens.dialogBg
         )
     }
+
+    // Confirmation dialog for proposal archiving
+    confirmArchiveTarget?.let { prop ->
+        AlertDialog(
+            onDismissRequest = { confirmArchiveTarget = null },
+            title = {
+                Text(
+                    text = "归档此提案？",
+                    style = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.Bold, color = tokens.textColor)
+                )
+            },
+            text = {
+                Text(
+                    text = "提案「${prop.title}」将被移入归档历史记录，相关的审计记录与执行快照将永久保留。",
+                    style = TextStyle(fontSize = 14.sp, color = tokens.textSecondaryColor)
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val id = prop.id
+                        confirmArchiveTarget = null
+                        onArchiveProposal(id)
+                    }
+                ) {
+                    Text(text = "确认归档", color = tokens.accentColor, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmArchiveTarget = null }) {
+                    Text(text = "取消", color = tokens.textColor)
+                }
+            },
+            containerColor = tokens.dialogBg
+        )
+    }
 }
 
 /**
@@ -1766,9 +1901,11 @@ private fun PendingProposalsTabContent(
 private fun ProposalCard(
     proposal: PendingProposal,
     isBusy: Boolean,
+    isArchiving: Boolean,
     hazeState: HazeState,
     onRequestApproveNow: () -> Unit,
     onRequestScheduleNight: () -> Unit,
+    onRequestArchive: () -> Unit,
     onDiscussWithCopilot: () -> Unit
 ) {
     val tokens = GlassTheme.tokens
@@ -1954,6 +2091,41 @@ private fun ProposalCard(
                 }
             } else if (proposal.isScheduled) {
                 GlassTag(text = "已设定凌晨 03:00 自动执行", type = GlassTagType.Warning)
+            } else if (proposal.isArchived) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    GlassTag(text = "已归档 · 审计记录保全", type = GlassTagType.Neutral)
+                    Text(
+                        text = "归档状态: ${proposal.status}",
+                        style = TextStyle(fontSize = 11.sp, color = tokens.textSecondaryColor)
+                    )
+                }
+            } else if (proposal.isTerminal) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    GlassTag(
+                        text = if (proposal.status.equals("EXECUTED", true) || proposal.status.equals("APPROVED", true)) "已执行完成" else "状态: ${proposal.status}",
+                        type = if (proposal.status.equals("FAILED", true) || proposal.status.equals("REJECTED", true)) GlassTagType.Error else GlassTagType.Success
+                    )
+                    LiquidButton(
+                        onClick = onRequestArchive,
+                        enabled = !isArchiving,
+                        hazeState = hazeState,
+                        cornerRadius = 8.dp
+                    ) {
+                        Text(
+                            text = if (isArchiving) "归档中..." else "归档提案",
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                            style = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = tokens.accentColor)
+                        )
+                    }
+                }
             } else {
                 GlassTag(text = "已批准执行", type = GlassTagType.Success)
             }

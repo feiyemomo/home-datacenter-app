@@ -1,0 +1,6 @@
+Home Datacenter v1.18.19 (Build 239) 发布说明：
+1. 1Panel 运维面板免密直达修复：在加载 SPA 前同源预注入 Pinia GlobalState (isLogin/csrfToken/entrance) 与 Root Cookie，彻底解决跳转后仍停留在登录页的问题。
+2. Agent 操作审计卡片优化：语义化动作名称与状态标签，失败任务直接展示 errorCode 原因，优化底部元信息排版；同步修复 NAS 端 1pwaf ipBlack.json 权限导致同步失败的问题。
+3. Ops Copilot 对话增强：修复容器资源消耗排行超时与 0 值回退，支持内置简单算术运算，离线无 LLM Key 时明确提示引擎模式并引导有效指令。
+4. 播放器双指缩放防误触优化：多指触控立即锁定父容器拦截并降低缩放激活门槛，解决手速较快时被误判为页面垂直滚动的问题。
+5. 多路监控大厅优化：增加顶部系统状态栏安全区 (statusBarsPadding) 解决文字重叠；针对大谷云 (dagu) 4G 电池摄像头改用 15s 低频缓存拉帧并展示省电待机状态。

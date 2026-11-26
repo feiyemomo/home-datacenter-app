@@ -1,0 +1,6 @@
+Home Datacenter v1.18.20 (Build 240) 发布说明：
+1. 1Panel 完整权限与企业版特性恢复：预注入 GlobalState.isAdmin / isEnterprise / isProductPro / isMasterProductPro / device=Desktop，恢复全部侧边栏菜单与管理功能。
+2. 运维页去除硬编码占位数据：移除 OpsViewModel 初始伪造的 142 次 WAF 拦截与占位容器/提案，直接展示实时接口状态。
+3. 播放器放大后二次缩放跟手性修复：支持双指缩放同步平滑拖动，隔离多指阶段 GestureDetector 误触发与抬指瞬跳。
+4. 大谷云 4G 摄像头优化：后端持久化最新抓拍快照至磁盘，重启后仍可直接返回历史缩略图不耗电；详情页起播增加“4G 唤醒中”提示。
+5. 宿主机安全告警降噪：白名单放行 tailscale / mihomo 必需的 CAP_NET_ADMIN 权限，消除误报邮件轰炸。

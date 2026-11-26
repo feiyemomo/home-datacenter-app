@@ -86,6 +86,12 @@ class OpsFragment : Fragment() {
         }
     }
 
+    fun silentRefresh() {
+        if (isAdded) {
+            viewModel.refreshAll(silent = true)
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         if (isAdded && !isHidden) {

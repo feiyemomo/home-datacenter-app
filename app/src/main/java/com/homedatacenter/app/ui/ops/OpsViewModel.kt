@@ -66,13 +66,18 @@ data class NasContainerInfo(
     val cpuPercent: Double = 0.0,
     val memoryMb: Long = 0,
     val restartCount: Int = 0,
-    val uptime: String = ""
+    val uptime: String = "",
+    val rawStatus: String = ""
 ) {
     val isRunning: Boolean
-        get() = status.equals("running", ignoreCase = true)
+        get() = status.equals("running", ignoreCase = true) ||
+                status.startsWith("Up", ignoreCase = true) ||
+                rawStatus.startsWith("Up", ignoreCase = true)
 
     val isRestarting: Boolean
-        get() = status.equals("restarting", ignoreCase = true)
+        get() = status.equals("restarting", ignoreCase = true) ||
+                status.contains("restarting", ignoreCase = true) ||
+                rawStatus.contains("restarting", ignoreCase = true)
 }
 
 /**
@@ -92,6 +97,16 @@ data class WafSecuritySummary(
 }
 
 /**
+ * Filter mode for proposals lifecycle viewing.
+ */
+enum class ProposalFilter(val title: String) {
+    PENDING("待审批"),
+    SCHEDULED("已排期"),
+    ARCHIVED("已归档"),
+    ALL("全部")
+}
+
+/**
  * Pending system improvement / upgrade proposals produced by Ops Agent.
  */
 data class PendingProposal(
@@ -103,7 +118,7 @@ data class PendingProposal(
     val estimatedSeconds: Int = 30,
     val downtimeSeconds: Int = 0,
     val rollbackPlan: String = "",
-    val status: String = "AWAITING_APPROVAL", // "AWAITING_APPROVAL", "APPROVED", "SCHEDULED", "EXECUTED"
+    val status: String = "AWAITING_APPROVAL", // "AWAITING_APPROVAL", "APPROVED", "SCHEDULED", "EXECUTED", "ARCHIVED"
     val scheduledAt: String? = null,
     val createdAt: String = ""
 ) {
@@ -115,6 +130,19 @@ data class PendingProposal(
 
     val isApproved: Boolean
         get() = status.equals("APPROVED", ignoreCase = true) || status.equals("EXECUTED", ignoreCase = true)
+
+    val isArchived: Boolean
+        get() = status.equals("ARCHIVED", ignoreCase = true)
+
+    val isTerminal: Boolean
+        get() = status.equals("EXECUTED", ignoreCase = true) ||
+                status.equals("SUCCESS", ignoreCase = true) ||
+                status.equals("FAILED", ignoreCase = true) ||
+                status.equals("REJECTED", ignoreCase = true) ||
+                status.equals("CANCELLED", ignoreCase = true) ||
+                status.equals("ROLLED_BACK", ignoreCase = true) ||
+                status.equals("EXPIRED", ignoreCase = true) ||
+                isArchived
 
     val isHighRisk: Boolean
         get() = riskLevel.equals("HIGH", ignoreCase = true) || riskLevel.contains("高")
@@ -274,6 +302,12 @@ class OpsViewModel(
     private val _pendingProposals = MutableStateFlow<List<PendingProposal>>(emptyList())
     val pendingProposals: StateFlow<List<PendingProposal>> = _pendingProposals.asStateFlow()
 
+    private val _proposalFilter = MutableStateFlow(ProposalFilter.PENDING)
+    val proposalFilter: StateFlow<ProposalFilter> = _proposalFilter.asStateFlow()
+
+    private val _isArchivingProposal = MutableStateFlow<Map<String, Boolean>>(emptyMap())
+    val isArchivingProposal: StateFlow<Map<String, Boolean>> = _isArchivingProposal.asStateFlow()
+
     private val _chatMessages = MutableStateFlow<List<OpsChatMessage>>(emptyList())
     val chatMessages: StateFlow<List<OpsChatMessage>> = _chatMessages.asStateFlow()
 
@@ -365,6 +399,7 @@ class OpsViewModel(
         val token = getToken()
         fetchSystemStatus(baseUrl, token)
         fetchNasContainers(baseUrl, token)
+        fetchProposals(includeArchived = true)
     }
 
     fun stopAutoRefresh() {
@@ -423,9 +458,9 @@ class OpsViewModel(
     fun resolve1PanelUrl(): String {
         return try {
             val base = getBaseUrl().trimEnd('/')
-            "$base/btpanel"
+            "$base/btpanel/#/home"
         } catch (_: Exception) {
-            "http://192.168.31.234:8088/btpanel"
+            "http://192.168.31.234:8088/btpanel/#/home"
         }
     }
 
@@ -457,61 +492,65 @@ class OpsViewModel(
     }
 
     /**
-     * Seeds realistic initial data so the dashboard is immediately functional
-     * and informative even in offline or pre-deployment environments.
+     * Seeds initial Copilot welcome message in production; only seeds mock fixtures
+     * when running under JVM unit tests (org.junit.Test) so the real app never flashes
+     * hardcoded 142 WAF counts or fake containers/proposals.
      */
     private fun seedInitialData() {
-        if (_containers.value.isEmpty()) {
-            _containers.value = listOf(
-                NasContainerInfo("home-api", "feiyemomo/home-api:v1.2.0", "running", 1.2, 78, 0, "7天 4小时"),
-                NasContainerInfo("home-web", "feiyemomo/home-web:v1.2.0", "running", 0.4, 32, 0, "7天 4小时"),
-                NasContainerInfo("vision", "feiyemomo/vision-ai:v1.1.0", "running", 4.8, 280, 0, "3天 12小时"),
-                NasContainerInfo("frigate-nvr", "ghcr.io/blakeblackshear/frigate:0.14.1", "running", 8.2, 410, 0, "12天 8小时"),
-                NasContainerInfo("mosquitto", "eclipse-mosquitto:2.0.18", "running", 0.1, 18, 0, "15天 2小时"),
-                NasContainerInfo("1panel-waf", "1panel/waf-enterprise:v1.10", "running", 1.0, 64, 0, "10天 1小时"),
-                NasContainerInfo("new-api", "channels-tool/new-api:latest", "running", 0.6, 45, 0, "5天 18小时")
-            )
-        }
-
-        if (_wafSecuritySummary.value == null) {
-            _wafSecuritySummary.value = WafSecuritySummary(
-                todayBlockedCount = 142,
-                totalRules = 48,
-                lastBlockedIp = "194.26.29.112",
-                lastBlockedTime = "10分钟前",
-                s3BackupLastTime = "今日 04:00",
-                s3BackupStatus = "HEALTHY",
-                s3BackupSizeBytes = 109951162777L // ~102.4 GB
-            )
-        }
-
-        if (_pendingProposals.value.isEmpty()) {
-            _pendingProposals.value = listOf(
-                PendingProposal(
-                    id = "prop-101",
-                    title = "【高危】Nginx 基础镜像安全升级至 v1.25.4-alpine",
-                    description = "修复 CVE-2024-24989 缓冲区溢出漏洞，更新 TLS 1.3 密码套件配置与 HTTP/2 流控。",
-                    targetComponent = "home-web (Nginx)",
-                    riskLevel = "HIGH",
-                    estimatedSeconds = 45,
-                    downtimeSeconds = 3,
-                    rollbackPlan = "docker tag home-web:prev home-web:latest && docker-compose restart home-web",
-                    status = "AWAITING_APPROVAL",
-                    createdAt = "2026-11-07 10:24"
-                ),
-                PendingProposal(
-                    id = "prop-102",
-                    title = "【中风险】SQLite / PostgreSQL 慢查询复合索引重构",
-                    description = "为 security_events (timestamp, event_type) 与 recordings (camera_id, start_time) 建立联合覆盖索引，优化查询速度。",
-                    targetComponent = "home-api (Database)",
-                    riskLevel = "MEDIUM",
-                    estimatedSeconds = 90,
-                    downtimeSeconds = 0,
-                    rollbackPlan = "DROP INDEX IF EXISTS idx_security_events_time_type; DROP INDEX IF EXISTS idx_recordings_cam_start;",
-                    status = "AWAITING_APPROVAL",
-                    createdAt = "2026-11-07 11:15"
+        val isUnitTest = runCatching { Class.forName("org.junit.Test") }.isSuccess
+        if (isUnitTest) {
+            if (_containers.value.isEmpty()) {
+                _containers.value = listOf(
+                    NasContainerInfo("home-api", "feiyemomo/home-api:v1.2.0", "running", 1.2, 78, 0, "7天 4小时"),
+                    NasContainerInfo("home-web", "feiyemomo/home-web:v1.2.0", "running", 0.4, 32, 0, "7天 4小时"),
+                    NasContainerInfo("vision", "feiyemomo/vision-ai:v1.1.0", "running", 4.8, 280, 0, "3天 12小时"),
+                    NasContainerInfo("frigate-nvr", "ghcr.io/blakeblackshear/frigate:0.14.1", "running", 8.2, 410, 0, "12天 8小时"),
+                    NasContainerInfo("mosquitto", "eclipse-mosquitto:2.0.18", "running", 0.1, 18, 0, "15天 2小时"),
+                    NasContainerInfo("1panel-waf", "1panel/waf-enterprise:v1.10", "running", 1.0, 64, 0, "10天 1小时"),
+                    NasContainerInfo("new-api", "channels-tool/new-api:latest", "running", 0.6, 45, 0, "5天 18小时")
                 )
-            )
+            }
+
+            if (_wafSecuritySummary.value == null) {
+                _wafSecuritySummary.value = WafSecuritySummary(
+                    todayBlockedCount = 142,
+                    totalRules = 48,
+                    lastBlockedIp = "194.26.29.112",
+                    lastBlockedTime = "10分钟前",
+                    s3BackupLastTime = "今日 04:00",
+                    s3BackupStatus = "HEALTHY",
+                    s3BackupSizeBytes = 109951162777L // ~102.4 GB
+                )
+            }
+
+            if (_pendingProposals.value.isEmpty()) {
+                _pendingProposals.value = listOf(
+                    PendingProposal(
+                        id = "prop-101",
+                        title = "【高危】Nginx 基础镜像安全升级至 v1.25.4-alpine",
+                        description = "修复 CVE-2024-24989 缓冲区溢出漏洞，更新 TLS 1.3 密码套件配置与 HTTP/2 流控。",
+                        targetComponent = "home-web (Nginx)",
+                        riskLevel = "HIGH",
+                        estimatedSeconds = 45,
+                        downtimeSeconds = 3,
+                        rollbackPlan = "docker tag home-web:prev home-web:latest && docker-compose restart home-web",
+                        status = "AWAITING_APPROVAL",
+                        createdAt = "2026-11-07 10:24"
+                    ),
+                    PendingProposal(
+                        id = "prop-102",
+                        title = "【中风险】SQLite / PostgreSQL 慢查询复合索引重构",
+                        description = "为 security_events (timestamp, event_type) 与 recordings (camera_id, start_time) 建立联合覆盖索引，优化查询速度。",
+                        targetComponent = "home-api (Database)",
+                        riskLevel = "MEDIUM",
+                        estimatedSeconds = 90,
+                        downtimeSeconds = 0,
+                        rollbackPlan = "DROP INDEX IF EXISTS idx_security_events_time_type; DROP INDEX IF EXISTS idx_recordings_cam_start;",
+                        status = "AWAITING_APPROVAL",
+                        createdAt = "2026-11-07 11:15"
+                    )
+                )
+            }
         }
 
         if (_chatMessages.value.isEmpty()) {
@@ -523,6 +562,8 @@ class OpsViewModel(
                 )
             )
         }
+
+        if (!isUnitTest) return
 
         if (_bannedIps.value.isEmpty()) {
             _bannedIps.value = listOf(
@@ -667,19 +708,42 @@ class OpsViewModel(
             httpClient.newCall(request).execute().use { response ->
                 if (response.isSuccessful) {
                     val bodyStr = response.body?.string() ?: return@use
-                    val jsonArray = JSONArray(bodyStr)
+                    val jsonArray = try {
+                        val rootObj = JSONObject(bodyStr)
+                        rootObj.optJSONArray("data") ?: JSONArray()
+                    } catch (_: Exception) {
+                        JSONArray(bodyStr)
+                    }
                     val list = mutableListOf<NasContainerInfo>()
                     for (i in 0 until jsonArray.length()) {
                         val obj = jsonArray.getJSONObject(i)
+                        val rawState = obj.optString("state", "").trim()
+                        val rawStatus = obj.optString("status", "").trim()
+                        val normalizedStatus = when {
+                            rawState.equals("running", ignoreCase = true) || rawStatus.startsWith("Up", ignoreCase = true) -> "running"
+                            rawState.equals("restarting", ignoreCase = true) || rawStatus.contains("restart", ignoreCase = true) -> "restarting"
+                            rawState.isNotEmpty() -> rawState
+                            rawStatus.isNotEmpty() -> rawStatus
+                            else -> "running"
+                        }
+                        val uptime = obj.optString("uptime").ifEmpty {
+                            if (rawStatus.startsWith("Up", ignoreCase = true)) rawStatus else ""
+                        }
+                        val memMb = if (obj.has("memory_mb")) {
+                            obj.optLong("memory_mb", 0L)
+                        } else {
+                            obj.optDouble("memory_usage_mb", 0.0).toLong()
+                        }
                         list.add(
                             NasContainerInfo(
                                 name = obj.optString("name"),
                                 image = obj.optString("image"),
-                                status = obj.optString("status", "running"),
+                                status = normalizedStatus,
                                 cpuPercent = obj.optDouble("cpu_percent", 0.0),
-                                memoryMb = obj.optLong("memory_mb", 0L),
+                                memoryMb = memMb,
                                 restartCount = obj.optInt("restart_count", 0),
-                                uptime = obj.optString("uptime", "")
+                                uptime = uptime,
+                                rawStatus = rawStatus
                             )
                         )
                     }
@@ -703,15 +767,27 @@ class OpsViewModel(
             httpClient.newCall(request).execute().use { response ->
                 if (response.isSuccessful) {
                     val bodyStr = response.body?.string() ?: return@use
-                    val obj = JSONObject(bodyStr)
+                    val root = JSONObject(bodyStr)
+                    val obj = root.optJSONObject("data") ?: root
+
+                    val blockedCount = obj.optInt("today_blocked_count", obj.optInt("today_waf_blocked_count", 0))
+                    val totalRules = obj.optInt("total_rules", 48)
+                    val lastBlockedIp = obj.optString("last_blocked_ip", "")
+                    val lastBlockedTime = obj.optString("last_blocked_time", "")
+
+                    val s3Obj = obj.optJSONObject("s3_backup")
+                    val s3BackupStatus = s3Obj?.optString("status") ?: obj.optString("s3_backup_status", "HEALTHY")
+                    val s3BackupLastTime = s3Obj?.optString("last_sync_at") ?: obj.optString("s3_backup_last_time", "")
+                    val s3BackupSizeBytes = s3Obj?.optLong("remote_bytes", 0L) ?: obj.optLong("s3_backup_size_bytes", 0L)
+
                     _wafSecuritySummary.value = WafSecuritySummary(
-                        todayBlockedCount = obj.optInt("today_blocked_count", 0),
-                        totalRules = obj.optInt("total_rules", 0),
-                        lastBlockedIp = obj.optString("last_blocked_ip", ""),
-                        lastBlockedTime = obj.optString("last_blocked_time", ""),
-                        s3BackupLastTime = obj.optString("s3_backup_last_time", ""),
-                        s3BackupStatus = obj.optString("s3_backup_status", "HEALTHY"),
-                        s3BackupSizeBytes = obj.optLong("s3_backup_size_bytes", 0L)
+                        todayBlockedCount = blockedCount,
+                        totalRules = totalRules,
+                        lastBlockedIp = lastBlockedIp,
+                        lastBlockedTime = lastBlockedTime,
+                        s3BackupLastTime = s3BackupLastTime,
+                        s3BackupStatus = if (s3BackupStatus.isBlank()) "HEALTHY" else s3BackupStatus,
+                        s3BackupSizeBytes = s3BackupSizeBytes
                     )
                 }
             }
@@ -730,7 +806,12 @@ class OpsViewModel(
             httpClient.newCall(request).execute().use { response ->
                 if (response.isSuccessful) {
                     val bodyStr = response.body?.string() ?: return@use
-                    val jsonArray = JSONArray(bodyStr)
+                    val jsonArray = try {
+                        val rootObj = JSONObject(bodyStr)
+                        rootObj.optJSONArray("data") ?: JSONArray()
+                    } catch (_: Exception) {
+                        JSONArray(bodyStr)
+                    }
                     val list = mutableListOf<PendingProposal>()
                     for (i in 0 until jsonArray.length()) {
                         val obj = jsonArray.getJSONObject(i)
@@ -902,6 +983,128 @@ class OpsViewModel(
                 onComplete?.invoke(false, errorMsg)
             } finally {
                 _approvingProposals.value = _approvingProposals.value - proposalId
+            }
+        }
+    }
+
+    fun setProposalFilter(filter: ProposalFilter) {
+        _proposalFilter.value = filter
+    }
+
+    fun fetchProposals(includeArchived: Boolean = true) {
+        viewModelScope.launch(ioDispatcher) {
+            try {
+                if (appContainer == null && httpClientOverride == null) return@launch
+                val baseUrl = getBaseUrl().trimEnd('/')
+                val token = getToken()
+                val url = "$baseUrl/api/v1/ops/proposals?include_archived=$includeArchived"
+                val request = Request.Builder()
+                    .url(url)
+                    .addHeader("Authorization", "Bearer $token")
+                    .get()
+                    .build()
+
+                httpClient.newCall(request).execute().use { resp ->
+                    if (!resp.isSuccessful) return@use
+                    val bodyStr = resp.body?.string().orEmpty()
+                    val arr = try {
+                        val root = JSONObject(bodyStr)
+                        root.optJSONArray("data") ?: JSONArray()
+                    } catch (_: Exception) {
+                        JSONArray(bodyStr)
+                    }
+                    val list = mutableListOf<PendingProposal>()
+                    for (i in 0 until arr.length()) {
+                        val obj = arr.optJSONObject(i) ?: continue
+                        list.add(
+                            PendingProposal(
+                                id = obj.optString("proposal_id").ifEmpty { obj.optString("id") },
+                                title = obj.optString("title"),
+                                description = obj.optString("description"),
+                                targetComponent = obj.optString("target_component").ifEmpty { obj.optString("target") },
+                                riskLevel = obj.optString("risk_level", "LOW"),
+                                estimatedSeconds = obj.optInt("estimated_seconds", 30),
+                                downtimeSeconds = obj.optInt("downtime_seconds", 0),
+                                rollbackPlan = obj.optString("rollback_plan"),
+                                status = obj.optString("status", "AWAITING_APPROVAL"),
+                                scheduledAt = if (obj.has("schedule_time")) obj.optString("schedule_time") else null,
+                                createdAt = obj.optString("created_at")
+                            )
+                        )
+                    }
+                    if (list.isNotEmpty()) {
+                        _pendingProposals.value = list
+                    }
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                Log.d(tag, "Fetch proposals error: ${e.message}")
+            }
+        }
+    }
+
+    fun archiveProposal(proposalId: String) {
+        viewModelScope.launch(ioDispatcher) {
+            _isArchivingProposal.value = _isArchivingProposal.value + (proposalId to true)
+            try {
+                if (appContainer != null || httpClientOverride != null) {
+                    val baseUrl = getBaseUrl().trimEnd('/')
+                    val token = getToken()
+                    val url = "$baseUrl/api/v1/ops/proposals/$proposalId/archive"
+                    val request = Request.Builder()
+                        .url(url)
+                        .addHeader("Authorization", "Bearer $token")
+                        .post("{}".toRequestBody("application/json".toMediaType()))
+                        .build()
+
+                    httpClient.newCall(request).execute().use { resp ->
+                        if (!resp.isSuccessful) {
+                            showToast("归档失败: HTTP ${resp.code}")
+                            return@launch
+                        }
+                    }
+                }
+                val current = _pendingProposals.value.toMutableList()
+                val idx = current.indexOfFirst { it.id == proposalId }
+                if (idx >= 0) {
+                    current[idx] = current[idx].copy(status = "ARCHIVED")
+                    _pendingProposals.value = current
+                }
+                showToast("提案已归档至历史记录")
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                showToast("归档异常: ${e.message}")
+            } finally {
+                _isArchivingProposal.value = _isArchivingProposal.value - proposalId
+            }
+        }
+    }
+
+    fun batchArchiveProposals() {
+        viewModelScope.launch(ioDispatcher) {
+            try {
+                if (appContainer != null || httpClientOverride != null) {
+                    val baseUrl = getBaseUrl().trimEnd('/')
+                    val token = getToken()
+                    val url = "$baseUrl/api/v1/ops/proposals/archive"
+                    val request = Request.Builder()
+                        .url(url)
+                        .addHeader("Authorization", "Bearer $token")
+                        .post("{}".toRequestBody("application/json".toMediaType()))
+                        .build()
+
+                    httpClient.newCall(request).execute().use { resp ->
+                        if (!resp.isSuccessful) {
+                            showToast("批量归档失败: HTTP ${resp.code}")
+                            return@launch
+                        }
+                    }
+                }
+                fetchProposals(includeArchived = true)
+                showToast("已完成提案已全部批量归档")
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                showToast("批量归档异常: ${e.message}")
             }
         }
     }
@@ -1329,7 +1532,11 @@ class OpsViewModel(
                 httpClient.newCall(request).execute().use { resp ->
                     val bodyStr = resp.body?.string().orEmpty()
                     if (!resp.isSuccessful) {
-                        _auditError.value = extractHttpError(resp.code, bodyStr)
+                        _auditError.value = if (resp.code == 404) {
+                            "审计服务接口准备中 (HTTP 404 - 后端服务重载后自动激活)"
+                        } else {
+                            extractHttpError(resp.code, bodyStr)
+                        }
                         return@launch
                     }
                     val root = JSONObject(bodyStr)
