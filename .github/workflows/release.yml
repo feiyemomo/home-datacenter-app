@@ -41,12 +41,16 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-      - name: Accept Android SDK licenses
+      - name: Accept Android SDK licenses & install API 37
         run: |
           mkdir -p "$ANDROID_HOME/licenses"
           printf "\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n" > "$ANDROID_HOME/licenses/android-sdk-license"
           printf "\n84831b9409646a918e30573bab4c9c91346d8abd\n" > "$ANDROID_HOME/licenses/android-sdk-preview-license"
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
+          SDKMGR="$(command -v sdkmanager || ls "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -n1)"
+          if [ -n "$SDKMGR" ]; then
+            yes | "$SDKMGR" --licenses >/dev/null 2>&1 || true
+            yes | "$SDKMGR" "platforms;android-37" "build-tools;36.0.0" || yes | "$SDKMGR" --channel=3 "platforms;android-37" || true
+          fi
       - name: Grant execute permission
         run: chmod +x gradlew
       - name: Run unit tests
@@ -63,12 +67,16 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-      - name: Accept Android SDK licenses
+      - name: Accept Android SDK licenses & install API 37
         run: |
           mkdir -p "$ANDROID_HOME/licenses"
           printf "\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n" > "$ANDROID_HOME/licenses/android-sdk-license"
           printf "\n84831b9409646a918e30573bab4c9c91346d8abd\n" > "$ANDROID_HOME/licenses/android-sdk-preview-license"
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
+          SDKMGR="$(command -v sdkmanager || ls "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -n1)"
+          if [ -n "$SDKMGR" ]; then
+            yes | "$SDKMGR" --licenses >/dev/null 2>&1 || true
+            yes | "$SDKMGR" "platforms;android-37" "build-tools;36.0.0" || yes | "$SDKMGR" --channel=3 "platforms;android-37" || true
+          fi
 
       - name: Reconstruct release keystore from secret
         run: |
