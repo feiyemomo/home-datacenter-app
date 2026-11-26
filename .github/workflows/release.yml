@@ -26,6 +26,9 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   test:
     name: Unit tests (JVM)
@@ -33,11 +36,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Set up JDK 17
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "21"
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
       - name: Grant execute permission
@@ -46,16 +49,16 @@ jobs:
         run: ./gradlew testDebugUnitTest
 
   release:
-    name: Build signed release APK
+    name: Build signed release & debug APKs
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Set up JDK 17
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "21"
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
@@ -76,16 +79,29 @@ jobs:
       - name: Grant execute permission
         run: chmod +x gradlew
 
-      - name: Build release APK
-        run: ./gradlew assembleRelease
+      - name: Build release & debug APKs
+        run: ./gradlew assembleRelease assembleDebug
 
-      - name: Upload release APK
+      - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: app-release-apk
-          path: app/build/outputs/apk/release/*.apk
+          name: app-apks
+          path: |
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release-notes-${{ github.ref_name }}.txt
+          files: |
+            app/build/outputs/apk/release/*.apk
+            app/build/outputs/apk/debug/*.apk
+          fail_on_unmatched_files: false
+          generate_release_notes: true
 
       # NOTE: automatic push of the APK from the runner to the NAS was
       # removed. GitHub-hosted runners live on the public internet and
